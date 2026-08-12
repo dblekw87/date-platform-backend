@@ -7,6 +7,7 @@
     "dev": "node --watch src/server.mjs",
     "start": "node src/server.mjs",
     "db:migrate": "node scripts/migrate.mjs",
+    "db:check": "node scripts/db-check.mjs",
     "check": "node --check src/server.mjs"
   },
   "dependencies": {

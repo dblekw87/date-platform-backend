@@ -1,3 +1,10 @@
+import { existsSync } from "node:fs";
+import { loadEnvFile } from "node:process";
+
+if (existsSync(".env")) {
+  loadEnvFile(".env");
+}
+
 export function readConfig() {
   const frontendOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:3000")
     .split(",")

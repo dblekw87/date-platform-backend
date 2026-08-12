@@ -43,6 +43,7 @@ Copy-Item .env.example .env
 docker compose -f docker-compose.example.yml up -d postgres
 npm install
 npm run db:migrate
+npm run db:check
 npm run dev
 ```
 
