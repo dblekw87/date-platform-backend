@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: date-platform-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: "date_platform"
+      POSTGRES_USER: "date_user"
+      POSTGRES_PASSWORD: "date_password"
+    volumes:
+      - date-platform-postgres:/var/lib/postgresql/data
+
+  date-platform-backend:
+    build: .
+    container_name: date-platform-backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "4010:4010"
+    environment:
+      PORT: "4010"
+      FRONTEND_ORIGIN: "https://your-frontend-domain.com"
+      DATABASE_URL: "postgres://date_user:date_password@postgres:5432/date_platform"
+      TOSS_INVEST_BASE_URL: "https://openapi.tossinvest.com"
+      TOSS_INVEST_CLIENT_ID: ""
+      TOSS_INVEST_CLIENT_SECRET: ""
+
+volumes:
+  date-platform-postgres:
