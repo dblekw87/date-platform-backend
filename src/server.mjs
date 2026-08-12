@@ -7,11 +7,23 @@ import { loadTossExchangeRate, loadTossLeaders } from "./providers/toss.mjs";
 
 const config = readConfig();
 
-function corsHeaders() {
+function corsHeaders(request) {
+  const requestOrigin = request?.headers.origin;
+  const allowOrigin = config.frontendOrigins.includes(requestOrigin)
+    ? requestOrigin
+    : config.frontendOrigins[0];
+
   return {
-    "Access-Control-Allow-Origin": config.frontendOrigin,
+    "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Access-Control-Allow-Headers": [
+      "Content-Type",
+      "Authorization",
+      "X-Date-User-Provider",
+      "X-Date-User-Id",
+      "X-Date-User-Name",
+      "X-Date-User-Email"
+    ].join(","),
     "Vary": "Origin"
   };
 }
@@ -26,7 +38,7 @@ function providerUnavailable() {
 
 async function route(request, response) {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-  const headers = corsHeaders();
+  const headers = corsHeaders(request);
 
   if (request.method === "OPTIONS") {
     sendNoContent(response, headers);
@@ -48,7 +60,7 @@ async function route(request, response) {
   }
 
   const body = request.method === "POST" || request.method === "PATCH"
-    ? await readJsonBody(request)
+    ? await readJsonBody(request, { limitBytes: 1_000_000 })
     : {};
   const appDataResult = await handleAppDataRoute(config, request, url, body);
 
@@ -106,17 +118,17 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     if (error instanceof HttpError) {
       sendJson(response, error.status, {
-        error: "upstream_error",
+        error: error.code ?? "request_error",
         message: error.message,
         details: error.details
-      }, corsHeaders());
+      }, corsHeaders(request));
       return;
     }
 
     sendJson(response, 500, {
       error: "internal_error",
       message: error instanceof Error ? error.message : "Unknown error"
-    }, corsHeaders());
+    }, corsHeaders(request));
   }
 });
 

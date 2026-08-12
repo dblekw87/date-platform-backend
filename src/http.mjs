@@ -1,9 +1,10 @@
 export class HttpError extends Error {
-  constructor(status, message, details) {
+  constructor(status, message, details, code) {
     super(message);
     this.name = "HttpError";
     this.status = status;
     this.details = details;
+    this.code = code;
   }
 }
 
@@ -46,14 +47,28 @@ export function sendNoContent(response, headers = {}) {
   response.end();
 }
 
-export async function readJsonBody(request) {
+export async function readJsonBody(request, options = {}) {
+  const limitBytes = options.limitBytes ?? 1_000_000;
   const chunks = [];
+  let totalBytes = 0;
 
   for await (const chunk of request) {
+    totalBytes += chunk.length;
+
+    if (totalBytes > limitBytes) {
+      throw new HttpError(413, "Request body is too large", { limitBytes }, "payload_too_large");
+    }
+
     chunks.push(chunk);
   }
 
   const text = Buffer.concat(chunks).toString("utf8");
 
-  return text ? JSON.parse(text) : {};
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new HttpError(400, "Request body must be valid JSON", undefined, "invalid_json");
+  }
 }

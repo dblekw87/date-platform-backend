@@ -34,6 +34,8 @@ Toss endpoints return an unavailable provider status until these are set:
 
 The frontend should call this backend instead of calling Toss directly.
 
+`FRONTEND_ORIGIN` can contain multiple comma-separated origins, for example local development plus a Vercel domain.
+
 PostgreSQL is the application database. Local development can use the PostgreSQL service in `docker-compose.example.yml`.
 
 ```powershell
