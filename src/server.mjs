@@ -3,6 +3,7 @@ import { readConfig, hasTossCredentials } from "./config.mjs";
 import { HttpError, readJsonBody, sendJson, sendNoContent } from "./http.mjs";
 import { handleAppDataRoute } from "./routes/app-data.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
+import { handleMediaRoute, serveUploadedMedia } from "./routes/media.mjs";
 import { loadTossExchangeRate, loadTossLeaders } from "./providers/toss.mjs";
 
 const config = readConfig();
@@ -45,6 +46,10 @@ async function route(request, response) {
     return;
   }
 
+  if (await serveUploadedMedia(config, request, response, url, headers)) {
+    return;
+  }
+
   if (url.pathname === "/health") {
     if (request.method !== "GET") {
       sendJson(response, 405, { error: "method_not_allowed" }, headers);
@@ -56,6 +61,13 @@ async function route(request, response) {
       service: "date-platform-backend",
       timestamp: new Date().toISOString()
     }, headers);
+    return;
+  }
+
+  const mediaResult = await handleMediaRoute(config, request, url);
+
+  if (mediaResult) {
+    sendJson(response, mediaResult.status, mediaResult.body, headers);
     return;
   }
 

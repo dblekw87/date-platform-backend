@@ -70,6 +70,30 @@ export async function updateProfile(config, userId, input) {
   return result.rows[0] ?? null;
 }
 
+export async function createMediaAsset(config, userId, input) {
+  const result = await query(config, `
+    INSERT INTO media_assets (
+      owner_user_id,
+      usage_type,
+      original_name,
+      mime_type,
+      storage_key,
+      public_url
+    )
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id, usage_type, original_name, mime_type, storage_key, public_url, created_at
+  `, [
+    userId,
+    input.usageType,
+    input.originalName,
+    input.mimeType,
+    input.storageKey,
+    input.publicUrl
+  ]);
+
+  return result.rows[0];
+}
+
 export async function listCommunityPosts(config, { category, authorUserId, cursor, limit }) {
   const decoded = decodeCursor(cursor);
   const params = ["published", pageLimit(limit)];

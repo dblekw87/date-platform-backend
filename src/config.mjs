@@ -15,6 +15,8 @@ export function readConfig() {
     port: Number(process.env.PORT ?? 4010),
     frontendOrigins,
     databaseUrl: process.env.DATABASE_URL,
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT ?? 4010}`,
+    uploadDir: process.env.UPLOAD_DIR || "data/uploads",
     toss: {
       baseUrl: process.env.TOSS_INVEST_BASE_URL ?? "https://openapi.tossinvest.com",
       clientId: process.env.TOSS_INVEST_CLIENT_ID,

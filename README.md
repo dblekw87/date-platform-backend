@@ -60,6 +60,7 @@ Core app endpoints:
 
 - `GET /api/me`
 - `PATCH /api/me/profile`
+- `POST /api/media`
 - `GET /api/community/posts?limit=20&cursor=...`
 - `POST /api/community/posts`
 - `GET /api/community/posts/:id`
@@ -70,6 +71,13 @@ Core app endpoints:
 - `GET /api/trade-journals/:id`
 - `PATCH /api/trade-journals/:id`
 - `GET /api/me/trade-journals`
+
+`POST /api/media` accepts `multipart/form-data`:
+
+- `file`: image file, up to 5 MB
+- `usageType`: `profile`, `community`, or `trade-journal`
+
+Uploaded files are stored under `UPLOAD_DIR` and served from `/uploads/:storageKey`. For production, replace the local disk implementation with S3, Cloudflare R2, or NAS-backed storage while keeping the same API response shape.
 
 ## Vercel now, AWS/NAS later
 
