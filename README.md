@@ -44,7 +44,14 @@ npm run db:migrate
 npm run dev
 ```
 
-Application data endpoints currently use a mock authenticated user (`date_user`) until OAuth/JWT is connected.
+Application data endpoints use frontend-forwarded development identity headers to bind data to a `users` row:
+
+- `X-Date-User-Provider`
+- `X-Date-User-Id`
+- `X-Date-User-Name`
+- `X-Date-User-Email` optional
+
+If those headers are missing, the backend falls back to the mock development user (`date_user`). OAuth/JWT should replace these trusted internal headers before public production.
 
 Core app endpoints:
 

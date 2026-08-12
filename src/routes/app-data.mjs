@@ -1,4 +1,4 @@
-import { ensureMockUser } from "../db/mock-auth.mjs";
+import { ensureRequestUser } from "../db/mock-auth.mjs";
 import {
   createCommunityPost,
   createTradeJournal,
@@ -12,12 +12,12 @@ import {
   updateTradeJournal
 } from "../db/repositories.mjs";
 
-export async function getCurrentUser(config) {
-  return ensureMockUser(config);
+export async function getCurrentUser(config, request) {
+  return ensureRequestUser(config, request);
 }
 
 export async function handleAppDataRoute(config, request, url, body) {
-  const user = await getCurrentUser(config);
+  const user = await getCurrentUser(config, request);
 
   if (url.pathname === "/api/me" && request.method === "GET") {
     return {
