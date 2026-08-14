@@ -270,8 +270,15 @@ export function classifyTheme(symbol, name) {
   return rule ? rule[1] : "미분류";
 }
 
-// A theme needs real money behind it before its move counts as leadership.
-const minimumThemeTurnover = 50_000_000_000;
+// A stock needs enough turnover to be worth trading before it can carry a
+// theme. Below this a name is a quote rather than a participant, and a handful
+// of them would form themes nobody could act on.
+const minimumStockTurnover = 3_000_000_000;
+
+// The theme still needs real money across its members, but far less than when
+// the ranking was turnover-led: a theme that formed this morning has not traded
+// as much as 반도체 does by lunch and is no less real for it.
+const minimumThemeTurnover = 20_000_000_000;
 
 // One stock is not a group. A single name under a sector heading is a 주도주,
 // which the board now lists separately, and dressing it as a theme implies a
@@ -279,14 +286,19 @@ const minimumThemeTurnover = 50_000_000_000;
 const minimumThemeMembers = 2;
 
 /**
- * Ranks themes by strength, not size.
+ * Ranks themes by how hard the group moved, counting every member equally.
  *
- * Sorting on turnover alone just re-lists the largest caps: 반도체 wins every
- * session because SK하이닉스 and 삼성전자 dominate turnover whether or not the
- * sector is actually moving. Ranking on turnover-weighted change rate answers
- * the question the board is asking — where is money pushing prices today —
- * while the turnover floor keeps a thin micro-cap from topping the list on a
- * single spike.
+ * Turnover-weighting was wrong for this. A theme is several stocks moving
+ * together, and weighting by turnover hands the entire score to whichever
+ * member trades most: 반도체 was ranked on what 삼성전자 and SK하이닉스 did
+ * while the other members might as well not have been there, and a theme of
+ * five mid caps up 20% scored below a mega cap up 2%. Money already has its own
+ * list — 주도주 is ranked on turnover concentration — so this one answers the
+ * other question, which stocks moved as a group.
+ *
+ * The floors do the work turnover-weighting used to: each member has to be
+ * tradable, and the group has to add up to something, so a cluster of illiquid
+ * names cannot top the list on a single spike.
  */
 export function themeScores(leaders, limit = 4) {
   const byTheme = new Map();
@@ -299,20 +311,20 @@ export function themeScores(leaders, limit = 4) {
     const turnover = Number(leader.turnoverValue);
     const changeRate = Number(leader.changeRateValue);
 
-    if (!Number.isFinite(turnover) || turnover <= 0) return;
+    if (!Number.isFinite(turnover) || turnover < minimumStockTurnover) return;
     if (!Number.isFinite(changeRate)) return;
 
-    const score = byTheme.get(theme) ?? { count: 0, leaders: [], theme, turnover: 0, weightedChange: 0 };
+    const score = byTheme.get(theme) ?? { count: 0, leaders: [], theme, totalChange: 0, turnover: 0 };
 
     score.turnover += turnover;
-    score.weightedChange += turnover * changeRate;
+    score.totalChange += changeRate;
     score.count += 1;
     if (score.leaders.length < 3) score.leaders.push(leader.name);
     byTheme.set(theme, score);
   });
 
   return [...byTheme.values()]
-    .map((score) => ({ ...score, changeRate: score.weightedChange / score.turnover }))
+    .map((score) => ({ ...score, changeRate: score.totalChange / score.count }))
     .filter((score) => score.count >= minimumThemeMembers && score.turnover >= minimumThemeTurnover && score.changeRate > 0)
     .sort((left, right) => right.changeRate - left.changeRate)
     .slice(0, limit);

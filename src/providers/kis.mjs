@@ -230,6 +230,56 @@ async function loadVolumeRank(config, token) {
   return data?.output ?? [];
 }
 
+/**
+ * The day's biggest risers, which the turnover ranking structurally cannot show.
+ *
+ * A theme is a group of stocks moving together, and the ones that move hardest
+ * are rarely the ones that trade most: a turnover ranking returns SK하이닉스,
+ * 삼성전자 and a row of index ETFs every session, so a 상한가 spread across five
+ * mid caps never enters the candidate pool at all. Ranking by change rate is the
+ * only way those names are seen.
+ */
+async function loadFluctuationRank(config, token) {
+  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/ranking/fluctuation", {
+    fid_cond_mrkt_div_code: "J",
+    fid_cond_scr_div_code: "20170",
+    fid_input_iscd: "0000",
+    fid_rank_sort_cls_code: "0",
+    fid_input_cnt_1: "0",
+    fid_prc_cls_code: "0",
+    fid_input_price_1: "",
+    fid_input_price_2: "",
+    fid_vol_cnt: "",
+    fid_trgt_cls_code: "0",
+    fid_trgt_exls_cls_code: "0",
+    fid_div_cls_code: "0",
+    fid_rsfl_rate1: "",
+    fid_rsfl_rate2: ""
+  }), {
+    timeoutMs: 5000,
+    headers: kisHeaders(config, token, "FHPST01700000")
+  });
+
+  if (data?.rt_cd && data.rt_cd !== "0") {
+    throw new Error(`KIS fluctuation ${data.msg_cd ?? "error"}`);
+  }
+
+  return (data?.output ?? []).map((item) => {
+    const price = parseNumeric(item.stck_prpr);
+    const volume = parseNumeric(item.acml_vol);
+
+    return {
+      ...item,
+      // This ranking names a different symbol field and omits turnover
+      // entirely, so both are filled in to match the turnover ranking's shape.
+      // Price times volume is the same approximation the US feed uses, and it
+      // only applies to names the exact figure did not already cover.
+      mksc_shrn_iscd: item.stck_shrn_iscd,
+      acml_tr_pbmn: String(price * volume)
+    };
+  });
+}
+
 async function loadIndexQuote(config, token, indexConfig) {
   const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-index-price", {
     FID_COND_MRKT_DIV_CODE: "U",
@@ -322,17 +372,27 @@ function buildFlowItems(leaders) {
 export async function loadKisMarketBoard(config) {
   return readThroughCache("kis:market-board", 30_000, async () => {
     const token = await getAccessToken(config);
-    const [volumeRank, macroSnapshot] = await Promise.all([
+    const [volumeRank, fluctuationRank, macroSnapshot] = await Promise.all([
       loadVolumeRank(config, token),
+      // A failure here costs the risers, not the board.
+      loadFluctuationRank(config, token).catch(() => []),
       loadIndexSnapshots(config, token)
     ]);
+    // Two rankings answer two different questions — where the money is, and what
+    // is actually moving — and a theme needs both. Turnover rows overwrite on a
+    // duplicate because they carry the exchange's own figure rather than a
+    // price-times-volume estimate.
+    const bySymbol = new Map(fluctuationRank.map((item) => [item.mksc_shrn_iscd?.trim(), item]));
+
+    volumeRank.forEach((item) => bySymbol.set(item.mksc_shrn_iscd?.trim(), item));
+
     // Deep enough that a theme holds several names, not just its top stock —
     // the board groups these by theme and lists every member.
-    const krLeadingStocks = [...volumeRank]
+    const krLeadingStocks = [...bySymbol.values()]
       .sort((left, right) => leadershipScore(right) - leadershipScore(left))
       .map(toLeadingStock)
       .filter(Boolean)
-      .slice(0, 30);
+      .slice(0, 60);
 
     return {
       flowItems: krLeadingStocks.length > 0 ? buildFlowItems(krLeadingStocks) : [],
