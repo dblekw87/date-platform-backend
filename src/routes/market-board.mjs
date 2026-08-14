@@ -6,7 +6,9 @@ import { loadKrxCalendar } from "../providers/krx.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
+import { formatTradingAmount } from "../providers/format.mjs";
 import { buildThemeBrief } from "../providers/themes.mjs";
+import { readTurnoverBurst, recordTurnoverSample } from "../providers/turnover-history.mjs";
 import { loadTossExchangeRate, loadTossLeaders } from "../providers/toss.mjs";
 
 const focusCalendarItems = [
@@ -270,6 +272,53 @@ async function runAdapter(adapter, config, checkedAt, canUseLicensedLiveData) {
   }
 }
 
+/**
+ * Adds "how much of this arrived recently" to each leader.
+ *
+ * Providers only report turnover accumulated since the open, so a stock that
+ * spiked at 09:10 and went quiet reads the same as one trading steadily. The
+ * difference against an earlier sample separates the two, and the share says
+ * whether the move is happening now or already happened.
+ */
+async function attachTurnoverBurst(board) {
+  const markets = [
+    ["KR", "krLeadingStocks", "KRW"],
+    ["US", "usLeadingStocks", "USD"]
+  ];
+  const result = { ...board };
+
+  for (const [market, key, currency] of markets) {
+    const leaders = board[key];
+
+    if (leaders.length === 0) continue;
+
+    await recordTurnoverSample(market, leaders);
+
+    const burst = await readTurnoverBurst(market);
+
+    if (!burst) continue;
+
+    result[key] = leaders.map((leader) => {
+      const previous = burst.values[leader.symbol];
+      const turnover = Number(leader.turnoverValue);
+
+      if (previous === undefined || !Number.isFinite(turnover) || turnover <= previous) return leader;
+
+      const recent = turnover - previous;
+
+      return {
+        ...leader,
+        recentTurnoverValue: recent,
+        recentTurnover: formatTradingAmount(recent, currency),
+        recentTurnoverShare: turnover > 0 ? recent / turnover : 0,
+        recentWindowMinutes: burst.windowMinutes
+      };
+    });
+  }
+
+  return result;
+}
+
 function mergeHeadlines(baseItems, extraItems) {
   const byId = new Map(baseItems.map((item) => [item.id, item]));
 
@@ -336,7 +385,7 @@ export async function getMarketBoard(config) {
   const withThemes = themeBriefs.length > 0
     ? { ...merged, marketBrief: mergeById(merged.marketBrief, themeBriefs) }
     : merged;
-  const board = await attachLeaderNews(withThemes);
+  const board = await attachTurnoverBurst(await attachLeaderNews(withThemes));
 
   if (canUseLicensedLiveData) {
     await writeSnapshot(config, board);
