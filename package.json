@@ -8,7 +8,8 @@
     "start": "node src/server.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "db:check": "node scripts/db-check.mjs",
-    "check": "node --check src/server.mjs"
+    "check": "node --check src/server.mjs",
+    "test": "node scripts/test-sanitize-html.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"
