@@ -1,13 +1,19 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson, fetchText } from "../http.mjs";
+import { formatShareVolume, formatTradingAmount } from "./format.mjs";
+import { classifyTheme } from "./themes.mjs";
 
 /**
  * Public market data: US index/commodity ETFs via Finnhub, plus BTC, USD/KRW,
- * and the US 10-year yield from public sources. Every source is optional — a
+ * the US 10-year yield, and the US leaders board. Every source is optional — a
  * failure drops that one row rather than the whole snapshot.
  */
 
 const cacheTtlMs = 15_000;
+const leadersCacheTtlMs = 60_000;
+const screenerUrl = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+// The screener rejects a default client identifier.
+const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 const finnhubQuotes = [
   { id: "sp500-future", label: "S&P 500 ETF", market: "US", instrumentType: "index", symbol: "SPY", note: "S&P 500 선물 대체 확인용 ETF" },
@@ -150,6 +156,108 @@ async function loadUs10y() {
   };
 }
 
+function rawValue(field) {
+  const value = field?.raw ?? field;
+
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+async function loadScreener(scrIds, count) {
+  const url = new URL(screenerUrl);
+
+  url.searchParams.set("scrIds", scrIds);
+  url.searchParams.set("count", String(count));
+
+  const data = await fetchJson(url.toString(), {
+    timeoutMs: 5000,
+    headers: { "User-Agent": browserUserAgent, Accept: "application/json" }
+  });
+
+  return data?.finance?.result?.[0]?.quotes ?? [];
+}
+
+/**
+ * Scores the day's US leaders on the same basis as the domestic board: turnover
+ * is the floor, then a rising price, volume above the stock's own three-month
+ * norm, and proximity to its 52-week high add to it. Turnover alone would just
+ * list the largest caps every session.
+ */
+function usLeadershipScore(quote) {
+  const price = rawValue(quote.regularMarketPrice);
+  const volume = rawValue(quote.regularMarketVolume);
+  const changeRate = rawValue(quote.regularMarketChangePercent);
+  const averageVolume = rawValue(quote.averageDailyVolume3Month);
+  const fiftyTwoWeekHigh = rawValue(quote.fiftyTwoWeekHigh);
+  const turnover = price * volume;
+  const volumeRatio = averageVolume > 0 ? volume / averageVolume : 1;
+  const nearHigh = fiftyTwoWeekHigh > 0 ? price / fiftyTwoWeekHigh : 0;
+
+  return Math.log10(Math.max(turnover, 1)) * 10
+    + Math.max(changeRate, 0) * 1.2
+    + Math.min(volumeRatio, 10) * 2
+    + (nearHigh >= 0.95 ? 6 : 0);
+}
+
+function toUsLeader(quote, index) {
+  const symbol = quote.symbol?.trim();
+  const name = quote.shortName?.trim() || quote.longName?.trim() || symbol;
+
+  if (!symbol || !name) return null;
+
+  const price = rawValue(quote.regularMarketPrice);
+  const volume = rawValue(quote.regularMarketVolume);
+  const changeRate = rawValue(quote.regularMarketChangePercent);
+  const averageVolume = rawValue(quote.averageDailyVolume3Month);
+  const fiftyTwoWeekHigh = rawValue(quote.fiftyTwoWeekHigh);
+  const turnoverValue = price * volume;
+
+  if (turnoverValue <= 0) return null;
+
+  const theme = classifyTheme(symbol, name);
+  const volumeRatio = averageVolume > 0 ? volume / averageVolume : 0;
+  const nearHigh = fiftyTwoWeekHigh > 0 && price / fiftyTwoWeekHigh >= 0.95;
+
+  return {
+    id: `us-leader-${symbol}`,
+    symbol,
+    name,
+    market: "US",
+    rank: index + 1,
+    marketLabel: "미국 거래 집중",
+    theme,
+    turnoverValue,
+    changeRateValue: changeRate,
+    burst: `${formatShareVolume(volume)}${volumeRatio > 0 ? ` · 평균 대비 ${volumeRatio.toFixed(1)}배` : ""}`,
+    turnover: formatTradingAmount(turnoverValue, "USD"),
+    intraday: `현재가 $${price.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${changeRate > 0 ? "+" : ""}${changeRate.toFixed(2)}%`,
+    reason: `${theme} · 당일 거래대금 ${formatTradingAmount(turnoverValue, "USD")}${volumeRatio >= 1.5 ? ` · 거래량 급증 ${volumeRatio.toFixed(1)}배` : ""}${nearHigh ? " · 52주 신고가 근접" : ""}`,
+    caution: "미국장 시간대와 시간외 반응을 함께 확인",
+    timestamp: new Date().toISOString(),
+    source: "market"
+  };
+}
+
+async function loadUsLeaders() {
+  return readThroughCache("market:us-leaders", leadersCacheTtlMs, async () => {
+    const [actives, gainers] = await Promise.all([
+      loadScreener("most_actives", 40),
+      loadScreener("day_gainers", 25).catch(() => [])
+    ]);
+    const bySymbol = new Map();
+
+    // Equities only: the actives list is thick with ETFs, which are not leaders.
+    [...actives, ...gainers]
+      .filter((quote) => quote?.quoteType === "EQUITY" && quote.symbol)
+      .forEach((quote) => bySymbol.set(quote.symbol, quote));
+
+    return [...bySymbol.values()]
+      .sort((left, right) => usLeadershipScore(right) - usLeadershipScore(left))
+      .map(toUsLeader)
+      .filter(Boolean)
+      .slice(0, 10);
+  });
+}
+
 function snapshotById(items, id) {
   return items.find((item) => item.id === id);
 }
@@ -197,7 +305,7 @@ function buildMarketBriefs(macroSnapshot) {
   return briefs;
 }
 
-export async function loadMarketData(config) {
+async function loadMacroSnapshot(config) {
   return readThroughCache("market:macro", cacheTtlMs, async () => {
     const apiKey = config.market.finnhubApiKey;
     const loaders = [loadBitcoin(), loadUsdKrw(), loadUs10y()];
@@ -207,13 +315,23 @@ export async function loadMarketData(config) {
     }
 
     const results = await Promise.allSettled(loaders);
-    const macroSnapshot = results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
 
-    if (macroSnapshot.length === 0) return {};
-
-    return {
-      macroSnapshot,
-      marketBrief: buildMarketBriefs(macroSnapshot)
-    };
+    return results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
   });
+}
+
+export async function loadMarketData(config) {
+  const [macroSnapshot, usLeadingStocks] = await Promise.all([
+    loadMacroSnapshot(config),
+    loadUsLeaders().catch((error) => {
+      console.warn("us leaders lookup failed", error instanceof Error ? error.message : error);
+
+      return [];
+    })
+  ]);
+
+  return {
+    ...(macroSnapshot.length > 0 ? { macroSnapshot, marketBrief: buildMarketBriefs(macroSnapshot) } : {}),
+    ...(usLeadingStocks.length > 0 ? { usLeadingStocks } : {})
+  };
 }

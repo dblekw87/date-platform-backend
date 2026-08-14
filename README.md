@@ -96,6 +96,13 @@ Two rankings are derived from it:
 
 ETFs, ETNs, preferred shares, and SPACs are excluded from both.
 
+US leaders come from the public Yahoo Finance screener, which needs no key and
+carries the three-month average volume and 52-week high the ranking uses. Toss
+supplied them previously but its ranking endpoint returns a quota error; the
+adapter stays registered and reports its status, and the board no longer depends
+on it. Domestic leaders come from KIS and the exchange rate from Frankfurter, so
+nothing else is lost while Toss is unavailable.
+
 The frontend should call this backend instead of calling Toss or KIS directly.
 
 `FRONTEND_ORIGIN` can contain multiple comma-separated origins, for example local development plus a Vercel domain.
