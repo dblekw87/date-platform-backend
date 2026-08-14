@@ -340,6 +340,8 @@ export async function createTradeJournal(config, userId, input) {
     INSERT INTO trade_journals (
       author_user_id,
       trade_date,
+      buy_time,
+      sell_time,
       title,
       result,
       visibility,
@@ -348,11 +350,13 @@ export async function createTradeJournal(config, userId, input) {
       good_html,
       bad_html
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     RETURNING *
   `, [
     userId,
     input.tradeDate,
+    input.buyTime ?? null,
+    input.sellTime ?? null,
     input.title,
     input.result,
     input.visibility ?? "public",
@@ -366,6 +370,8 @@ export async function createTradeJournal(config, userId, input) {
 }
 
 export async function updateTradeJournal(config, id, userId, input) {
+  // COALESCE cannot express "clear this field", so the times carry an explicit
+  // provided flag: absent means leave it alone, present-and-null means erase it.
   const result = await query(config, `
     UPDATE trade_journals
     SET
@@ -377,6 +383,8 @@ export async function updateTradeJournal(config, id, userId, input) {
       sell_html = COALESCE($8, sell_html),
       good_html = COALESCE($9, good_html),
       bad_html = COALESCE($10, bad_html),
+      buy_time = CASE WHEN $11 THEN $12::time ELSE buy_time END,
+      sell_time = CASE WHEN $13 THEN $14::time ELSE sell_time END,
       updated_at = now()
     WHERE id = $1 AND author_user_id = $2
     RETURNING *
@@ -390,7 +398,11 @@ export async function updateTradeJournal(config, id, userId, input) {
     input.buyHtml,
     input.sellHtml,
     input.goodHtml,
-    input.badHtml
+    input.badHtml,
+    "buyTime" in input,
+    input.buyTime ?? null,
+    "sellTime" in input,
+    input.sellTime ?? null
   ]);
 
   return result.rows[0] ?? null;

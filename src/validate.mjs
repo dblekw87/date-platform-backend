@@ -14,6 +14,8 @@ import { HttpError } from "./http.mjs";
 const communityCategories = new Set(["질문", "조언", "시황", "뉴스", "테마", "잡담"]);
 const journalVisibilities = new Set(["public", "private"]);
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+// <input type="time"> submits HH:MM, and adds :SS when a step is configured.
+const timePattern = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
 function fail(field, message) {
   throw new HttpError(400, message, { field }, "invalid_request");
@@ -61,6 +63,17 @@ function isoDate(value, field) {
   return value;
 }
 
+// Optional: an author may not remember the exact minute, and an empty input
+// submits "". Both mean "no time recorded" rather than a validation failure.
+function optionalTime(value, field) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !timePattern.test(value.trim())) {
+    fail(field, `${field} must be an HH:MM time`);
+  }
+
+  return value.trim().slice(0, 5);
+}
+
 function withField(target, key, value) {
   if (value !== undefined) target[key] = value;
 
@@ -97,6 +110,9 @@ export function validateTradeJournalInput(body = {}, { partial = false } = {}) {
   } else if (!partial) {
     input.visibility = "public";
   }
+
+  if (!partial || body.buyTime !== undefined) input.buyTime = optionalTime(body.buyTime, "buyTime");
+  if (!partial || body.sellTime !== undefined) input.sellTime = optionalTime(body.sellTime, "sellTime");
 
   ["badHtml", "buyHtml", "goodHtml", "sellHtml"].forEach((field) => {
     if (partial && body[field] === undefined) return;
