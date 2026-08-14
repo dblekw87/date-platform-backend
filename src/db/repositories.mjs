@@ -486,3 +486,90 @@ export async function saveMarketDataSnapshot(config, input) {
 
   return result.rows[0];
 }
+
+function numericOrNull(value) {
+  const numeric = Number(value);
+
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+/**
+ * Appends one moment of the market to the time series.
+ *
+ * Written as a single multi-row insert because a sample covers sixty stocks and
+ * a round trip each would take longer than the interval between samples. The
+ * unique constraint absorbs a repeated tick rather than doubling a minute.
+ */
+export async function saveMarketPriceSamples(config, { market, observedAt, sessionDate, stocks }) {
+  if (!config.databaseUrl || stocks.length === 0) return 0;
+
+  const columns = 10;
+  const values = stocks.flatMap((stock, index) => [
+    market,
+    stock.symbol,
+    stock.name ?? null,
+    sessionDate,
+    observedAt,
+    numericOrNull(stock.changeRateValue),
+    numericOrNull(stock.turnoverValue),
+    numericOrNull(stock.volumeValue),
+    stock.theme ?? null,
+    index + 1
+  ]);
+  const rows = stocks
+    .map((stock, index) => `($${index * columns + 1}, $${index * columns + 2}, $${index * columns + 3}, $${index * columns + 4}, $${index * columns + 5}, $${index * columns + 6}, $${index * columns + 7}, $${index * columns + 8}, $${index * columns + 9}, $${index * columns + 10}, $${stocks.length * columns + 1})`)
+    .join(", ");
+  const result = await query(config, `
+    INSERT INTO market_price_samples (
+      market, symbol, name, session_date, observed_at,
+      change_rate, turnover, volume, theme, leader_rank, source
+    )
+    VALUES ${rows}
+    ON CONFLICT (market, symbol, observed_at) DO NOTHING
+  `, [...values, stocks[0]?.source ?? "unknown"]);
+
+  return result.rowCount;
+}
+
+/**
+ * Keeps the headlines the board showed, with the symbols and themes already
+ * tagged onto them. Naming a theme from what was written about a stock needs
+ * months of this, and until now every refresh discarded it.
+ */
+export async function saveMarketNewsItems(config, headlines) {
+  if (!config.databaseUrl || headlines.length === 0) return 0;
+
+  let saved = 0;
+
+  for (const headline of headlines) {
+    const result = await query(config, `
+      INSERT INTO market_news_items (
+        id, provider, source, source_detail, region, label,
+        headline, original_headline, original_url, published_at,
+        related_symbols, related_themes
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (id) DO UPDATE SET
+        related_symbols = EXCLUDED.related_symbols,
+        related_themes = EXCLUDED.related_themes,
+        updated_at = now()
+    `, [
+      headline.id,
+      headline.provider ?? "news",
+      headline.source ?? "",
+      headline.sourceDetail ?? null,
+      headline.region ?? "GLOBAL",
+      headline.label ?? "",
+      headline.text ?? "",
+      headline.originalText ?? null,
+      headline.originalUrl ?? "",
+      headline.publishedAt,
+      headline.relatedSymbols ?? [],
+      headline.relatedThemes ?? []
+    ]);
+
+    saved += result.rowCount;
+  }
+
+  return saved;
+}

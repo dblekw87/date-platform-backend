@@ -1,0 +1,148 @@
+import { saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
+import { loadKisMarketBoard } from "./providers/kis.mjs";
+import { sessionDate } from "./providers/market-session.mjs";
+import { getMarketBoard } from "./routes/market-board.mjs";
+
+/**
+ * Records the market to disk while the session runs.
+ *
+ * Until now a sample existed only if somebody happened to load the board, so
+ * the record of any given day was whatever the browser tabs of that day
+ * produced. Nothing can be learned from a series with holes wherever nobody was
+ * watching, and the holes fall exactly on the mornings when the screen is busy
+ * being traded rather than read.
+ *
+ * Sampling reads KIS directly rather than the assembled board. The board merges
+ * every provider and the last writer wins, so what it reports as domestic
+ * leadership can change source between two ticks; a stored series has to come
+ * from one ruler.
+ */
+
+// Collection opens with the NXT pre-market rather than the KRX bell, because
+// the leadership that matters at 09:10 is often already forming at 08:30.
+const openMinute = 8 * 60;
+const closeMinute = 15 * 60 + 40;
+const timeZone = "Asia/Seoul";
+
+// News moves in hours, not minutes, and each board build fans out to a dozen
+// feeds. Sampling it at the price cadence would spend the day re-reading the
+// same headlines.
+const newsIntervalMs = 10 * 60_000;
+const idleIntervalMs = 60_000;
+
+function seoulMinute(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+  const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
+
+  return {
+    minute: (Number(value("hour")) % 24) * 60 + Number(value("minute")),
+    weekday: value("weekday")
+  };
+}
+
+function isCollecting(now = new Date()) {
+  const { minute, weekday } = seoulMinute(now);
+
+  if (weekday === "Sat" || weekday === "Sun") return false;
+
+  return minute >= openMinute && minute < closeMinute;
+}
+
+/**
+ * How often to sample, by where the session is.
+ *
+ * The first half hour after the bell is sampled every minute because that is
+ * the window the whole exercise is for: telling which stock is leading while
+ * there is still time to trade the one behind it. A five minute tick would put
+ * three readings across the entire decision.
+ */
+function intervalMsFor(minute) {
+  if (minute < 9 * 60) return 5 * 60_000;
+  if (minute < 9 * 60 + 30) return 60_000;
+  if (minute < 10 * 60) return 2 * 60_000;
+
+  return 5 * 60_000;
+}
+
+async function samplePrices(config) {
+  const payload = await loadKisMarketBoard(config);
+  const stocks = payload?.krLeadingStocks ?? [];
+
+  if (stocks.length === 0) return 0;
+
+  return saveMarketPriceSamples(config, {
+    market: "KR",
+    observedAt: new Date().toISOString(),
+    sessionDate: sessionDate("KR"),
+    stocks
+  });
+}
+
+async function sampleNews(config) {
+  const board = await getMarketBoard(config);
+
+  return saveMarketNewsItems(config, board.headlineFlow ?? []);
+}
+
+export function startMarketCollector(config) {
+  if (!config.databaseUrl) {
+    console.warn("market collector disabled: DATABASE_URL is not set, so samples would have nowhere to go");
+
+    return () => {};
+  }
+
+  let stopped = false;
+  let timeoutId;
+  let lastNewsAt = 0;
+
+  async function tick() {
+    if (stopped) return;
+
+    const now = new Date();
+    let delay = idleIntervalMs;
+
+    if (isCollecting(now)) {
+      const { minute } = seoulMinute(now);
+
+      delay = intervalMsFor(minute);
+
+      try {
+        const saved = await samplePrices(config);
+
+        if (saved > 0) console.log(`collector: ${saved} price samples`);
+      } catch (error) {
+        // A failed tick is a gap in one series, not a reason to stop recording
+        // for the day — the next tick is a minute away.
+        console.warn("collector: price sample failed", error instanceof Error ? error.message : error);
+      }
+
+      if (Date.now() - lastNewsAt >= newsIntervalMs) {
+        lastNewsAt = Date.now();
+
+        try {
+          const saved = await sampleNews(config);
+
+          if (saved > 0) console.log(`collector: ${saved} news items`);
+        } catch (error) {
+          console.warn("collector: news sample failed", error instanceof Error ? error.message : error);
+        }
+      }
+    }
+
+    if (!stopped) timeoutId = setTimeout(tick, delay);
+  }
+
+  console.log(`market collector on · 평일 08:00–15:40 KST`);
+  void tick();
+
+  return () => {
+    stopped = true;
+    if (timeoutId) clearTimeout(timeoutId);
+  };
+}

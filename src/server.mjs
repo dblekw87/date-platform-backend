@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { startMarketCollector } from "./collector.mjs";
 import { readConfig, hasTossCredentials } from "./config.mjs";
 import { HttpError, readJsonBody, sendJson, sendNoContent } from "./http.mjs";
 import { handleAppDataRoute } from "./routes/app-data.mjs";
@@ -163,4 +164,6 @@ server.listen(config.port, () => {
   if (!config.internalJwtSecret) {
     console.warn("INTERNAL_JWT_SECRET is not set. Falling back to trusted X-Date-User-* headers, which any client can forge. Set it before exposing this server.");
   }
+
+  if (config.marketCollector) startMarketCollector(config);
 });

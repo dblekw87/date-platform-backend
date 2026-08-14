@@ -19,6 +19,9 @@ export function readConfig() {
     publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT ?? 4010}`,
     uploadDir: process.env.UPLOAD_DIR || "data/uploads",
     marketDataMode: process.env.MARKET_DATA_MODE === "licensed-live" ? "licensed-live" : "demo",
+    // Off unless asked for: the collector writes to the database on a timer, so
+    // a machine that only serves requests should not start one.
+    marketCollector: process.env.MARKET_COLLECTOR === "true",
     toss: {
       baseUrl: process.env.TOSS_INVEST_BASE_URL ?? "https://openapi.tossinvest.com",
       clientId: process.env.TOSS_INVEST_CLIENT_ID,
