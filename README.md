@@ -82,12 +82,26 @@ Core app endpoints:
 - `POST /api/community/posts`
 - `GET /api/community/posts/:id`
 - `PATCH /api/community/posts/:id`
+- `GET /api/community/posts/:id/comments`
+- `POST /api/community/posts/:id/comments`
+- `PATCH /api/community/comments/:id`
 - `GET /api/me/community-posts`
 - `GET /api/trade-journals?limit=20&cursor=...`
 - `POST /api/trade-journals`
 - `GET /api/trade-journals/:id`
 - `PATCH /api/trade-journals/:id`
 - `GET /api/me/trade-journals`
+
+## Request validation
+
+Writes run `path match → identity → validation → sanitize → SQL`. `src/validate.mjs`
+checks each field and passes through only the ones it recognizes, so a bad request
+answers `400` naming the field instead of surfacing a database constraint as a
+`500`. PATCH validators run in partial mode, leaving absent fields absent so the
+repository's `COALESCE` keeps the stored value.
+
+Detail responses include `is_owner`, computed from the viewer's row, so clients do
+not rebuild an author id to decide whether to offer editing.
 
 ## Rich text sanitizing
 
