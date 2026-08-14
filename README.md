@@ -1,8 +1,45 @@
 # date-platform-backend
 
-Node.js backend for DATE market/community services.
+API server for [DATE](https://github.com/dblekw87/date-platform), a trading community platform.
 
-This server keeps provider credentials such as Toss Invest API keys outside the Next.js frontend and exposes normalized internal APIs for the frontend.
+It owns every external data provider, the application database, and the API the
+Next.js frontend reads. Provider credentials never reach a browser-facing
+process.
+
+## Tech Stack
+
+| Area | Stack |
+| --- | --- |
+| Runtime | Node.js 20+, ESM (`.mjs`) |
+| HTTP | `node:http` — no framework |
+| Database | PostgreSQL 16 (Docker) |
+| DB driver | `pg` connection pool |
+| Auth | HS256 token verification with `node:crypto` |
+| Security | Allowlist HTML sanitizer, request validation, magic-byte upload typing |
+| Caching | In-memory TTL cache with in-flight de-duplication, tokens persisted to disk |
+| Migrations | Sequential SQL files |
+| Testing | Sanitizer suite (`npm test`) |
+
+**The only dependency is `pg`.** Express, an ORM, a JWT library, and a sanitizer
+library are all replaced by standard-library implementations.
+
+## Layout
+
+```text
+src/
+  server.mjs          라우팅, CORS, 오류 응답
+  config.mjs          환경변수 로드
+  http.mjs            timeout fetch, 응답 헬퍼
+  cache.mjs           TTL 캐시 + 동시 요청 병합
+  validate.mjs        요청 본문 검증
+  auth/               서비스 간 토큰 검증, 호출자 신원 해석
+  sanitize/           허용목록 HTML sanitizer
+  db/                 pool, 사용자 provisioning, SQL
+  routes/             app-data, market-board, media
+  providers/          kis, toss, market, sec, dart, krx, news
+                      themes(테마 분류), format(금액 표기)
+                      token-store(토큰 보존), runtime-state(신규 판정)
+```
 
 ## Run
 
@@ -40,6 +77,24 @@ KIS market-board data returns an unavailable provider status until these are set
 - `KIS_ENABLE_MINUTE_CHARTS` optional, defaults to `false`
 
 `MARKET_DATA_MODE` defaults to `demo`, which blocks Toss/KIS live data from the public market-board response even when keys are present. Set `MARKET_DATA_MODE=licensed-live` only after the required market-data display and redistribution rights are cleared for the target environment.
+
+## Market board ranking
+
+Turnover figures are the **day's accumulated trading value** (총 거래대금 since the
+open), which is what domestic market screens report. Some services label a
+short rolling window as "실시간 거래대금"; those numbers are an order of magnitude
+smaller and are not comparable.
+
+Two rankings are derived from it:
+
+- **주도주** — turnover is the base, then a rising price and volume running above
+  the stock's own normal add to the score. Turnover alone would list the same
+  mega caps every session.
+- **강세 테마** — turnover-weighted average change rate, with a turnover floor.
+  Ranking themes by total turnover just re-lists whichever sector holds the
+  largest caps.
+
+ETFs, ETNs, preferred shares, and SPACs are excluded from both.
 
 The frontend should call this backend instead of calling Toss or KIS directly.
 

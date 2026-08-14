@@ -1,5 +1,6 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
+import { formatTradingAmount } from "./format.mjs";
 import { classifyTheme, isEtfLike, isNonOperatingEquity } from "./themes.mjs";
 import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 
@@ -102,18 +103,6 @@ function formatSignedPercent(value) {
   return `${numeric > 0 ? "+" : ""}${numeric.toFixed(2)}%`;
 }
 
-function formatTurnover(value) {
-  const numeric = parseNumeric(value);
-
-  if (!numeric) return "확인 중";
-
-  const eok = numeric / 100_000_000;
-
-  if (eok >= 10_000) return `${Math.round(eok / 10_000).toLocaleString("ko-KR")}조`;
-  if (eok >= 100) return `${Math.round(eok).toLocaleString("ko-KR")}억`;
-
-  return `${eok.toFixed(1)}억`;
-}
 
 function formatValue(value, precision = 2) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "확인 중";
@@ -138,6 +127,25 @@ function toneFromChange(change) {
 
 function isLikelyNonOperatingEquity(name) {
   return isEtfLike(name) || isNonOperatingEquity(name);
+}
+
+/**
+ * Ranks the day's leading stocks.
+ *
+ * Turnover is the base — money committed is the hardest signal — but ordering
+ * on turnover alone just lists the same mega caps every session. A leader is
+ * turnover *plus* a move: price rising and volume running above its own normal.
+ * The log scale means a 10x turnover gap is worth roughly an 8% price move, so
+ * size still dominates without burying a mid-cap that is genuinely leading.
+ */
+function leadershipScore(item) {
+  const turnover = parseNumeric(item.acml_tr_pbmn || item.avrg_tr_pbmn);
+  const changeRate = parseNumeric(item.prdy_ctrt);
+  const volumeIncrease = parseNumeric(item.vol_inrt);
+
+  return Math.log10(Math.max(turnover, 1)) * 10
+    + Math.max(changeRate, 0) * 1.2
+    + Math.min(Math.max(volumeIncrease, 0), 500) / 25;
 }
 
 function isUsableLeaderCandidate(item) {
@@ -171,6 +179,7 @@ function toLeadingStock(item, index) {
   const accumulatedVolume = parseNumeric(item.acml_vol);
   const rank = item.data_rank?.trim() || String(index + 1);
   const turnoverValue = parseNumeric(item.acml_tr_pbmn || item.avrg_tr_pbmn);
+  const changeRateValue = parseNumeric(item.prdy_ctrt);
   const theme = classifyTheme(symbol, name);
 
   return {
@@ -181,10 +190,11 @@ function toLeadingStock(item, index) {
     marketLabel: "국내 거래대금",
     theme,
     turnoverValue,
-    burst: volumeIncrease > 0 ? `거래량증가율 ${volumeIncrease.toFixed(1)}%` : `누적거래량 ${accumulatedVolume.toLocaleString("ko-KR")}주`,
-    turnover: formatTurnover(item.acml_tr_pbmn || item.avrg_tr_pbmn),
+    changeRateValue,
+    burst: volumeIncrease > 0 ? `거래량증가율 ${volumeIncrease.toFixed(1)}%` : `당일 거래량 ${accumulatedVolume.toLocaleString("ko-KR")}주`,
+    turnover: formatTradingAmount(turnoverValue, "KRW"),
     intraday: `현재가 ${parseNumeric(item.stck_prpr).toLocaleString("ko-KR")}원 · ${changeRate}`,
-    reason: `${theme} · KIS 거래대금순위 #${rank} · 거래량과 거래대금 동반 확인`,
+    reason: `${theme} · 당일 거래대금 ${formatTradingAmount(turnoverValue, "KRW")} · 거래대금 순위 #${rank}${volumeIncrease > 0 ? ` · 거래량증가 ${volumeIncrease.toFixed(0)}%` : ""}`,
     caution: "뉴스·공시 원문과 장중 거래대금 유지 여부 확인",
     timestamp: new Date().toISOString(),
     source: "kis"
@@ -312,7 +322,8 @@ export async function loadKisMarketBoard(config) {
       loadVolumeRank(config, token),
       loadIndexSnapshots(config, token)
     ]);
-    const krLeadingStocks = volumeRank
+    const krLeadingStocks = [...volumeRank]
+      .sort((left, right) => leadershipScore(right) - leadershipScore(left))
       .map(toLeadingStock)
       .filter(Boolean)
       .slice(0, 10);

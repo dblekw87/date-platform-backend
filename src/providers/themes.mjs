@@ -6,6 +6,8 @@
  * which theme leads the day, so scores aggregate trading value per theme.
  */
 
+import { formatTradingAmount } from "./format.mjs";
+
 const symbolThemes = {
   // 반도체 / 소부장
   "000660": "반도체",
@@ -63,6 +65,13 @@ const symbolThemes = {
   "005380": "자동차·전장",
   "000270": "자동차·전장",
   "012330": "자동차·전장",
+  "307950": "자동차·전장",
+  "204320": "자동차·전장",
+  "125490": "자동차·전장",
+
+  // 가전·전자
+  "066570": "전자부품·전장",
+  "011070": "전자부품·전장",
 
   // 플랫폼 / 콘텐츠
   "035420": "플랫폼 AI",
@@ -89,6 +98,9 @@ const symbolThemes = {
   "319400": "로봇",
   "056080": "로봇",
   "108490": "로봇",
+  "058610": "로봇",
+  "090360": "로봇",
+  "117730": "로봇",
 
   // 기타 개별 테마
   "011330": "비건가죽",
@@ -211,23 +223,19 @@ export function classifyTheme(symbol, name) {
   return rule ? rule[1] : "미분류";
 }
 
-function formatAmount(value, currency) {
-  if (currency === "USD") {
-    if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-    if (value >= 1_000_000) return `$${Math.round(value / 1_000_000).toLocaleString("ko-KR")}M`;
+// A theme needs real money behind it before its move counts as leadership.
+const minimumThemeTurnover = 50_000_000_000;
 
-    return `$${Math.round(value).toLocaleString("ko-KR")}`;
-  }
-
-  const eok = value / 100_000_000;
-
-  if (eok >= 10_000) return `${(eok / 10_000).toFixed(1)}조`;
-  if (eok >= 100) return `${Math.round(eok).toLocaleString("ko-KR")}억`;
-
-  return `${eok.toFixed(1)}억`;
-}
-
-/** Aggregates turnover per theme so the ranking reflects where money actually went. */
+/**
+ * Ranks themes by strength, not size.
+ *
+ * Sorting on turnover alone just re-lists the largest caps: 반도체 wins every
+ * session because SK하이닉스 and 삼성전자 dominate turnover whether or not the
+ * sector is actually moving. Ranking on turnover-weighted change rate answers
+ * the question the board is asking — where is money pushing prices today —
+ * while the turnover floor keeps a thin micro-cap from topping the list on a
+ * single spike.
+ */
 export function themeScores(leaders, limit = 4) {
   const byTheme = new Map();
 
@@ -237,19 +245,24 @@ export function themeScores(leaders, limit = 4) {
     if (theme === "ETF" || theme === "미분류") return;
 
     const turnover = Number(leader.turnoverValue);
+    const changeRate = Number(leader.changeRateValue);
 
     if (!Number.isFinite(turnover) || turnover <= 0) return;
+    if (!Number.isFinite(changeRate)) return;
 
-    const score = byTheme.get(theme) ?? { count: 0, leaders: [], theme, turnover: 0 };
+    const score = byTheme.get(theme) ?? { count: 0, leaders: [], theme, turnover: 0, weightedChange: 0 };
 
     score.turnover += turnover;
+    score.weightedChange += turnover * changeRate;
     score.count += 1;
     if (score.leaders.length < 3) score.leaders.push(leader.name);
     byTheme.set(theme, score);
   });
 
   return [...byTheme.values()]
-    .sort((left, right) => right.turnover - left.turnover)
+    .map((score) => ({ ...score, changeRate: score.weightedChange / score.turnover }))
+    .filter((score) => score.turnover >= minimumThemeTurnover && score.changeRate > 0)
+    .sort((left, right) => right.changeRate - left.changeRate)
     .slice(0, limit);
 }
 
@@ -261,10 +274,13 @@ export function buildThemeBrief(id, region, leaders, currency, checkedAt) {
   return {
     id,
     region,
-    title: `${scores[0].theme} 거래대금 집중이 가장 큽니다.`,
+    // Phrased so no subject particle is needed: 이/가 depends on whether the
+    // theme name ends in a consonant, and these names are not all Korean.
+    title: `오늘 가장 강한 테마는 ${scores[0].theme}입니다.`,
     points: [
-      ...scores.map((score) => `${score.theme}: ${formatAmount(score.turnover, currency)} · ${score.count}종목 · ${score.leaders.join(", ")}`),
-      "테마는 DATE 룰 기반 분류입니다. 세부 원인은 뉴스·공시 확인이 필요합니다."
+      ...scores.map((score) =>
+        `${score.theme}: ${score.changeRate > 0 ? "+" : ""}${score.changeRate.toFixed(2)}% · 거래대금 ${formatTradingAmount(score.turnover, currency)} · ${score.count}종목 · ${score.leaders.join(", ")}`),
+      "거래대금 가중 평균 등락률 순입니다. 테마는 DATE 룰 기반 분류이며 세부 원인은 뉴스·공시 확인이 필요합니다."
     ],
     source: "market",
     timestamp: checkedAt

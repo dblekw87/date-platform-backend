@@ -1,5 +1,6 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
+import { formatShareVolume, formatTradingAmount } from "./format.mjs";
 import { classifyTheme } from "./themes.mjs";
 import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 
@@ -128,34 +129,6 @@ function signedPercentFromRatio(value) {
   return `${percent > 0 ? "+" : ""}${percent.toFixed(2)}%`;
 }
 
-function formatAmount(value, currency) {
-  const numeric = parseDecimal(value);
-
-  if (!numeric) return "거래대금 확인 중";
-
-  if (currency === "USD") {
-    if (numeric >= 1_000_000_000) return `$${(numeric / 1_000_000_000).toFixed(1)}B`;
-    if (numeric >= 1_000_000) return `$${Math.round(numeric / 1_000_000).toLocaleString("ko-KR")}M`;
-
-    return `$${Math.round(numeric).toLocaleString("ko-KR")}`;
-  }
-
-  const eok = numeric / 100_000_000;
-
-  if (eok >= 10_000) return `${(eok / 10_000).toFixed(1)}조`;
-  if (eok >= 100) return `${Math.round(eok).toLocaleString("ko-KR")}억`;
-
-  return `${eok.toFixed(1)}억`;
-}
-
-function formatVolume(value) {
-  const numeric = parseDecimal(value);
-
-  if (!numeric) return "거래량 확인 중";
-  if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(1)}M주`;
-
-  return `${Math.round(numeric).toLocaleString("ko-KR")}주`;
-}
 
 function normalizeRankingItem(item, rankingType) {
   return {
@@ -261,8 +234,9 @@ function toLeader(item, market, stock, index) {
     marketLabel: market === "US" ? "미국 거래 집중" : "국내 거래 집중",
     theme,
     turnoverValue: parseDecimal(item.tradingAmount),
-    burst: `${formatVolume(item.tradingVolume)} · ${changeRate}`,
-    turnover: formatAmount(item.tradingAmount, currency),
+    changeRateValue: parseDecimal(item.price?.changeRate) * 100,
+    burst: `${formatShareVolume(item.tradingVolume)} · ${changeRate}`,
+    turnover: formatTradingAmount(item.tradingAmount, currency),
     intraday: `현재가 ${item.price?.lastPrice ?? "확인 중"} · 전일 대비 ${changeRate}`,
     reason: `${theme} · 토스증권 ${[
       rankFor(item, rankingTypes.turnover) ? `거래대금 #${rankFor(item, rankingTypes.turnover)}` : null,
