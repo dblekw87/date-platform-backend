@@ -21,6 +21,13 @@ const corpIndexTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 // Korean Standard Industrial Classification, longest prefix first. Mapped onto
 // the same vocabulary the curated themes use so both layers read alike.
+//
+// Division-level entries are the ones to watch: a two digit prefix swallows
+// every sub-industry beneath it, and KSIC divisions are not built along the
+// lines a trader groups stocks by. Division 27 is "의료·정밀·광학기기 및 시계",
+// which put 재영솔루텍 — a camera optics maker, code 27309 — under 바이오
+// alongside actual drug companies. Where a division mixes unrelated businesses
+// it is split at the group level instead.
 const industryThemes = [
   ["261", "반도체"],
   ["262", "전자부품·전장"],
@@ -28,7 +35,12 @@ const industryThemes = [
   ["264", "통신장비"],
   ["265", "전자부품·전장"],
   ["266", "전자부품·전장"],
+  ["271", "의료기기"],
+  ["272", "정밀기기"],
+  ["273", "광학·카메라"],
+  ["274", "소비재"],
   ["311", "조선"],
+  ["312", "기계·장비"],
   ["313", "항공우주"],
   ["10", "소비재"],
   ["11", "소비재"],
@@ -43,25 +55,29 @@ const industryThemes = [
   ["23", "인프라 투자"],
   ["24", "원자재"],
   ["25", "원자재"],
-  ["27", "바이오"],
   ["28", "전력기기"],
   ["29", "기계·장비"],
   ["30", "자동차·전장"],
   ["31", "조선"],
   ["32", "소비재"],
   ["33", "소비재"],
-  ["35", "전력기기"],
+  // Supplying electricity is not making the equipment: 28 is 전선·변압기, 35 is
+  // 한국전력 and the gas utilities.
+  ["35", "전력·유틸리티"],
   ["41", "인프라 투자"],
   ["42", "인프라 투자"],
   ["46", "소비재"],
   ["47", "소비재"],
-  ["49", "운임 반등"],
+  // 운임 반등 is a shipping-rate theme, so it stays on 수상 운송. Trucking and
+  // airlines were riding a name that describes neither.
+  ["49", "물류·운송"],
   ["50", "운임 반등"],
-  ["51", "운임 반등"],
-  ["52", "운임 반등"],
+  ["51", "항공운송"],
+  ["52", "물류·운송"],
   ["58", "게임·엔터"],
   ["59", "게임·엔터"],
-  ["61", "통신장비"],
+  // Carriers, not equipment makers — SK텔레콤 sat beside antenna suppliers.
+  ["61", "통신서비스"],
   ["62", "AI·소프트웨어"],
   ["63", "AI·소프트웨어"],
   ["64", "금리 수혜"],
@@ -70,7 +86,9 @@ const industryThemes = [
   ["68", "인프라 투자"],
   ["70", "바이오"],
   ["71", "AI·소프트웨어"],
-  ["72", "AI·소프트웨어"],
+  // 건축기술·엔지니어링 — plant and construction engineering, which is why
+  // 삼성E&A had to be overridden by hand in the curated map.
+  ["72", "인프라 투자"],
   ["73", "AI·소프트웨어"]
 ];
 
@@ -141,8 +159,12 @@ export async function resolveIndustryThemes(config, symbols) {
       try {
         const company = await fetchJson(`${companyUrl}?crtfc_key=${config.dart.apiKey}&corp_code=${corpCode}`, { timeoutMs: 5000 });
 
+        // Only the code is stored. Caching the theme alongside it froze every
+        // lookup against the mapping in force the day it ran, so correcting a
+        // rule left the wrong answer in place until the cache was deleted by
+        // hand — 재영솔루텍 stayed 바이오 after 27 was split.
         resolved[symbol] = company?.status === "000" && company.induty_code
-          ? { industryCode: company.induty_code, theme: themeForIndustryCode(company.induty_code) ?? null }
+          ? { industryCode: company.induty_code }
           : null;
       } catch {
         // Leave it unresolved so a transient failure is retried next time.
@@ -153,6 +175,10 @@ export async function resolveIndustryThemes(config, symbols) {
   }
 
   return Object.fromEntries(
-    symbols.flatMap((symbol) => resolved[symbol]?.theme ? [[symbol, resolved[symbol].theme]] : [])
+    symbols.flatMap((symbol) => {
+      const theme = themeForIndustryCode(resolved[symbol]?.industryCode);
+
+      return theme ? [[symbol, theme]] : [];
+    })
   );
 }
