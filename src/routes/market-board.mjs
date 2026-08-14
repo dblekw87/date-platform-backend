@@ -1,6 +1,7 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
+import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
@@ -380,17 +381,18 @@ async function attachLeaderNews(board) {
 
   if (leaders.length === 0) return board;
 
-  const tagged = attachLeaderNewsTags(board.headlineFlow, leaders);
-
   try {
-    return {
-      ...board,
-      headlineFlow: mergeHeadlines(tagged, await withTimeout(loadLeaderNewsHeadlines(leaders), 6000))
-    };
+    // Tagging runs after the merge, not before. Tagging first left the
+    // per-leader headlines — the ones actually about these companies — with no
+    // symbols at all, so anything reading relatedSymbols saw only the general
+    // feed that happened to mention a name in passing.
+    const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(leaders), 6000));
+
+    return { ...board, headlineFlow: attachLeaderNewsTags(merged, leaders) };
   } catch (error) {
     console.warn("leader news lookup failed", error instanceof Error ? error.message : error);
 
-    return { ...board, headlineFlow: tagged };
+    return { ...board, headlineFlow: attachLeaderNewsTags(board.headlineFlow, leaders) };
   }
 }
 
@@ -406,8 +408,10 @@ export async function getMarketBoard(config) {
         ...snapshot,
         // Snapshots written before day leaders existed carry neither field, and
         // the board reads them as lists.
-        krDayLeaders: snapshot.krDayLeaders ?? rankDayLeaders(snapshot.krLeadingStocks ?? [], "KRW"),
-        usDayLeaders: snapshot.usDayLeaders ?? rankDayLeaders(snapshot.usLeadingStocks ?? [], "USD"),
+        krDayLeaders: snapshot.krDayLeaders
+          ?? attachDayLeaderCatalysts(rankDayLeaders(snapshot.krLeadingStocks ?? [], "KRW"), snapshot.headlineFlow),
+        usDayLeaders: snapshot.usDayLeaders
+          ?? attachDayLeaderCatalysts(rankDayLeaders(snapshot.usLeadingStocks ?? [], "USD"), snapshot.headlineFlow),
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -438,10 +442,13 @@ export async function getMarketBoard(config) {
   // Day leaders are derived last so they can read the recent-window turnover the
   // burst step attaches — without it a leader that spiked at 09:10 and went
   // quiet would outrank one the money is arriving at right now.
+  // The catalyst says why a leader rose, which the ranking cannot: turnover
+  // concentration looks identical whether the reason is shared with the theme
+  // or belongs to one balance sheet.
   const board = {
     ...withBurst,
-    krDayLeaders: rankDayLeaders(withBurst.krLeadingStocks, "KRW"),
-    usDayLeaders: rankDayLeaders(withBurst.usLeadingStocks, "USD")
+    krDayLeaders: attachDayLeaderCatalysts(rankDayLeaders(withBurst.krLeadingStocks, "KRW"), withBurst.headlineFlow),
+    usDayLeaders: attachDayLeaderCatalysts(rankDayLeaders(withBurst.usLeadingStocks, "USD"), withBurst.headlineFlow)
   };
 
   if (canUseLicensedLiveData) {

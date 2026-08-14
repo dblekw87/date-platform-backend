@@ -480,17 +480,14 @@ export function attachLeaderNewsTags(headlines, leaders) {
 }
 
 export async function loadLeaderNewsHeadlines(leaders) {
+  // Taken per market, not off the front of the combined list. The domestic
+  // leaders arrive first and there are sixty of them, so slicing the whole list
+  // spent every query on KR and left US company news out of the feed entirely.
+  const leadersFor = (market) => leaders.filter((leader) => leader.market === market).slice(0, 8);
   const leaderQueries = uniqueBy(
-    leaders.slice(0, 18).flatMap((leader) => {
-      if (leader.market === "KR") {
-        return [{ query: `${leaderSearchName(leader)} 주식`, region: "KR", language: "ko", label: "종목 뉴스" }];
-      }
-
-      return [
-        { query: `${leader.symbol} stock news`, region: "US", language: "en", label: "종목 뉴스" },
-        { query: `${leaderCompanySearchName(leader)} earnings guidance revenue`, region: "US", language: "en", label: "종목 뉴스" }
-      ];
-    }),
+    [...leadersFor("KR"), ...leadersFor("US")].map((leader) => (leader.market === "KR"
+      ? { query: `${leaderSearchName(leader)} 주식`, region: "KR", language: "ko", label: "종목 뉴스" }
+      : { query: `${leaderCompanySearchName(leader)} stock news`, region: "US", language: "en", label: "종목 뉴스" })),
     (item) => `${item.region}:${item.query}`
   ).slice(0, 16);
   const themeQueries = uniqueBy(
