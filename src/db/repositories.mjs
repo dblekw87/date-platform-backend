@@ -144,18 +144,75 @@ export async function listCommunityPosts(config, { category, authorUserId, curso
   };
 }
 
-export async function getCommunityPost(config, id) {
+export async function getCommunityPost(config, id, viewerUserId = null) {
   const result = await query(config, `
     SELECT
       community_posts.*,
       users.author_id,
       profiles.nickname,
-      profiles.avatar_url
+      profiles.avatar_url,
+      COALESCE(community_posts.author_user_id = $2, false) AS is_owner,
+      (SELECT COUNT(*)::int FROM community_comments WHERE post_id = community_posts.id) AS reply_count
     FROM community_posts
     JOIN users ON users.id = community_posts.author_user_id
     JOIN profiles ON profiles.user_id = users.id
     WHERE community_posts.id = $1
-  `, [id]);
+  `, [id, viewerUserId]);
+
+  return result.rows[0] ?? null;
+}
+
+export async function listCommunityComments(config, postId) {
+  const result = await query(config, `
+    SELECT
+      community_comments.id,
+      community_comments.body,
+      community_comments.created_at,
+      community_comments.updated_at,
+      users.author_id,
+      profiles.nickname,
+      profiles.avatar_url
+    FROM community_comments
+    JOIN users ON users.id = community_comments.author_user_id
+    JOIN profiles ON profiles.user_id = users.id
+    WHERE community_comments.post_id = $1
+    ORDER BY community_comments.created_at ASC
+  `, [postId]);
+
+  return { items: result.rows };
+}
+
+export async function createCommunityComment(config, postId, userId, input) {
+  const result = await query(config, `
+    WITH inserted AS (
+      INSERT INTO community_comments (post_id, author_user_id, body)
+      SELECT $1, $2, $3
+      WHERE EXISTS (SELECT 1 FROM community_posts WHERE id = $1)
+      RETURNING *
+    )
+    SELECT
+      inserted.id,
+      inserted.body,
+      inserted.created_at,
+      inserted.updated_at,
+      users.author_id,
+      profiles.nickname,
+      profiles.avatar_url
+    FROM inserted
+    JOIN users ON users.id = inserted.author_user_id
+    JOIN profiles ON profiles.user_id = users.id
+  `, [postId, userId, input.body]);
+
+  return result.rows[0] ?? null;
+}
+
+export async function updateCommunityComment(config, id, userId, input) {
+  const result = await query(config, `
+    UPDATE community_comments
+    SET body = COALESCE($3, body), updated_at = now()
+    WHERE id = $1 AND author_user_id = $2
+    RETURNING id, body, created_at, updated_at
+  `, [id, userId, input.body]);
 
   return result.rows[0] ?? null;
 }
@@ -226,18 +283,19 @@ export async function listTradeJournals(config, { authorUserId, cursor, limit, v
   };
 }
 
-export async function getTradeJournal(config, id, viewerUserId) {
+export async function getTradeJournal(config, id, viewerUserId = null) {
   const result = await query(config, `
     SELECT
       trade_journals.*,
       users.author_id,
       profiles.nickname,
-      profiles.avatar_url
+      profiles.avatar_url,
+      COALESCE(trade_journals.author_user_id = $2, false) AS is_owner
     FROM trade_journals
     JOIN users ON users.id = trade_journals.author_user_id
     JOIN profiles ON profiles.user_id = users.id
     WHERE trade_journals.id = $1
-  `, [id]);
+  `, [id, viewerUserId]);
 
   const journal = result.rows[0] ?? null;
 
@@ -334,6 +392,27 @@ export async function saveMarketBoardSnapshot(config, { mode, payload, ttlSecond
   ]);
 
   return result.rows[0];
+}
+
+/**
+ * A snapshot is written on every refresh, so without this the table grows
+ * without bound. The newest expired row per mode is kept as the fallback that
+ * demo mode reads when no live snapshot exists.
+ */
+export async function pruneMarketBoardSnapshots(config, { keepPerMode = 1 } = {}) {
+  const result = await query(config, `
+    DELETE FROM market_board_snapshots
+    WHERE id IN (
+      SELECT id
+      FROM (
+        SELECT id, row_number() OVER (PARTITION BY mode ORDER BY observed_at DESC) AS position
+        FROM market_board_snapshots
+      ) ranked
+      WHERE ranked.position > $1
+    )
+  `, [keepPerMode]);
+
+  return result.rowCount;
 }
 
 export async function saveMarketDataSnapshot(config, input) {

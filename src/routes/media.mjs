@@ -21,6 +21,27 @@ const extensionMimeTypes = new Map([
 ]);
 const maxUploadBytes = 5 * 1024 * 1024;
 
+// The declared Content-Type is attacker-controlled, so the bytes decide.
+const magicNumbers = [
+  { mimeType: "image/jpeg", bytes: [0xff, 0xd8, 0xff] },
+  { mimeType: "image/png", bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { mimeType: "image/gif", bytes: [0x47, 0x49, 0x46, 0x38] }
+];
+
+function detectMimeType(buffer) {
+  const matched = magicNumbers.find(({ bytes }) =>
+    bytes.every((byte, index) => buffer[index] === byte));
+
+  if (matched) return matched.mimeType;
+
+  // WebP is "RIFF" + 4 size bytes + "WEBP".
+  if (buffer.subarray(0, 4).toString("latin1") === "RIFF" && buffer.subarray(8, 12).toString("latin1") === "WEBP") {
+    return "image/webp";
+  }
+
+  return undefined;
+}
+
 function splitBuffer(buffer, separator) {
   const parts = [];
   let start = 0;
@@ -179,10 +200,16 @@ export async function handleMediaRoute(config, request, url) {
     throw new HttpError(400, "File field is required", undefined, "file_required");
   }
 
-  const extension = allowedMimeTypes.get(file.mimeType);
+  const detectedMimeType = detectMimeType(file.buffer);
+  const extension = detectedMimeType ? allowedMimeTypes.get(detectedMimeType) : undefined;
 
   if (!extension) {
-    throw new HttpError(415, "Only image uploads are supported", { mimeType: file.mimeType }, "unsupported_media_type");
+    throw new HttpError(
+      415,
+      "Only image uploads are supported",
+      { declared: file.mimeType, detected: detectedMimeType ?? "unknown" },
+      "unsupported_media_type"
+    );
   }
 
   if (file.buffer.length > maxUploadBytes) {
@@ -198,7 +225,7 @@ export async function handleMediaRoute(config, request, url) {
   await writeFile(targetPath, file.buffer);
 
   const asset = await createMediaAsset(config, user.id, {
-    mimeType: file.mimeType,
+    mimeType: detectedMimeType,
     originalName: safeOriginalName(file.filename),
     publicUrl: publicUrl(config, storageKey),
     storageKey,
@@ -234,7 +261,10 @@ export async function serveUploadedMedia(config, request, response, url, headers
       ...headers,
       "Cache-Control": "public, max-age=31536000, immutable",
       "Content-Length": fileStat.size,
-      "Content-Type": mimeType
+      "Content-Type": mimeType,
+      // Stops a browser from re-interpreting a stored file as markup.
+      "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": "inline"
     });
     response.end(data);
   } catch {

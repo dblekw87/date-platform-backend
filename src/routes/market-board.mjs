@@ -1,5 +1,5 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
-import { getLatestMarketBoardSnapshot, saveMarketBoardSnapshot } from "../db/repositories.mjs";
+import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
@@ -132,6 +132,7 @@ async function writeSnapshot(config, board) {
       payload: board,
       ttlSeconds: 60
     });
+    await pruneMarketBoardSnapshots(config);
   } catch (error) {
     console.warn("market-board snapshot write failed", error instanceof Error ? error.message : error);
   }
