@@ -31,6 +31,27 @@ export async function fetchJson(url, options = {}) {
   }
 }
 
+export async function fetchText(url, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 6000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new HttpError(response.status, `HTTP ${response.status}`);
+    }
+
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function sendJson(response, status, body, headers = {}) {
   const payload = JSON.stringify(body);
 

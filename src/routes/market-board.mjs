@@ -1,6 +1,9 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, saveMarketBoardSnapshot } from "../db/repositories.mjs";
+import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
+import { loadMarketData } from "../providers/market.mjs";
+import { loadSecDisclosures } from "../providers/sec.mjs";
 import { buildThemeBrief } from "../providers/themes.mjs";
 import { loadTossExchangeRate, loadTossLeaders } from "../providers/toss.mjs";
 
@@ -132,10 +135,125 @@ async function writeSnapshot(config, board) {
   }
 }
 
+async function loadTossMarketBoard(config) {
+  const [krLeadingStocks, usLeadingStocks, usdKrw] = await Promise.all([
+    loadTossLeaders(config, "KR"),
+    loadTossLeaders(config, "US"),
+    loadTossExchangeRate(config, "USD", "KRW").catch(() => null)
+  ]);
+
+  return {
+    krLeadingStocks,
+    usLeadingStocks,
+    macroSnapshot: usdKrw ? [
+      {
+        id: "usd-krw",
+        label: "원/달러 환율",
+        market: "KR",
+        instrumentType: "fx",
+        symbol: "USD/KRW",
+        value: usdKrw.rate ?? usdKrw.midRate ?? "확인 중",
+        tone: "flat",
+        note: "토스증권 참고 환율",
+        timestamp: usdKrw.validFrom ?? usdKrw.timestamp,
+        source: "toss"
+      }
+    ] : []
+  };
+}
+
+/**
+ * `licensed` marks providers whose live data may only be displayed once display
+ * rights are cleared, so MARKET_DATA_MODE gates them. Public providers are not
+ * gated. Providers still served by the frontend have no `load` yet.
+ */
+const providerAdapters = [
+  {
+    id: "kis",
+    label: "한국투자증권 Open API",
+    licensed: true,
+    missingMessage: "KIS_APP_KEY, KIS_APP_SECRET 없음 · provider 비활성",
+    hasCredentials: hasKisCredentials,
+    load: loadKisMarketBoard,
+    timeoutMs: 8000
+  },
+  {
+    id: "toss",
+    label: "토스증권 Open API",
+    licensed: true,
+    missingMessage: "TOSS_INVEST_CLIENT_ID, TOSS_INVEST_CLIENT_SECRET 없음 · provider 비활성",
+    hasCredentials: hasTossCredentials,
+    load: loadTossMarketBoard,
+    timeoutMs: 9000
+  },
+  {
+    id: "market",
+    label: "시장 데이터",
+    hasCredentials: () => true,
+    load: loadMarketData,
+    timeoutMs: 6000
+  },
+  {
+    id: "sec",
+    label: "SEC EDGAR",
+    hasCredentials: () => true,
+    load: loadSecDisclosures,
+    timeoutMs: 9000
+  },
+  {
+    id: "dart",
+    label: "DART Open API",
+    missingMessage: "DART_API_KEY 없음 · provider 비활성",
+    hasCredentials: hasDartCredentials,
+    load: loadDartDisclosures,
+    timeoutMs: 7000
+  },
+  { id: "krx", label: "KRX Open API / KIND" },
+  { id: "news", label: "뉴스 공급자" }
+];
+
+async function withTimeout(promise, timeoutMs) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${timeoutMs}ms 초과`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function runAdapter(adapter, config, checkedAt, canUseLicensedLiveData) {
+  const empty = { payload: {} };
+
+  if (!adapter.load) {
+    return { ...empty, status: providerStatus(adapter.id, adapter.label, "mock", "backend 이관 대기 · provider 비활성", checkedAt) };
+  }
+
+  if (adapter.licensed && !canUseLicensedLiveData) {
+    return { ...empty, status: providerStatus(adapter.id, adapter.label, "mock", "MARKET_DATA_MODE=demo · 공개 live 데이터 차단", checkedAt) };
+  }
+
+  if (!adapter.hasCredentials(config)) {
+    return { ...empty, status: providerStatus(adapter.id, adapter.label, "mock", adapter.missingMessage ?? "provider 비활성", checkedAt) };
+  }
+
+  try {
+    return {
+      payload: await withTimeout(adapter.load(config), adapter.timeoutMs ?? 6000),
+      status: providerStatus(adapter.id, adapter.label, "ready", "backend adapter 활성화 · live 데이터 수신", checkedAt)
+    };
+  } catch (error) {
+    const reason = error instanceof Error && error.message ? ` · ${error.message}` : "";
+
+    return { ...empty, status: providerStatus(adapter.id, adapter.label, "error", `backend adapter 오류${reason}`, checkedAt) };
+  }
+}
+
 export async function getMarketBoard(config) {
   const checkedAt = new Date().toISOString();
-  const statuses = [];
-  const payloads = [];
   const canUseLicensedLiveData = config.marketDataMode === "licensed-live";
 
   if (!canUseLicensedLiveData) {
@@ -153,66 +271,11 @@ export async function getMarketBoard(config) {
     }
   }
 
-  if (!canUseLicensedLiveData) {
-    statuses.push(providerStatus("toss", "토스증권 Open API", "mock", "MARKET_DATA_MODE=demo · 공개 live 데이터 차단", checkedAt));
-  } else if (!hasTossCredentials(config)) {
-    statuses.push(providerStatus("toss", "토스증권 Open API", "mock", "TOSS_INVEST_CLIENT_ID, TOSS_INVEST_CLIENT_SECRET 없음 · provider 비활성", checkedAt));
-  } else {
-    try {
-      const [krLeadingStocks, usLeadingStocks, usdKrw] = await Promise.all([
-        loadTossLeaders(config, "KR"),
-        loadTossLeaders(config, "US"),
-        loadTossExchangeRate(config, "USD", "KRW").catch(() => null)
-      ]);
-
-      statuses.push(providerStatus("toss", "토스증권 Open API", "ready", "backend adapter 활성화 · live 데이터 수신", checkedAt));
-      payloads.push({
-        krLeadingStocks,
-        usLeadingStocks,
-        macroSnapshot: usdKrw ? [
-          {
-            id: "usd-krw",
-            label: "원/달러 환율",
-            market: "KR",
-            instrumentType: "fx",
-            symbol: "USD/KRW",
-            value: usdKrw.rate ?? usdKrw.midRate ?? "확인 중",
-            tone: "flat",
-            note: "토스증권 참고 환율",
-            timestamp: usdKrw.validFrom ?? usdKrw.timestamp,
-            source: "toss"
-          }
-        ] : []
-      });
-    } catch (error) {
-      const reason = error instanceof Error && error.message ? ` · ${error.message}` : "";
-
-      statuses.push(providerStatus("toss", "토스증권 Open API", "error", `backend adapter 오류${reason}`, checkedAt));
-    }
-  }
-
-  if (!canUseLicensedLiveData) {
-    statuses.push(providerStatus("kis", "한국투자증권 Open API", "mock", "MARKET_DATA_MODE=demo · 공개 live 데이터 차단", checkedAt));
-  } else if (!hasKisCredentials(config)) {
-    statuses.push(providerStatus("kis", "한국투자증권 Open API", "mock", "KIS_APP_KEY, KIS_APP_SECRET 없음 · provider 비활성", checkedAt));
-  } else {
-    try {
-      payloads.push(await loadKisMarketBoard(config));
-      statuses.push(providerStatus("kis", "한국투자증권 Open API", "ready", "backend adapter 활성화 · live 데이터 수신", checkedAt));
-    } catch (error) {
-      const reason = error instanceof Error && error.message ? ` · ${error.message}` : "";
-
-      statuses.push(providerStatus("kis", "한국투자증권 Open API", "error", `backend adapter 오류${reason}`, checkedAt));
-    }
-  }
-
-  statuses.push(
-    providerStatus("krx", "KRX Open API / KIND", "mock", "backend 이관 대기 · provider 비활성", checkedAt),
-    providerStatus("dart", "DART Open API", "mock", "backend 이관 대기 · provider 비활성", checkedAt),
-    providerStatus("sec", "SEC EDGAR", "mock", "backend 이관 대기 · provider 비활성", checkedAt),
-    providerStatus("news", "뉴스 공급자", "mock", "backend 이관 대기 · provider 비활성", checkedAt)
+  const results = await Promise.all(
+    providerAdapters.map((adapter) => runAdapter(adapter, config, checkedAt, canUseLicensedLiveData))
   );
-
+  const statuses = results.map((result) => result.status);
+  const payloads = results.map((result) => result.payload);
   const merged = payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses));
   // Themes are scored after the merge so every provider's leaders count toward
   // the same turnover ranking.

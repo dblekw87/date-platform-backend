@@ -30,6 +30,17 @@ export function readConfig() {
       appSecret: process.env.KIS_APP_SECRET,
       htsId: process.env.KIS_HTS_ID,
       enableMinuteCharts: process.env.KIS_ENABLE_MINUTE_CHARTS === "true"
+    },
+    // Providers migrated from the frontend adapter layer. Unlike Toss and KIS
+    // these are not gated by MARKET_DATA_MODE.
+    dart: {
+      apiKey: process.env.DART_API_KEY
+    },
+    market: {
+      finnhubApiKey: process.env.FINNHUB_API_KEY
+    },
+    sec: {
+      userAgent: process.env.SEC_USER_AGENT || "DATE Market Board admin@date-platform.local"
     }
   };
 }
