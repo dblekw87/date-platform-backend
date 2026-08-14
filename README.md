@@ -32,7 +32,16 @@ Toss endpoints return an unavailable provider status until these are set:
 - `TOSS_INVEST_CLIENT_ID`
 - `TOSS_INVEST_CLIENT_SECRET`
 
-The frontend should call this backend instead of calling Toss directly.
+KIS market-board data returns an unavailable provider status until these are set:
+
+- `KIS_APP_KEY`
+- `KIS_APP_SECRET`
+- `KIS_HTS_ID` optional
+- `KIS_ENABLE_MINUTE_CHARTS` optional, defaults to `false`
+
+`MARKET_DATA_MODE` defaults to `demo`, which blocks Toss/KIS live data from the public market-board response even when keys are present. Set `MARKET_DATA_MODE=licensed-live` only after the required market-data display and redistribution rights are cleared for the target environment.
+
+The frontend should call this backend instead of calling Toss or KIS directly.
 
 `FRONTEND_ORIGIN` can contain multiple comma-separated origins, for example local development plus a Vercel domain.
 
@@ -47,14 +56,22 @@ npm run db:check
 npm run dev
 ```
 
-Application data endpoints use frontend-forwarded development identity headers to bind data to a `users` row:
+## Caller identity
+
+Set `INTERNAL_JWT_SECRET` to the same value on this server and on the frontend. The frontend then signs a short-lived HS256 token per request and sends it as `Authorization: Bearer <token>`, and this server verifies the signature, expiry, issuer, and audience before binding data to a `users` row.
+
+With the secret set, the `X-Date-User-*` headers are ignored. Requests with a bad or expired token get `401 invalid_internal_token`; requests with no token are treated as anonymous.
+
+Without the secret the server falls back to reading identity from these headers:
 
 - `X-Date-User-Provider`
 - `X-Date-User-Id`
 - `X-Date-User-Name`
 - `X-Date-User-Email` optional
 
-If those headers are missing, the backend falls back to the mock development user (`date_user`). OAuth/JWT should replace these trusted internal headers before public production.
+Any client can set those headers, so the fallback is for local development only. The server prints a warning at startup when it is active.
+
+Reads of public collections (`GET /api/community/posts`, `GET /api/trade-journals`, and their detail routes) work anonymously. Every other endpoint returns `401 authentication_required` without an identity. Private trade journals stay hidden from anonymous and non-owner callers.
 
 Core app endpoints:
 
@@ -72,6 +89,18 @@ Core app endpoints:
 - `PATCH /api/trade-journals/:id`
 - `GET /api/me/trade-journals`
 
+## Rich text sanitizing
+
+Community post bodies and trade journal sections come from a contenteditable editor, so they can contain anything the author pasted. `src/sanitize/html.mjs` parses that HTML and re-serializes it from an allowlist: text is escaped, and only known tags and attributes are re-emitted. Unknown tags are unwrapped, `script`/`style`/`iframe`/`svg`/`form` and friends are dropped with their children, and `href`/`src` must match a safe-URL pattern.
+
+Sanitizing runs when a post or journal is written, and again when a detail route reads one, so rows stored before this existed are also cleaned on the way out.
+
+Run the sanitizer test suite with:
+
+```powershell
+npm test
+```
+
 `POST /api/media` accepts `multipart/form-data`:
 
 - `file`: image file, up to 5 MB
@@ -87,7 +116,7 @@ Current recommended development shape:
 Vercel frontend -> HTTPS backend domain -> Toss/KIS/DART/SEC providers
 ```
 
-Keep provider secrets only in the backend environment. Do not expose Toss credentials to Vercel client code.
+Keep provider secrets only in the backend environment. Do not expose Toss or KIS credentials to Vercel client code.
 
 Later deployment options:
 

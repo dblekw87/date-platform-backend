@@ -3,7 +3,8 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../http.mjs";
 import { createMediaAsset } from "../db/repositories.mjs";
-import { ensureRequestUser } from "../db/mock-auth.mjs";
+import { resolveRequestIdentity } from "../auth/identity.mjs";
+import { ensureUser } from "../db/users.mjs";
 
 const allowedMimeTypes = new Map([
   ["image/jpeg", ".jpg"],
@@ -163,6 +164,15 @@ export async function handleMediaRoute(config, request, url) {
     };
   }
 
+  const identity = resolveRequestIdentity(config, request);
+
+  if (!identity) {
+    return {
+      status: 401,
+      body: { error: "authentication_required" }
+    };
+  }
+
   const { fields, file } = await parseMultipart(request);
 
   if (!file) {
@@ -179,7 +189,7 @@ export async function handleMediaRoute(config, request, url) {
     throw new HttpError(413, "Upload is too large", { limitBytes: maxUploadBytes }, "payload_too_large");
   }
 
-  const user = await ensureRequestUser(config, request);
+  const user = await ensureUser(config, identity);
   const usageType = safeUsageType(fields.usageType);
   const storageKey = `${usageType}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${extension}`;
   const { targetPath } = uploadPath(config, storageKey);

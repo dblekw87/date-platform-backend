@@ -146,4 +146,8 @@ const server = createServer(async (request, response) => {
 
 server.listen(config.port, () => {
   console.log(`date-platform-backend listening on http://localhost:${config.port}`);
+
+  if (!config.internalJwtSecret) {
+    console.warn("INTERNAL_JWT_SECRET is not set. Falling back to trusted X-Date-User-* headers, which any client can forge. Set it before exposing this server.");
+  }
 });

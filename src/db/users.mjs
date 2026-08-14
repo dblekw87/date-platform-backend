@@ -1,7 +1,7 @@
 import { query } from "./client.mjs";
 
 function normalizeProvider(value) {
-  const provider = String(value ?? "mock").trim().toLowerCase();
+  const provider = String(value ?? "").trim().toLowerCase();
 
   return provider || "mock";
 }
@@ -15,7 +15,14 @@ function normalizeProviderUserId(value, provider) {
 }
 
 function normalizeDisplayName(value, provider) {
-  const displayName = String(value ?? "").trim();
+  const rawDisplayName = String(value ?? "").trim();
+  let displayName = rawDisplayName;
+
+  try {
+    displayName = decodeURIComponent(rawDisplayName);
+  } catch {
+    displayName = rawDisplayName;
+  }
 
   if (displayName) return displayName;
 
@@ -56,21 +63,4 @@ export async function ensureUser(config, input = {}) {
   `, [user.id, user.author_id]);
 
   return user;
-}
-
-export async function ensureRequestUser(config, request) {
-  return ensureUser(config, {
-    displayName: request.headers.get("x-date-user-name"),
-    email: request.headers.get("x-date-user-email"),
-    provider: request.headers.get("x-date-user-provider"),
-    providerUserId: request.headers.get("x-date-user-id")
-  });
-}
-
-export async function ensureMockUser(config) {
-  return ensureUser(config, {
-    displayName: "Mock Trader",
-    provider: "mock",
-    providerUserId: "mock-trader"
-  });
 }
