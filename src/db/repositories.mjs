@@ -500,7 +500,7 @@ function numericOrNull(value) {
  * a round trip each would take longer than the interval between samples. The
  * unique constraint absorbs a repeated tick rather than doubling a minute.
  */
-export async function saveMarketPriceSamples(config, { market, observedAt, sessionDate, stocks }) {
+export async function saveMarketPriceSamples(config, { market, observedAt, sessionDate, source, stocks }) {
   if (!config.databaseUrl || stocks.length === 0) return 0;
 
   const columns = 10;
@@ -526,7 +526,7 @@ export async function saveMarketPriceSamples(config, { market, observedAt, sessi
     )
     VALUES ${rows}
     ON CONFLICT (market, symbol, observed_at) DO NOTHING
-  `, [...values, stocks[0]?.source ?? "unknown"]);
+  `, [...values, source ?? "unknown"]);
 
   return result.rowCount;
 }

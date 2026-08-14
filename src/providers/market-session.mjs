@@ -56,6 +56,21 @@ export function minutesSinceOpen(market, now = new Date()) {
   return localParts(session.timeZone, now).minute - session.openMinute;
 }
 
+/**
+ * Which venue to ask KIS about for domestic stocks.
+ *
+ * NXT opens its pre-market at 08:00, an hour before the KRX bell. Asking KRX
+ * during that hour returns yesterday's close, so a session watched from 08:00
+ * records nothing until 09:00 — which is the hour the morning is being read in.
+ *
+ * After the KRX close it stays on KRX rather than following NXT into the
+ * after-market: leadership is judged on the regular session, and the two venues'
+ * turnover must not be summed into one figure.
+ */
+export function krTradingVenue(now = new Date()) {
+  return localParts(sessions.KR.timeZone, now).minute < sessions.KR.openMinute ? "NX" : "J";
+}
+
 export function isRegularSession(market, now = new Date()) {
   const session = sessions[market];
 

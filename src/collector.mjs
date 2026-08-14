@@ -80,6 +80,10 @@ async function samplePrices(config) {
     market: "KR",
     observedAt: new Date().toISOString(),
     sessionDate: sessionDate("KR"),
+    // Pre-market rows come from NXT and the rest from KRX. Recorded rather than
+    // merged: the two books have separate turnover, and a series that silently
+    // switched venue at 09:00 would show a break that was never a trade.
+    source: stocks[0]?.venue === "NXT" ? "kis:nxt" : "kis:krx",
     stocks
   });
 }

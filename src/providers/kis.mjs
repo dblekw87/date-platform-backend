@@ -1,6 +1,7 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
 import { formatTradingAmount } from "./format.mjs";
+import { krTradingVenue } from "./market-session.mjs";
 import { classifyTheme, isEtfLike, isNonOperatingEquity } from "./themes.mjs";
 import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 
@@ -168,7 +169,7 @@ function isUsableLeaderCandidate(item) {
   );
 }
 
-function toLeadingStock(item, index) {
+function toLeadingStock(item, index, venue) {
   const symbol = item.mksc_shrn_iscd?.trim();
   const name = item.hts_kor_isnm?.trim();
 
@@ -187,7 +188,10 @@ function toLeadingStock(item, index) {
     symbol,
     name,
     market: "KR",
-    marketLabel: "국내 거래대금",
+    marketLabel: venue === "NX" ? "NXT 프리마켓" : "국내 거래대금",
+    // Which exchange these figures came from. Turnover from the two venues
+    // describes different books and must never be added together.
+    venue: venue === "NX" ? "NXT" : "KRX",
     theme,
     turnoverValue,
     changeRateValue,
@@ -205,9 +209,9 @@ function toLeadingStock(item, index) {
   };
 }
 
-async function loadVolumeRank(config, token) {
+async function loadVolumeRank(config, token, venue) {
   const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/volume-rank", {
-    FID_COND_MRKT_DIV_CODE: "J",
+    FID_COND_MRKT_DIV_CODE: venue,
     FID_COND_SCR_DIV_CODE: "20171",
     FID_INPUT_ISCD: "0000",
     FID_DIV_CLS_CODE: "1",
@@ -239,9 +243,9 @@ async function loadVolumeRank(config, token) {
  * mid caps never enters the candidate pool at all. Ranking by change rate is the
  * only way those names are seen.
  */
-async function loadFluctuationRank(config, token) {
+async function loadFluctuationRank(config, token, venue) {
   const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/ranking/fluctuation", {
-    fid_cond_mrkt_div_code: "J",
+    fid_cond_mrkt_div_code: venue,
     fid_cond_scr_div_code: "20170",
     fid_input_iscd: "0000",
     fid_rank_sort_cls_code: "0",
@@ -370,12 +374,17 @@ function buildFlowItems(leaders) {
 }
 
 export async function loadKisMarketBoard(config) {
-  return readThroughCache("kis:market-board", 30_000, async () => {
+  // Before the KRX bell the only book trading is NXT's, so the venue is chosen
+  // by the clock. Cached per venue: the two return different numbers for the
+  // same stock and one must not be served as the other.
+  const venue = krTradingVenue();
+
+  return readThroughCache(`kis:market-board:${venue}`, 30_000, async () => {
     const token = await getAccessToken(config);
     const [volumeRank, fluctuationRank, macroSnapshot] = await Promise.all([
-      loadVolumeRank(config, token),
+      loadVolumeRank(config, token, venue),
       // A failure here costs the risers, not the board.
-      loadFluctuationRank(config, token).catch(() => []),
+      loadFluctuationRank(config, token, venue).catch(() => []),
       loadIndexSnapshots(config, token)
     ]);
     // Two rankings answer two different questions — where the money is, and what
@@ -390,7 +399,7 @@ export async function loadKisMarketBoard(config) {
     // the board groups these by theme and lists every member.
     const krLeadingStocks = [...bySymbol.values()]
       .sort((left, right) => leadershipScore(right) - leadershipScore(left))
-      .map(toLeadingStock)
+      .map((item, index) => toLeadingStock(item, index, venue))
       .filter(Boolean)
       .slice(0, 60);
 
