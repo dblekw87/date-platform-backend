@@ -3,6 +3,8 @@ import { readConfig, hasTossCredentials } from "./config.mjs";
 import { HttpError, readJsonBody, sendJson, sendNoContent } from "./http.mjs";
 import { handleAppDataRoute } from "./routes/app-data.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
+import { readNewsHeadlineEvents } from "./providers/news.mjs";
+import { readSecDisclosureEvents } from "./providers/sec.mjs";
 import { handleMediaRoute, serveUploadedMedia } from "./routes/media.mjs";
 import { loadTossExchangeRate, loadTossLeaders } from "./providers/toss.mjs";
 
@@ -88,6 +90,17 @@ async function route(request, response) {
 
   if (url.pathname === "/api/market-board") {
     sendJson(response, 200, await getMarketBoard(config), headers);
+    return;
+  }
+
+  // Headlines and filings first seen since the last board refresh.
+  if (url.pathname === "/api/market-board/news-events") {
+    sendJson(response, 200, { events: await readNewsHeadlineEvents() }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/market-board/sec-events") {
+    sendJson(response, 200, { events: await readSecDisclosureEvents() }, headers);
     return;
   }
 
