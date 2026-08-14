@@ -11,12 +11,14 @@ import {
   createCommunityComment,
   createCommunityPost,
   createTradeJournal,
+  deleteCommunityComment,
   getCommunityPost,
   getProfile,
   getTradeJournal,
   listCommunityComments,
   listCommunityPosts,
   listTradeJournals,
+  recordCommunityPostView,
   updateCommunityComment,
   updateCommunityPost,
   updateProfile,
@@ -132,7 +134,8 @@ export async function handleAppDataRoute(config, request, url, body) {
       body: await listCommunityPosts(config, {
         category: url.searchParams.get("category"),
         cursor: url.searchParams.get("cursor"),
-        limit: url.searchParams.get("limit")
+        limit: url.searchParams.get("limit"),
+        search: url.searchParams.get("q")?.trim().slice(0, 100) || undefined
       })
     };
   }
@@ -150,7 +153,7 @@ export async function handleAppDataRoute(config, request, url, body) {
     if (!validId(commentsMatch[1])) return notFound;
 
     if (request.method === "GET") {
-      return { status: 200, body: await listCommunityComments(config, commentsMatch[1]) };
+      return { status: 200, body: await listCommunityComments(config, commentsMatch[1], user?.id ?? null) };
     }
 
     if (request.method === "POST") {
@@ -162,12 +165,20 @@ export async function handleAppDataRoute(config, request, url, body) {
 
   const commentMatch = url.pathname.match(commentPattern);
 
-  if (commentMatch && request.method === "PATCH") {
+  if (commentMatch) {
     if (!validId(commentMatch[1])) return notFound;
 
-    const comment = await updateCommunityComment(config, commentMatch[1], user.id, validateCommentInput(body, { partial: true }));
+    if (request.method === "PATCH") {
+      const comment = await updateCommunityComment(config, commentMatch[1], user.id, validateCommentInput(body, { partial: true }));
 
-    return comment ? { status: 200, body: comment } : { status: 404, body: { error: "not_found_or_not_owner" } };
+      return comment ? { status: 200, body: comment } : { status: 404, body: { error: "not_found_or_not_owner" } };
+    }
+
+    if (request.method === "DELETE") {
+      const deleted = await deleteCommunityComment(config, commentMatch[1], user.id);
+
+      return deleted ? { status: 200, body: { id: deleted.id } } : { status: 404, body: { error: "not_found_or_not_owner" } };
+    }
   }
 
   const communityPostMatch = url.pathname.match(communityPostPattern);
@@ -177,7 +188,11 @@ export async function handleAppDataRoute(config, request, url, body) {
   if (communityPostMatch && request.method === "GET") {
     const post = sanitizeCommunityRow(await getCommunityPost(config, communityPostMatch[1], user?.id ?? null));
 
-    return post ? { status: 200, body: post } : notFound;
+    if (!post) return notFound;
+
+    await recordCommunityPostView(config, communityPostMatch[1], user?.id ?? null);
+
+    return { status: 200, body: post };
   }
 
   if (communityPostMatch && request.method === "PATCH") {

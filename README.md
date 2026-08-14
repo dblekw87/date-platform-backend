@@ -78,13 +78,14 @@ Core app endpoints:
 - `GET /api/me`
 - `PATCH /api/me/profile`
 - `POST /api/media`
-- `GET /api/community/posts?limit=20&cursor=...`
+- `GET /api/community/posts?limit=20&cursor=...&category=...&q=...`
 - `POST /api/community/posts`
 - `GET /api/community/posts/:id`
 - `PATCH /api/community/posts/:id`
 - `GET /api/community/posts/:id/comments`
 - `POST /api/community/posts/:id/comments`
 - `PATCH /api/community/comments/:id`
+- `DELETE /api/community/comments/:id`
 - `GET /api/me/community-posts`
 - `GET /api/trade-journals?limit=20&cursor=...`
 - `POST /api/trade-journals`

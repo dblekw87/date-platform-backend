@@ -94,7 +94,7 @@ export async function createMediaAsset(config, userId, input) {
   return result.rows[0];
 }
 
-export async function listCommunityPosts(config, { category, authorUserId, cursor, limit }) {
+export async function listCommunityPosts(config, { category, authorUserId, cursor, limit, search }) {
   const decoded = decodeCursor(cursor);
   const params = ["published", pageLimit(limit)];
   const filters = ["community_posts.status = $1"];
@@ -102,6 +102,12 @@ export async function listCommunityPosts(config, { category, authorUserId, curso
   if (category && category !== "전체") {
     params.push(category);
     filters.push(`community_posts.category = $${params.length}`);
+  }
+
+  // Titles are what readers scan, so search matches those rather than markup.
+  if (search) {
+    params.push(`%${search.replace(/[%_\\]/g, "\\$&")}%`);
+    filters.push(`community_posts.title ILIKE $${params.length}`);
   }
 
   if (authorUserId) {
@@ -162,7 +168,7 @@ export async function getCommunityPost(config, id, viewerUserId = null) {
   return result.rows[0] ?? null;
 }
 
-export async function listCommunityComments(config, postId) {
+export async function listCommunityComments(config, postId, viewerUserId = null) {
   const result = await query(config, `
     SELECT
       community_comments.id,
@@ -171,13 +177,14 @@ export async function listCommunityComments(config, postId) {
       community_comments.updated_at,
       users.author_id,
       profiles.nickname,
-      profiles.avatar_url
+      profiles.avatar_url,
+      COALESCE(community_comments.author_user_id = $2, false) AS is_owner
     FROM community_comments
     JOIN users ON users.id = community_comments.author_user_id
     JOIN profiles ON profiles.user_id = users.id
     WHERE community_comments.post_id = $1
     ORDER BY community_comments.created_at ASC
-  `, [postId]);
+  `, [postId, viewerUserId]);
 
   return { items: result.rows };
 }
@@ -197,13 +204,36 @@ export async function createCommunityComment(config, postId, userId, input) {
       inserted.updated_at,
       users.author_id,
       profiles.nickname,
-      profiles.avatar_url
+      profiles.avatar_url,
+      true AS is_owner
     FROM inserted
     JOIN users ON users.id = inserted.author_user_id
     JOIN profiles ON profiles.user_id = users.id
   `, [postId, userId, input.body]);
 
   return result.rows[0] ?? null;
+}
+
+export async function deleteCommunityComment(config, id, userId) {
+  const result = await query(config, `
+    DELETE FROM community_comments
+    WHERE id = $1 AND author_user_id = $2
+    RETURNING id
+  `, [id, userId]);
+
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Counted on read, and never for the author, so opening your own post to check
+ * it does not inflate the number.
+ */
+export async function recordCommunityPostView(config, id, viewerUserId) {
+  await query(config, `
+    UPDATE community_posts
+    SET view_count = view_count + 1
+    WHERE id = $1 AND ($2::uuid IS NULL OR author_user_id <> $2)
+  `, [id, viewerUserId]);
 }
 
 export async function updateCommunityComment(config, id, userId, input) {
