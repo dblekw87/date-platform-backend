@@ -191,6 +191,10 @@ function toLeadingStock(item, index) {
     theme,
     turnoverValue,
     changeRateValue,
+    volumeValue: accumulatedVolume,
+    // KIS reports the increase against yesterday as a percent; the leadership
+    // ranking compares markets, so it is carried as a multiple like the US feed.
+    volumeRatioValue: volumeIncrease > 0 ? 1 + volumeIncrease / 100 : undefined,
     burst: volumeIncrease > 0 ? `거래량증가율 ${volumeIncrease.toFixed(1)}%` : `당일 거래량 ${accumulatedVolume.toLocaleString("ko-KR")}주`,
     turnover: formatTradingAmount(turnoverValue, "KRW"),
     intraday: `현재가 ${parseNumeric(item.stck_prpr).toLocaleString("ko-KR")}원 · ${changeRate}`,

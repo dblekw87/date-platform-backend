@@ -227,6 +227,8 @@ function toUsLeader(quote, index) {
     theme,
     turnoverValue,
     changeRateValue: changeRate,
+    volumeValue: volume,
+    volumeRatioValue: volumeRatio > 0 ? volumeRatio : undefined,
     burst: `${formatShareVolume(volume)}${volumeRatio > 0 ? ` · 평균 대비 ${volumeRatio.toFixed(1)}배` : ""}`,
     turnover: formatTradingAmount(turnoverValue, "USD"),
     intraday: `현재가 $${price.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${changeRate > 0 ? "+" : ""}${changeRate.toFixed(2)}%`,

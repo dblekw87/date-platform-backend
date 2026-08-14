@@ -4,6 +4,7 @@ import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
+import { rankDayLeaders } from "../providers/leadership.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
@@ -73,6 +74,8 @@ function baseMarketBoardData(providerStatuses) {
     flowItems: [],
     usLeadingStocks: [],
     krLeadingStocks: [],
+    usDayLeaders: [],
+    krDayLeaders: [],
     smallCapScanner: []
   };
 }
@@ -401,6 +404,10 @@ export async function getMarketBoard(config) {
     if (snapshot) {
       return {
         ...snapshot,
+        // Snapshots written before day leaders existed carry neither field, and
+        // the board reads them as lists.
+        krDayLeaders: snapshot.krDayLeaders ?? rankDayLeaders(snapshot.krLeadingStocks ?? [], "KRW"),
+        usDayLeaders: snapshot.usDayLeaders ?? rankDayLeaders(snapshot.usLeadingStocks ?? [], "USD"),
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -427,7 +434,15 @@ export async function getMarketBoard(config) {
   const withThemes = themeBriefs.length > 0
     ? { ...merged, marketBrief: mergeById(merged.marketBrief, themeBriefs) }
     : merged;
-  const board = await attachTurnoverBurst(await attachLeaderNews(withThemes));
+  const withBurst = await attachTurnoverBurst(await attachLeaderNews(withThemes));
+  // Day leaders are derived last so they can read the recent-window turnover the
+  // burst step attaches — without it a leader that spiked at 09:10 and went
+  // quiet would outrank one the money is arriving at right now.
+  const board = {
+    ...withBurst,
+    krDayLeaders: rankDayLeaders(withBurst.krLeadingStocks, "KRW"),
+    usDayLeaders: rankDayLeaders(withBurst.usLeadingStocks, "USD")
+  };
 
   if (canUseLicensedLiveData) {
     await writeSnapshot(config, board);

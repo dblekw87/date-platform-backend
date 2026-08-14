@@ -264,6 +264,8 @@ function toLeader(item, market, stock, index) {
     theme,
     turnoverValue: parseDecimal(item.tradingAmount),
     changeRateValue: parseDecimal(item.price?.changeRate) * 100,
+    // Toss reports today's volume without a baseline, so no ratio is derived.
+    volumeValue: parseDecimal(item.tradingVolume),
     burst: `${formatShareVolume(item.tradingVolume)} · ${changeRate}`,
     turnover: formatTradingAmount(item.tradingAmount, currency),
     intraday: `현재가 ${item.price?.lastPrice ?? "확인 중"} · 전일 대비 ${changeRate}`,
