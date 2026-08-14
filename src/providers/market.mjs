@@ -250,11 +250,12 @@ async function loadUsLeaders() {
       .filter((quote) => quote?.quoteType === "EQUITY" && quote.symbol)
       .forEach((quote) => bySymbol.set(quote.symbol, quote));
 
+    // Deep enough that a theme holds several names, as on the domestic board.
     return [...bySymbol.values()]
       .sort((left, right) => usLeadershipScore(right) - usLeadershipScore(left))
       .map(toUsLeader)
       .filter(Boolean)
-      .slice(0, 10);
+      .slice(0, 30);
   });
 }
 

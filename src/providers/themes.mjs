@@ -182,7 +182,11 @@ const symbolThemes = {
 };
 
 const etfPattern = /(^|\s)(KODEX|TIGER|ACE|RISE|SOL|PLUS|HANARO|KOSEF|KBSTAR|ARIRANG|TIMEFOLIO|히어로즈|마이티|HK)|ETF|ETN|인버스|레버리지|채권|회사채|국고채|액티브|Nifty|TOP10|리츠|REIT/i;
-const nonOperatingPattern = /스팩|SPAC|우선주|우B|우C/i;
+// Preferred shares are the same company as their common stock, so they double
+// up a theme with a name that is not a separate leader. Korean tickers mark
+// them with a trailing 우 (현대차2우B, 삼성전자우), which the lookbehind keeps
+// from catching real names ending in 대우.
+const nonOperatingPattern = /스팩|SPAC|우선주|(?<!대)\d?우[BC]?$/i;
 
 // Ordered: the first rule that matches wins, so narrower themes come first.
 const themeRules = [

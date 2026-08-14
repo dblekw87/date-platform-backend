@@ -322,11 +322,13 @@ export async function loadKisMarketBoard(config) {
       loadVolumeRank(config, token),
       loadIndexSnapshots(config, token)
     ]);
+    // Deep enough that a theme holds several names, not just its top stock —
+    // the board groups these by theme and lists every member.
     const krLeadingStocks = [...volumeRank]
       .sort((left, right) => leadershipScore(right) - leadershipScore(left))
       .map(toLeadingStock)
       .filter(Boolean)
-      .slice(0, 10);
+      .slice(0, 30);
 
     return {
       flowItems: krLeadingStocks.length > 0 ? buildFlowItems(krLeadingStocks) : [],
