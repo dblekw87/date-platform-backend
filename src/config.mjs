@@ -36,8 +36,23 @@ export function readConfig() {
     dart: {
       apiKey: process.env.DART_API_KEY
     },
+    krx: {
+      calendarFeedUrl: process.env.KRX_CALENDAR_FEED_URL
+    },
     market: {
       finnhubApiKey: process.env.FINNHUB_API_KEY
+    },
+    news: {
+      benzingaApiKey: process.env.BENZINGA_API_KEY,
+      feedUrl: process.env.MARKET_BOARD_NEWS_FEED_URL,
+      finnhubApiKey: process.env.FINNHUB_API_KEY,
+      naverApiHubKey: process.env.NAVER_API_HUB_KEY,
+      naverApiHubKeyId: process.env.NAVER_API_HUB_KEY_ID,
+      naverSearchClientId: process.env.NAVER_SEARCH_CLIENT_ID ?? process.env.NAVER_CLIENT_ID,
+      naverSearchClientSecret: process.env.NAVER_SEARCH_CLIENT_SECRET ?? process.env.NAVER_CLIENT_SECRET,
+      newsApiKey: process.env.NEWSAPI_KEY,
+      papagoClientId: process.env.NAVER_PAPAGO_CLIENT_ID,
+      papagoClientSecret: process.env.NAVER_PAPAGO_CLIENT_SECRET
     },
     sec: {
       userAgent: process.env.SEC_USER_AGENT || "DATE Market Board admin@date-platform.local"

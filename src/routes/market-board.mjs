@@ -2,6 +2,8 @@ import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
+import { loadKrxCalendar } from "../providers/krx.mjs";
+import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
 import { buildThemeBrief } from "../providers/themes.mjs";
@@ -208,8 +210,21 @@ const providerAdapters = [
     load: loadDartDisclosures,
     timeoutMs: 7000
   },
-  { id: "krx", label: "KRX Open API / KIND" },
-  { id: "news", label: "뉴스 공급자" }
+  {
+    id: "krx",
+    label: "KRX Open API / KIND",
+    hasCredentials: () => true,
+    load: loadKrxCalendar,
+    timeoutMs: 9000
+  },
+  {
+    id: "news",
+    label: "뉴스 공급자",
+    // Google News RSS needs no key, so this provider always has something to load.
+    hasCredentials: () => true,
+    load: loadNewsHeadlines,
+    timeoutMs: 12_000
+  }
 ];
 
 async function withTimeout(promise, timeoutMs) {
@@ -252,6 +267,38 @@ async function runAdapter(adapter, config, checkedAt, canUseLicensedLiveData) {
   }
 }
 
+function mergeHeadlines(baseItems, extraItems) {
+  const byId = new Map(baseItems.map((item) => [item.id, item]));
+
+  extraItems.forEach((item) => byId.set(item.id, item));
+
+  return [...byId.values()].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+}
+
+/**
+ * Runs after the provider merge so leaders from any provider get their symbols
+ * and themes tagged onto headlines, plus a targeted news search per leader.
+ * A failure here leaves the untagged headlines in place.
+ */
+async function attachLeaderNews(board) {
+  const leaders = [...board.krLeadingStocks, ...board.usLeadingStocks];
+
+  if (leaders.length === 0) return board;
+
+  const tagged = attachLeaderNewsTags(board.headlineFlow, leaders);
+
+  try {
+    return {
+      ...board,
+      headlineFlow: mergeHeadlines(tagged, await withTimeout(loadLeaderNewsHeadlines(leaders), 6000))
+    };
+  } catch (error) {
+    console.warn("leader news lookup failed", error instanceof Error ? error.message : error);
+
+    return { ...board, headlineFlow: tagged };
+  }
+}
+
 export async function getMarketBoard(config) {
   const checkedAt = new Date().toISOString();
   const canUseLicensedLiveData = config.marketDataMode === "licensed-live";
@@ -283,9 +330,10 @@ export async function getMarketBoard(config) {
     buildThemeBrief("derived-kr-theme-leadership", "시황 · 국내 강세 테마", merged.krLeadingStocks, "KRW", checkedAt),
     buildThemeBrief("derived-us-theme-leadership", "시황 · 미국 강세 테마", merged.usLeadingStocks, "USD", checkedAt)
   ].filter(Boolean);
-  const board = themeBriefs.length > 0
+  const withThemes = themeBriefs.length > 0
     ? { ...merged, marketBrief: mergeById(merged.marketBrief, themeBriefs) }
     : merged;
+  const board = await attachLeaderNews(withThemes);
 
   if (canUseLicensedLiveData) {
     await writeSnapshot(config, board);
