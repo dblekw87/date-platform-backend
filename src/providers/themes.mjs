@@ -228,7 +228,9 @@ const themeRules = [
   [/mlcc|적층세라믹|콘덴서|커패시터|capacitor|ceramic capacitor/i, "MLCC·전자부품"],
   [/광통신|광모듈|광부품|광네트워크|optical|photonics|coherent|networking|data infrastructure/i, "광통신·네트워크"],
   [/ai|인공지능|소프트웨어|클라우드|데이터센터|보안|cyber|software|cloud|data center|saas/i, "AI·소프트웨어"],
-  [/로봇|자동화|robot|automation/i, "로봇"],
+  // 로보틱스 and 로보티즈 are how most of these companies are actually named —
+  // 두산로보틱스 and 레인보우로보틱스 went unclassified against 로봇 alone.
+  [/로봇|로보틱|로보티|자동화|robot|automation/i, "로봇"],
   [/항공우주|우주|위성|로켓|발사체|space|aerospace|satellite|rocket|launch/i, "항공우주"],
   [/카메라모듈|기판|패키지기판|광학솔루션|전자부품|전장부품|camera module|substrate|electronics component/i, "전자부품·전장"],
   [/자동차|전기차|자율주행|전장|타이어|vehicle|ev\b|autonomous|mobility|auto parts/i, "자동차·전장"],
