@@ -1,5 +1,5 @@
 import { saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
-import { loadKisMarketBoard } from "./providers/kis.mjs";
+import { isKrMarketOpen, loadKisMarketBoard } from "./providers/kis.mjs";
 import { sessionDate } from "./providers/market-session.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
 
@@ -111,7 +111,9 @@ export function startMarketCollector(config) {
     const now = new Date();
     let delay = idleIntervalMs;
 
-    if (isCollecting(now)) {
+    // The weekday window is checked first because it is free; the holiday
+    // lookup only runs on days that got past it.
+    if (isCollecting(now) && await isKrMarketOpen(config, now)) {
       const { minute } = seoulMinute(now);
 
       delay = intervalMsFor(minute);

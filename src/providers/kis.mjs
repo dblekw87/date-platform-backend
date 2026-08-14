@@ -1,7 +1,8 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
 import { formatTradingAmount } from "./format.mjs";
-import { krTradingVenue } from "./market-session.mjs";
+import { krTradingVenue, sessionDate } from "./market-session.mjs";
+import { createRuntimeState } from "./runtime-state.mjs";
 import { classifyTheme, isEtfLike, isNonOperatingEquity } from "./themes.mjs";
 import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 
@@ -282,6 +283,59 @@ async function loadFluctuationRank(config, token, venue) {
       acml_tr_pbmn: String(price * volume)
     };
   });
+}
+
+/**
+ * Whether the domestic market opens on a given day.
+ *
+ * The weekday check alone is not enough. 광복절 fell on a Saturday in 2026 and
+ * moved 대체공휴일 to Monday the 17th, which is a weekday the exchange is shut.
+ * Left to itself the collector would have spent that Monday recording the
+ * previous close once a minute, and the series would carry a full flat session
+ * that never traded — worse than a gap, because clustering would read it as
+ * every stock moving together at zero.
+ *
+ * Holidays are legislated a year ahead, so a week of cache is generous.
+ */
+const tradingCalendar = createRuntimeState("kr-trading-calendar", () => ({ fetchedAt: 0, byDate: {} }));
+const tradingCalendarTtlMs = 7 * 24 * 60 * 60 * 1000;
+
+export async function isKrMarketOpen(config, date = new Date()) {
+  const day = sessionDate("KR", date).replaceAll("-", "");
+  const cached = await tradingCalendar.read();
+
+  if (cached.byDate[day] !== undefined && Date.now() - cached.fetchedAt < tradingCalendarTtlMs) {
+    return cached.byDate[day];
+  }
+
+  try {
+    const token = await getAccessToken(config);
+    const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/chk-holiday", {
+      BASS_DT: day,
+      CTX_AREA_NK: "",
+      CTX_AREA_FK: ""
+    }), {
+      timeoutMs: 5000,
+      headers: kisHeaders(config, token, "CTCA0903R")
+    });
+    const byDate = { ...cached.byDate };
+
+    (data?.output ?? []).forEach((row) => {
+      if (row.bass_dt) byDate[row.bass_dt] = row.opnd_yn === "Y";
+    });
+
+    if (byDate[day] === undefined) throw new Error("KIS holiday lookup returned no row for today");
+
+    await tradingCalendar.save({ fetchedAt: Date.now(), byDate });
+
+    return byDate[day];
+  } catch (error) {
+    // Collecting a day that turns out to be closed is recoverable — the rows
+    // can be filtered out later. Skipping a day that was open is not.
+    console.warn("trading calendar lookup failed, assuming the market is open", error instanceof Error ? error.message : error);
+
+    return true;
+  }
 }
 
 async function loadIndexQuote(config, token, indexConfig) {
