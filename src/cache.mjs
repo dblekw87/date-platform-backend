@@ -20,10 +20,31 @@ export function setCache(key, value, ttlMs) {
   return value;
 }
 
+const inFlight = new Map();
+
+/**
+ * Cache reads also collapse concurrent misses onto one loader call. Without
+ * this, every request arriving while a provider call is in progress starts its
+ * own, which is how a burst of page loads turns into a rate-limit response.
+ */
 export async function readThroughCache(key, ttlMs, loader) {
   const cached = getCache(key);
 
   if (cached !== undefined) return cached;
 
-  return setCache(key, await loader(), ttlMs);
+  const pending = inFlight.get(key);
+
+  if (pending) return pending;
+
+  const request = (async () => {
+    try {
+      return setCache(key, await loader(), ttlMs);
+    } finally {
+      inFlight.delete(key);
+    }
+  })();
+
+  inFlight.set(key, request);
+
+  return request;
 }

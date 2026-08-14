@@ -185,10 +185,15 @@ export async function updateCommunityPost(config, id, userId, input) {
   return result.rows[0] ?? null;
 }
 
-export async function listTradeJournals(config, { authorUserId, cursor, limit, visibility = "public" }) {
+export async function listTradeJournals(config, { authorUserId, cursor, limit, visibility }) {
   const decoded = decodeCursor(cursor);
-  const params = [visibility, pageLimit(limit)];
-  const filters = ["trade_journals.visibility = $1"];
+  const params = [pageLimit(limit)];
+  const filters = [];
+
+  if (visibility) {
+    params.push(visibility);
+    filters.push(`trade_journals.visibility = $${params.length}`);
+  }
 
   if (authorUserId) {
     params.push(authorUserId);
@@ -209,19 +214,19 @@ export async function listTradeJournals(config, { authorUserId, cursor, limit, v
     FROM trade_journals
     JOIN users ON users.id = trade_journals.author_user_id
     JOIN profiles ON profiles.user_id = users.id
-    WHERE ${filters.join(" AND ")}
+    ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
     ORDER BY trade_journals.created_at DESC, trade_journals.id DESC
-    LIMIT $2
+    LIMIT $1
   `, params);
   const rows = result.rows;
 
   return {
     items: rows,
-    nextCursor: rows.length === params[1] ? encodeCursor(rows.at(-1)) : null
+    nextCursor: rows.length === params[0] ? encodeCursor(rows.at(-1)) : null
   };
 }
 
-export async function getTradeJournal(config, id) {
+export async function getTradeJournal(config, id, viewerUserId) {
   const result = await query(config, `
     SELECT
       trade_journals.*,
@@ -234,7 +239,12 @@ export async function getTradeJournal(config, id) {
     WHERE trade_journals.id = $1
   `, [id]);
 
-  return result.rows[0] ?? null;
+  const journal = result.rows[0] ?? null;
+
+  if (!journal) return null;
+  if (journal.visibility === "private" && journal.author_user_id !== viewerUserId) return null;
+
+  return journal;
 }
 
 export async function createTradeJournal(config, userId, input) {
@@ -296,4 +306,62 @@ export async function updateTradeJournal(config, id, userId, input) {
   ]);
 
   return result.rows[0] ?? null;
+}
+
+export async function getLatestMarketBoardSnapshot(config, mode = "licensed-live") {
+  const result = await query(config, `
+    SELECT payload
+    FROM market_board_snapshots
+    WHERE mode = $1
+      AND (expires_at IS NULL OR expires_at > now())
+    ORDER BY observed_at DESC
+    LIMIT 1
+  `, [mode]);
+
+  return result.rows[0]?.payload ?? null;
+}
+
+export async function saveMarketBoardSnapshot(config, { mode, payload, ttlSeconds = 60 }) {
+  const result = await query(config, `
+    INSERT INTO market_board_snapshots (mode, payload, provider_statuses, expires_at)
+    VALUES ($1, $2, $3, now() + ($4 || ' seconds')::interval)
+    RETURNING id, observed_at, expires_at
+  `, [
+    mode,
+    JSON.stringify(payload),
+    JSON.stringify(payload.providerStatuses ?? []),
+    String(ttlSeconds)
+  ]);
+
+  return result.rows[0];
+}
+
+export async function saveMarketDataSnapshot(config, input) {
+  const result = await query(config, `
+    INSERT INTO market_data_snapshots (
+      provider,
+      dataset,
+      market,
+      mode,
+      source_url,
+      source_license,
+      payload,
+      raw_payload,
+      expires_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + ($9 || ' seconds')::interval)
+    RETURNING id, observed_at, expires_at
+  `, [
+    input.provider,
+    input.dataset,
+    input.market ?? null,
+    input.mode ?? "demo",
+    input.sourceUrl ?? null,
+    input.sourceLicense ?? null,
+    JSON.stringify(input.payload),
+    input.rawPayload ? JSON.stringify(input.rawPayload) : null,
+    String(input.ttlSeconds ?? 60)
+  ]);
+
+  return result.rows[0];
 }

@@ -1,5 +1,7 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
+import { classifyTheme } from "./themes.mjs";
+import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 
 const tokenCacheSkewMs = 60_000;
 const rankingTypes = {
@@ -8,7 +10,30 @@ const rankingTypes = {
   gainers: "TOP_GAINERS"
 };
 
+const leaderCacheTtlMs = 60_000;
+const rateLimitCooldownMs = 90_000;
+
 let tokenCache;
+let tokenRequest;
+let cooldownUntil = 0;
+
+// A 429 means the quota is already spent, so retrying on the next page load only
+// deepens the hole. Hold off until the window has plausibly reset.
+function assertNotCoolingDown() {
+  const remainingMs = cooldownUntil - Date.now();
+
+  if (remainingMs > 0) {
+    throw new Error(`레이트 리밋 대기 중 · ${Math.ceil(remainingMs / 1000)}초 후 재시도`);
+  }
+}
+
+function noteFailure(error) {
+  if (error?.status === 429) {
+    cooldownUntil = Date.now() + rateLimitCooldownMs;
+  }
+
+  throw error;
+}
 
 function tossUrl(config, path, params = {}) {
   const url = new URL(path, config.toss.baseUrl);
@@ -22,13 +47,7 @@ function tossUrl(config, path, params = {}) {
   return url.toString();
 }
 
-async function getAccessToken(config) {
-  const now = Date.now();
-
-  if (tokenCache && tokenCache.expiresAt > now + tokenCacheSkewMs) {
-    return tokenCache.accessToken;
-  }
-
+async function requestAccessToken(config) {
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: config.toss.clientId ?? "",
@@ -50,10 +69,39 @@ async function getAccessToken(config) {
 
   tokenCache = {
     accessToken: data.access_token,
-    expiresAt: now + Math.max((data.expires_in ?? 86_400) - 300, 60) * 1000
+    expiresAt: Date.now() + Math.max((data.expires_in ?? 86_400) - 300, 60) * 1000
   };
 
+  await writeStoredToken("toss", tokenCache);
+
   return tokenCache.accessToken;
+}
+
+// The board loads KR leaders, US leaders, and the exchange rate at once. Without
+// this guard each of them would request its own token on a cold start, and every
+// restart would spend another one against the quota.
+async function getAccessToken(config) {
+  if (tokenCache && tokenCache.expiresAt > Date.now() + tokenCacheSkewMs) {
+    return tokenCache.accessToken;
+  }
+
+  if (tokenRequest) return tokenRequest;
+
+  tokenRequest = (async () => {
+    const stored = await readStoredToken("toss");
+
+    if (stored) {
+      tokenCache = stored;
+
+      return stored.accessToken;
+    }
+
+    return requestAccessToken(config);
+  })().finally(() => {
+    tokenRequest = undefined;
+  });
+
+  return tokenRequest;
 }
 
 async function tossGet(config, path, params) {
@@ -202,6 +250,7 @@ function toLeader(item, market, stock, index) {
   const symbol = item.symbol;
   const name = stock?.name || stock?.englishName || symbol;
   const changeRate = signedPercentFromRatio(item.price?.changeRate);
+  const theme = classifyTheme(symbol, name);
 
   return {
     id: `toss-${market.toLowerCase()}-leader-${symbol}`,
@@ -210,10 +259,12 @@ function toLeader(item, market, stock, index) {
     market,
     rank: index + 1,
     marketLabel: market === "US" ? "미국 거래 집중" : "국내 거래 집중",
+    theme,
+    turnoverValue: parseDecimal(item.tradingAmount),
     burst: `${formatVolume(item.tradingVolume)} · ${changeRate}`,
     turnover: formatAmount(item.tradingAmount, currency),
     intraday: `현재가 ${item.price?.lastPrice ?? "확인 중"} · 전일 대비 ${changeRate}`,
-    reason: `토스증권 ${[
+    reason: `${theme} · 토스증권 ${[
       rankFor(item, rankingTypes.turnover) ? `거래대금 #${rankFor(item, rankingTypes.turnover)}` : null,
       rankFor(item, rankingTypes.volume) ? `거래량 #${rankFor(item, rankingTypes.volume)}` : null,
       rankFor(item, rankingTypes.gainers) ? `상승률 #${rankFor(item, rankingTypes.gainers)}` : null
@@ -225,7 +276,9 @@ function toLeader(item, market, stock, index) {
 }
 
 export async function loadTossLeaders(config, market) {
-  return readThroughCache(`toss:leaders:${market}`, 30_000, async () => {
+  assertNotCoolingDown();
+
+  return readThroughCache(`toss:leaders:${market}`, leaderCacheTtlMs, async () => {
     const [turnover, volume, gainers] = await Promise.all([
       loadRanking(config, market, rankingTypes.turnover, "realtime"),
       loadRanking(config, market, rankingTypes.volume, "realtime"),
@@ -237,11 +290,13 @@ export async function loadTossLeaders(config, market) {
     const stocks = await loadStocks(config, merged.flatMap((item) => item.symbol ? [item.symbol] : []));
 
     return merged.map((item, index) => toLeader(item, market, stocks.get(item.symbol), index));
-  });
+  }).catch(noteFailure);
 }
 
 export async function loadTossExchangeRate(config, baseCurrency = "USD", quoteCurrency = "KRW") {
-  return readThroughCache(`toss:exchange:${baseCurrency}:${quoteCurrency}`, 30_000, async () => {
+  assertNotCoolingDown();
+
+  return readThroughCache(`toss:exchange:${baseCurrency}:${quoteCurrency}`, leaderCacheTtlMs, async () => {
     const data = await tossGet(config, "/api/v1/exchange-rate", {
       baseCurrency,
       quoteCurrency
@@ -254,5 +309,5 @@ export async function loadTossExchangeRate(config, baseCurrency = "USD", quoteCu
       source: "toss",
       timestamp: new Date().toISOString()
     };
-  });
+  }).catch(noteFailure);
 }
