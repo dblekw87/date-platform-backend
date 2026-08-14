@@ -114,6 +114,17 @@ const symbolThemes = {
   "078930": "지주",
   "034730": "지주",
   "003550": "지주",
+  // Registered industries that describe the parent rather than what the stock
+  // trades on: 두산 as electronics, 삼성E&A as software.
+  "000150": "원전",
+  "028050": "원전",
+  "009830": "재생에너지",
+  "489790": "방산",
+  "034220": "전자부품·전장",
+  "460930": "조선",
+  "107640": "전력기기",
+  "194700": "바이오",
+  "007810": "전자부품·전장",
 
   // 기타 개별 테마
   "011330": "비건가죽",

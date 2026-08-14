@@ -1,6 +1,7 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
+import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
@@ -319,6 +320,45 @@ async function attachTurnoverBurst(board) {
   return result;
 }
 
+/**
+ * Gives a sector to domestic leaders the curated map does not cover.
+ *
+ * The map holds a few hundred symbols against a market of thousands, so a
+ * quarter of any day's leaders arrive unclassified and drop out of the theme
+ * list entirely. The registered industry is a coarser answer than a trading
+ * theme, but a real sector beats no sector, and it only applies where the
+ * curated map stayed silent.
+ */
+async function attachIndustryThemes(config, board) {
+  const unclassified = board.krLeadingStocks.filter((stock) => stock.theme === "미분류");
+
+  if (unclassified.length === 0) return board;
+
+  try {
+    const themes = await resolveIndustryThemes(config, unclassified.map((stock) => stock.symbol));
+
+    if (Object.keys(themes).length === 0) return board;
+
+    return {
+      ...board,
+      krLeadingStocks: board.krLeadingStocks.map((stock) => {
+        const theme = themes[stock.symbol];
+
+        if (!theme || stock.theme !== "미분류") return stock;
+
+        // The reason string leads with the theme, so it moves with it.
+        const [, ...rest] = stock.reason.split(" · ");
+
+        return { ...stock, theme, reason: [theme, ...rest].join(" · ") };
+      })
+    };
+  } catch (error) {
+    console.warn("industry lookup failed", error instanceof Error ? error.message : error);
+
+    return board;
+  }
+}
+
 function mergeHeadlines(baseItems, extraItems) {
   const byId = new Map(baseItems.map((item) => [item.id, item]));
 
@@ -375,7 +415,9 @@ export async function getMarketBoard(config) {
   );
   const statuses = results.map((result) => result.status);
   const payloads = results.map((result) => result.payload);
-  const merged = payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses));
+  // Industry fills in before themes are scored, so a newly named sector counts
+  // toward the strength ranking rather than being left out of it.
+  const merged = await attachIndustryThemes(config, payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses)));
   // Themes are scored after the merge so every provider's leaders count toward
   // the same turnover ranking.
   const themeBriefs = [
