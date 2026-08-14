@@ -14,8 +14,9 @@ import { HttpError } from "./http.mjs";
 const communityCategories = new Set(["질문", "조언", "시황", "뉴스", "테마", "잡담"]);
 const journalVisibilities = new Set(["public", "private"]);
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-// <input type="time"> submits HH:MM, and adds :SS when a step is configured.
-const timePattern = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+// 24-hour only, no meridiem. 24:00 is accepted for midnight at the close of a
+// session, which PostgreSQL's time type stores as-is.
+const timePattern = /^(([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?|24:00(:00)?)$/;
 
 function fail(field, message) {
   throw new HttpError(400, message, { field }, "invalid_request");
@@ -68,7 +69,7 @@ function isoDate(value, field) {
 function optionalTime(value, field) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || !timePattern.test(value.trim())) {
-    fail(field, `${field} must be an HH:MM time`);
+    fail(field, `${field} must be a 24-hour HH:MM time`);
   }
 
   return value.trim().slice(0, 5);
