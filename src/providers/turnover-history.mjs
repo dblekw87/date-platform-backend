@@ -1,3 +1,4 @@
+import { isRegularSession, minutesSinceOpen, sessionDate } from "./market-session.mjs";
 import { createRuntimeState } from "./runtime-state.mjs";
 
 /**
@@ -12,12 +13,25 @@ import { createRuntimeState } from "./runtime-state.mjs";
  * running without one, matching how the "new since last check" state is kept.
  */
 
-const sampleIntervalMs = 5 * 60 * 1000;
-// Compare against a sample at least this old, so the delta covers a span worth
-// reading rather than the noise between two adjacent refreshes.
-const minimumWindowMs = 8 * 60 * 1000;
+/**
+ * The opening 90 minutes are where leadership is decided and where turnover
+ * concentrates, so samples are taken more often and a shorter span is enough to
+ * read. Waiting eight minutes for a first answer would miss the window that
+ * matters most; at two-minute samples a reading is available from about 09:03.
+ */
+const openingWindowMinutes = 90;
+const opening = { sampleIntervalMs: 2 * 60 * 1000, minimumWindowMs: 3 * 60 * 1000 };
+const steady = { sampleIntervalMs: 5 * 60 * 1000, minimumWindowMs: 8 * 60 * 1000 };
+
 const maximumWindowMs = 40 * 60 * 1000;
-const maximumSamples = 24;
+// Two minutes apart across a full session, with room to spare.
+const maximumSamples = 60;
+
+function cadence(market) {
+  const elapsed = minutesSinceOpen(market);
+
+  return elapsed !== null && elapsed < openingWindowMinutes ? opening : steady;
+}
 
 const state = createRuntimeState("market-board-turnover-history", () => ({ markets: {} }));
 
@@ -35,41 +49,35 @@ function sampleOf(leaders) {
   return values;
 }
 
-/**
- * A cumulative counter only ever rises within a session, so a drop means the
- * market rolled over to a new day and the older samples describe a different
- * session.
- */
-function isNewSession(previous, current) {
-  const shared = Object.keys(current).filter((symbol) => previous[symbol] !== undefined);
-
-  if (shared.length < 3) return false;
-
-  return shared.filter((symbol) => current[symbol] < previous[symbol] * 0.9).length > shared.length / 2;
-}
-
 export async function recordTurnoverSample(market, leaders) {
+  // Only the regular session is sampled: outside it the cumulative figure either
+  // sits still or inches up on thin 시간외 trading, and neither says anything
+  // about leadership.
+  if (!isRegularSession(market)) return;
+
   const values = sampleOf(leaders);
 
   if (Object.keys(values).length === 0) return;
 
+  const today = sessionDate(market);
   const current = await state.read();
-  const samples = current.markets[market] ?? [];
+  // Samples from an earlier trading day describe a different cumulative run.
+  const samples = (current.markets[market] ?? []).filter((sample) => sample.sessionDate === today);
   const latest = samples.at(-1);
   const now = Date.now();
 
-  if (latest && isNewSession(latest.values, values)) {
-    current.markets[market] = [{ observedAt: now, values }];
-    await state.save(current);
+  // Refreshes arrive far more often than the sampling interval; only the first
+  // one in each interval is kept so the window means what it says.
+  if (latest && now - latest.observedAt < cadence(market).sampleIntervalMs) {
+    if (samples.length !== (current.markets[market] ?? []).length) {
+      current.markets[market] = samples;
+      await state.save(current);
+    }
 
     return;
   }
 
-  // Refreshes arrive far more often than the sampling interval; only the first
-  // one in each interval is kept so the window means what it says.
-  if (latest && now - latest.observedAt < sampleIntervalMs) return;
-
-  current.markets[market] = [...samples, { observedAt: now, values }].slice(-maximumSamples);
+  current.markets[market] = [...samples, { observedAt: now, sessionDate: today, values }].slice(-maximumSamples);
   await state.save(current);
 }
 
@@ -78,9 +86,13 @@ export async function recordTurnoverSample(market, leaders) {
  * Returns null until enough history exists to say anything.
  */
 export async function readTurnoverBurst(market) {
+  if (!isRegularSession(market)) return null;
+
+  const today = sessionDate(market);
   const current = await state.read();
-  const samples = current.markets[market] ?? [];
+  const samples = (current.markets[market] ?? []).filter((sample) => sample.sessionDate === today);
   const now = Date.now();
+  const { minimumWindowMs } = cadence(market);
   const baseline = [...samples]
     .reverse()
     .find((sample) => now - sample.observedAt >= minimumWindowMs && now - sample.observedAt <= maximumWindowMs);
