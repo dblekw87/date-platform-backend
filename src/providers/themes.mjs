@@ -273,6 +273,11 @@ export function classifyTheme(symbol, name) {
 // A theme needs real money behind it before its move counts as leadership.
 const minimumThemeTurnover = 50_000_000_000;
 
+// One stock is not a group. A single name under a sector heading is a 주도주,
+// which the board now lists separately, and dressing it as a theme implies a
+// 2등주 stands behind it when nothing does.
+const minimumThemeMembers = 2;
+
 /**
  * Ranks themes by strength, not size.
  *
@@ -308,7 +313,7 @@ export function themeScores(leaders, limit = 4) {
 
   return [...byTheme.values()]
     .map((score) => ({ ...score, changeRate: score.weightedChange / score.turnover }))
-    .filter((score) => score.turnover >= minimumThemeTurnover && score.changeRate > 0)
+    .filter((score) => score.count >= minimumThemeMembers && score.turnover >= minimumThemeTurnover && score.changeRate > 0)
     .sort((left, right) => right.changeRate - left.changeRate)
     .slice(0, limit);
 }

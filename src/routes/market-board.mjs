@@ -116,6 +116,49 @@ function providerStatus(id, label, status, message, checkedAt) {
   return { id, label, status, message, checkedAt };
 }
 
+/**
+ * Which provider owns each leader list, first that answered.
+ *
+ * Precedence used to fall out of the order adapters happened to sit in, with
+ * the last writer winning the merge. That made Toss the domestic ruler purely
+ * because it is declared second, and its turnover disagreed with KIS by orders
+ * of magnitude outside the regular session — the board showed 삼성전자 at 739억
+ * on a day KIS reported 5.9조. Two rulers also cannot be mixed: a theme's
+ * strength is a sum of its members' turnover, so one figure from each source
+ * produces a total that means nothing.
+ *
+ * KIS leads domestically because it is the licensed exchange feed and its
+ * ranking is the full-market turnover order. Yahoo leads for the US because the
+ * Toss ranking endpoint returns account quota errors there.
+ */
+const leaderPriority = {
+  krLeadingStocks: ["kis", "toss"],
+  usLeadingStocks: ["market", "toss"]
+};
+
+function preferredLeaders(payloadsById, field) {
+  for (const providerId of leaderPriority[field]) {
+    const leaders = payloadsById.get(providerId)?.[field];
+
+    if (leaders?.length) return { leaders, providerId };
+  }
+
+  return { leaders: [], providerId: undefined };
+}
+
+/**
+ * Says so when a provider answered but its leaders were not the ones used.
+ * "ready" against a list it did not supply reads as though it did.
+ */
+function noteUnusedLeaders(statuses, chosen) {
+  const owners = new Set(Object.values(chosen).filter(Boolean));
+  const contenders = new Set(Object.values(leaderPriority).flat());
+
+  return statuses.map((status) => (status.status === "ready" && contenders.has(status.id) && !owners.has(status.id)
+    ? { ...status, message: `${status.message} · 주도주는 다른 provider 사용` }
+    : status));
+}
+
 // The board must render even when the database is absent or unreachable, so a
 // snapshot lookup failure degrades to live/base data instead of failing the request.
 async function readSnapshot(config) {
@@ -424,11 +467,24 @@ export async function getMarketBoard(config) {
   const results = await Promise.all(
     providerAdapters.map((adapter) => runAdapter(adapter, config, checkedAt, canUseLicensedLiveData))
   );
-  const statuses = results.map((result) => result.status);
   const payloads = results.map((result) => result.payload);
+  const payloadsById = new Map(results.map((result) => [result.status.id, result.payload]));
+  const krLeaders = preferredLeaders(payloadsById, "krLeadingStocks");
+  const usLeaders = preferredLeaders(payloadsById, "usLeadingStocks");
+  const statuses = noteUnusedLeaders(
+    results.map((result) => result.status),
+    { kr: krLeaders.providerId, us: usLeaders.providerId }
+  );
+  // Leaders are chosen by declared precedence rather than left to the merge,
+  // which keeps every downstream figure on one ruler.
+  const combined = {
+    ...payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses)),
+    krLeadingStocks: krLeaders.leaders,
+    usLeadingStocks: usLeaders.leaders
+  };
   // Industry fills in before themes are scored, so a newly named sector counts
   // toward the strength ranking rather than being left out of it.
-  const merged = await attachIndustryThemes(config, payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses)));
+  const merged = await attachIndustryThemes(config, combined);
   // Themes are scored after the merge so every provider's leaders count toward
   // the same turnover ranking.
   const themeBriefs = [
