@@ -1,7 +1,7 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
 import { formatShareVolume, formatTradingAmount } from "./format.mjs";
-import { classifyTheme } from "./themes.mjs";
+import { classifyTheme, isNonOperatingEquity } from "./themes.mjs";
 import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 
 const tokenCacheSkewMs = 60_000;
@@ -105,16 +105,40 @@ async function getAccessToken(config) {
   return tokenRequest;
 }
 
+/**
+ * Toss limits how fast requests arrive, not how many arrive per day: a single
+ * call succeeds while the board's burst — three rankings each for KR and US,
+ * plus stock details and the exchange rate — trips 429. Every call goes through
+ * one queue with a gap between them so the burst becomes a trickle.
+ */
+let requestQueue = Promise.resolve();
+const requestGapMs = 250;
+
+function scheduleRequest(run) {
+  const result = requestQueue.then(async () => {
+    try {
+      return await run();
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, requestGapMs));
+    }
+  });
+
+  // The queue must survive a failed request, so it tracks completion only.
+  requestQueue = result.then(() => undefined, () => undefined);
+
+  return result;
+}
+
 async function tossGet(config, path, params) {
   const token = await getAccessToken(config);
 
-  return fetchJson(tossUrl(config, path, params), {
+  return scheduleRequest(() => fetchJson(tossUrl(config, path, params), {
     timeoutMs: 6500,
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json"
     }
-  });
+  }));
 }
 
 function parseDecimal(value) {
@@ -169,13 +193,18 @@ function mergeRankingItems(items) {
   return [...bySymbol.values()];
 }
 
+// 100 is what the endpoint returns in full. A wider pool matters because the
+// board groups leaders by theme: a shallow list leaves most themes holding one
+// name and nothing to expand.
+const rankingCount = "100";
+
 async function loadRanking(config, marketCountry, type, duration) {
   const data = await tossGet(config, "/api/v1/rankings", {
     type,
     marketCountry,
     duration,
     excludeInvestmentCaution: "false",
-    count: "40"
+    count: rankingCount
   });
 
   return (data?.result?.rankings ?? []).map((item) => normalizeRankingItem(item, type));
@@ -258,12 +287,18 @@ export async function loadTossLeaders(config, market) {
       loadRanking(config, market, rankingTypes.volume, "realtime"),
       loadRanking(config, market, rankingTypes.gainers, "1d")
     ]);
-    const merged = mergeRankingItems([...turnover, ...volume, ...gainers])
+    const ranked = mergeRankingItems([...turnover, ...volume, ...gainers])
       .sort((left, right) => leaderScore(right) - leaderScore(left))
-      .slice(0, 30);
-    const stocks = await loadStocks(config, merged.flatMap((item) => item.symbol ? [item.symbol] : []));
+      .slice(0, 120);
+    const stocks = await loadStocks(config, ranked.flatMap((item) => item.symbol ? [item.symbol] : []));
+    // Names only arrive with the stock details, so preferred shares are dropped
+    // after that lookup: they are the same company as their common stock and
+    // would double up a theme with a name that is not a separate leader.
+    const leaders = ranked
+      .filter((item) => !isNonOperatingEquity(stocks.get(item.symbol)?.name ?? item.symbol))
+      .slice(0, 60);
 
-    return merged.map((item, index) => toLeader(item, market, stocks.get(item.symbol), index));
+    return leaders.map((item, index) => toLeader(item, market, stocks.get(item.symbol), index));
   }).catch(noteFailure);
 }
 

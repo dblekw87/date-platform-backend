@@ -187,7 +187,9 @@ const providerAdapters = [
     missingMessage: "TOSS_INVEST_CLIENT_ID, TOSS_INVEST_CLIENT_SECRET 없음 · provider 비활성",
     hasCredentials: hasTossCredentials,
     load: loadTossMarketBoard,
-    timeoutMs: 9000
+    // Requests are spaced out to stay under the rate limit, so this provider
+    // takes longer than the others on a cold cache.
+    timeoutMs: 20_000
   },
   {
     id: "market",
