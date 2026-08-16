@@ -1,5 +1,7 @@
 import { saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard } from "./providers/kis.mjs";
+import { rankDayLeaders } from "./providers/leadership.mjs";
+import { loadPairQuotes } from "./providers/pairing.mjs";
 import { sessionDate } from "./providers/market-session.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
 
@@ -74,22 +76,63 @@ function intervalMsFor(minute) {
   return 5 * 60_000;
 }
 
+/**
+ * The leaders, and then the stocks that could follow them.
+ *
+ * Recording only the leaders would have reproduced one layer down the exact
+ * flaw the 짝꿍 work had to fix in peerCounts: a leader list can only show
+ * lead-lag between leaders, and the stock that follows one is smaller by
+ * definition and never in it. 삼화콘덴서 has to be in the record before anything
+ * can be learned about it following 삼성전기.
+ *
+ * The follower pass costs the same KIS calls a board build was paying at
+ * request time, moved onto this tick — so it is also what warms the per-symbol
+ * quote cache the board reads. The cold build was thirteen seconds of calls for
+ * exactly these names.
+ */
 async function samplePrices(config) {
   const payload = await loadKisMarketBoard(config);
   const stocks = payload?.krLeadingStocks ?? [];
 
   if (stocks.length === 0) return 0;
 
-  return saveMarketPriceSamples(config, {
+  // Pre-market rows come from NXT and the rest from KRX. Recorded rather than
+  // merged: the two books have separate turnover, and a series that silently
+  // switched venue at 09:00 would show a break that was never a trade.
+  const venue = stocks[0]?.venue === "NXT" ? "kis:nxt" : "kis:krx";
+  const observedAt = new Date().toISOString();
+  const day = sessionDate("KR");
+  let saved = await saveMarketPriceSamples(config, {
     market: "KR",
-    observedAt: new Date().toISOString(),
-    sessionDate: sessionDate("KR"),
-    // Pre-market rows come from NXT and the rest from KRX. Recorded rather than
-    // merged: the two books have separate turnover, and a series that silently
-    // switched venue at 09:00 would show a break that was never a trade.
-    source: stocks[0]?.venue === "NXT" ? "kis:nxt" : "kis:krx",
+    observedAt,
+    sessionDate: day,
+    source: venue,
     stocks
   });
+
+  try {
+    const followers = await loadPairQuotes(config, rankDayLeaders(stocks, "KRW"), stocks);
+
+    if (followers.length > 0) {
+      // A separate source, because the two populations answer different
+      // questions and must not be read as one ranking: these carry no
+      // leader_rank worth reading, they are simply the names in the same theme.
+      saved += await saveMarketPriceSamples(config, {
+        market: "KR",
+        observedAt,
+        ranked: false,
+        sessionDate: day,
+        source: `${venue}:pair`,
+        stocks: followers
+      });
+    }
+  } catch (error) {
+    // The leaders are already written. A follower pass that fails costs the
+    // followers for one tick, not the tick.
+    console.warn("collector: follower sample failed", error instanceof Error ? error.message : error);
+  }
+
+  return saved;
 }
 
 async function sampleNews(config) {

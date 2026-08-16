@@ -499,8 +499,13 @@ function numericOrNull(value) {
  * Written as a single multi-row insert because a sample covers sixty stocks and
  * a round trip each would take longer than the interval between samples. The
  * unique constraint absorbs a repeated tick rather than doubling a minute.
+ *
+ * `ranked` says whether the position in `stocks` means anything. The leader list
+ * is an order and that is what it is for; the follower pass is not one, and
+ * writing 1..37 into leader_rank would put a ranking in the column that nobody
+ * produced.
  */
-export async function saveMarketPriceSamples(config, { market, observedAt, sessionDate, source, stocks }) {
+export async function saveMarketPriceSamples(config, { market, observedAt, ranked = true, sessionDate, source, stocks }) {
   if (!config.databaseUrl || stocks.length === 0) return 0;
 
   const columns = 10;
@@ -514,7 +519,7 @@ export async function saveMarketPriceSamples(config, { market, observedAt, sessi
     numericOrNull(stock.turnoverValue),
     numericOrNull(stock.volumeValue),
     stock.theme ?? null,
-    index + 1
+    ranked ? index + 1 : null
   ]);
   const rows = stocks
     .map((stock, index) => `($${index * columns + 1}, $${index * columns + 2}, $${index * columns + 3}, $${index * columns + 4}, $${index * columns + 5}, $${index * columns + 6}, $${index * columns + 7}, $${index * columns + 8}, $${index * columns + 9}, $${index * columns + 10}, $${stocks.length * columns + 1})`)

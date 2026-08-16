@@ -65,9 +65,15 @@ if (prices.rows.length === 0) {
 
 // The premarket read is the part that has only ever been checked against an API
 // response, never against a live 08:00–09:00 window.
-const premarket = prices.rows.find((row) => row.source === "kis:nxt");
+if (!prices.rows.some((row) => row.source === "kis:nxt")) {
+  console.log("  kis:nxt 없음 — NXT 프리마켓 읽기를 확인하세요 (08:00–08:5x, 약 300행 기대).");
+}
 
-if (!premarket) console.log("  kis:nxt 없음 — NXT 프리마켓 읽기를 확인하세요 (08:00–08:5x, 약 300행 기대).");
+// Without these the record can only ever show lead-lag between leaders, which
+// is the one thing 짝꿍 does not need.
+if (!prices.rows.some((row) => row.source.endsWith(":pair"))) {
+  console.log("  :pair 없음 — 짝꿍 후보가 기록되지 않고 있습니다. 따라가는 쪽의 시계열이 비면 나중에 학습할 게 없습니다.");
+}
 
 const news = await query(
   config,

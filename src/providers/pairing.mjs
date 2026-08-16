@@ -136,10 +136,15 @@ async function loadOutsideQuotes(config, symbols) {
     ]);
 
     quotes.forEach((quote) => {
+      const name = names[quote.symbol] ?? quote.name;
       const member = {
         changeRateValue: quote.changeRateValue,
-        name: names[quote.symbol] ?? quote.name,
+        name,
         symbol: quote.symbol,
+        // Its own theme rather than the leader's. A symbol can be wanted by two
+        // leaders, and a price series should record what the stock is, not what
+        // it happened to be looked up for.
+        theme: classifyTheme(quote.symbol, name),
         turnoverValue: quote.turnoverValue
       };
 
@@ -191,8 +196,17 @@ export function buildPairBoard(leaders) {
   return [...byTheme.values()].sort((left, right) => right.leadGap - left.leadGap);
 }
 
-/** Attaches the 짝꿍 candidates behind each domestic leader. */
-export async function attachPairCandidates(config, leaders, stocks) {
+/**
+ * Which stocks could follow these leaders, and what they are trading at.
+ *
+ * Shared by the board and by the collector, which needs the same answer for a
+ * different reason: the follower's own price series. The leader list is the
+ * only thing being recorded today, and a series of leaders can only ever show
+ * lead-lag between leaders — the same structural flaw peerCounts had, one layer
+ * down. 삼화콘덴서 has to be in the record before anything can be learned about
+ * it following 삼성전기.
+ */
+async function loadPairPool(config, leaders, stocks) {
   const stocksBySymbol = new Map(stocks.map((stock) => [stock.symbol, stock]));
   const inPool = new Set(stocksBySymbol.keys());
   let universe = new Map();
@@ -218,19 +232,40 @@ export async function attachPairCandidates(config, leaders, stocks) {
   const wanted = new Set(leaders.flatMap((leader) =>
     membersFor(leader).filter((symbol) => !inPool.has(symbol)).slice(0, maxMembersPerTheme)));
 
-  if (wanted.size === 0) return leaders;
-
-  let outside;
+  if (wanted.size === 0) return { inPool, membersFor, outside: new Map(), stocksBySymbol };
 
   try {
-    outside = await loadOutsideQuotes(config, [...wanted]);
+    return { inPool, membersFor, outside: await loadOutsideQuotes(config, [...wanted]), stocksBySymbol };
   } catch (error) {
-    // Without the quotes there are no candidates to add, and the leader list is
-    // still correct without them.
+    // Without the quotes there are no candidates, and the leader list is still
+    // correct without them.
     console.warn("pair candidate quotes failed", error instanceof Error ? error.message : error);
 
-    return leaders;
+    return { failed: true, inPool, membersFor, outside: new Map(), stocksBySymbol };
   }
+}
+
+/**
+ * The follower quotes behind the day's leaders, for recording.
+ *
+ * Called by the collector on its own tick rather than by a board build, which
+ * has two effects. The series gains the stocks that follow, and every board
+ * build inside the next minute reads quotes the collector has already paid for
+ * — the cold build was thirteen seconds of KIS calls for exactly these names.
+ */
+export async function loadPairQuotes(config, leaders, stocks) {
+  const { outside } = await loadPairPool(config, leaders, stocks);
+
+  return [...outside.values()];
+}
+
+/** Attaches the 짝꿍 candidates behind each domestic leader. */
+export async function attachPairCandidates(config, leaders, stocks) {
+  const { failed, inPool, membersFor, outside, stocksBySymbol } = await loadPairPool(config, leaders, stocks);
+
+  // Only a failed fetch bails. An empty pool still leaves the members that are
+  // leaders in their own right, which the earlier early-return threw away.
+  if (failed) return leaders;
 
   return leaders.map((leader) => {
     const theme = pairThemeOf(leader, stocksBySymbol);
