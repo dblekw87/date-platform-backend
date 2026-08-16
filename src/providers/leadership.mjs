@@ -128,7 +128,12 @@ export function rankDayLeaders(stocks, currency = "KRW", limit = 8) {
         symbol: stock.symbol,
         name: stock.name,
         market: stock.market,
-        theme: theme ?? "개별 종목",
+        // `theme` is the curated answer and is what peers are counted on;
+        // `industryTheme` is the registered sector, which names the stock
+        // without claiming anything moved alongside it. So it shows here and
+        // nowhere in the pairing above: 개별 종목 should mean the board knows of
+        // no group, not that nobody ever asked what the company does.
+        theme: theme ?? stock.industryTheme ?? "개별 종목",
         rank: 0,
         kind: leadKind(share, recentShare, volumeRatio),
         pairTrade: peerCount >= themeLeadPeerFloor ? "테마 주도" : "단독 주도",
