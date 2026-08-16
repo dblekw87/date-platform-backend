@@ -101,6 +101,62 @@ async function loadStakes(config, businessYear) {
 // name that identifies a company on its own — 텐센트, 앤트로픽, TSMC.
 const minimumEntityNameLength = 3;
 
+// How many US names to recognise as possible subjects. English has word
+// boundaries, so the substring problem that forces the Korean dictionary to be
+// exhaustive does not apply; the risk here is the opposite one — Apple, Gap,
+// Block and Target are ordinary words, and a dictionary of all 5,320 listed
+// common stocks would find a company in every other sentence. Ranking by what
+// actually trades keeps the list to the companies headlines are written about.
+const usEntityLimit = 400;
+
+const usEntityCacheTtlMs = 24 * 60 * 60_000;
+
+/**
+ * The legal tail of a US company name, which no headline ever prints.
+ * "Sandisk Corporation Common Stock" is written about as Sandisk.
+ */
+const legalSuffixPattern = /\b(?:common\s+stock|ordinary\s+shares?|class\s+[a-z]|depositary\s+shares?|incorporated|inc|corporation|corp|company|co|limited|ltd|plc|nv|sa|ag|holdings?|group)\b\.?/gi;
+
+function normalizeUsName(value) {
+  return String(value ?? "")
+    .replace(legalSuffixPattern, " ")
+    .replace(/[,.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * US company names worth recognising as the subject of a headline.
+ *
+ * Ranked by dollar volume out of our own daily bars rather than by market cap,
+ * because what gets written about is what is being traded. Names are kept with
+ * their original capitalisation and matched case-sensitively on a word
+ * boundary, which is what keeps Gap and Block from matching "the gap between"
+ * and "block trade".
+ */
+async function loadUsEntityNames(config) {
+  return readThroughCache("us-entity-names", usEntityCacheTtlMs, async () => {
+    const result = await query(
+      config,
+      `SELECT t.symbol, t.name
+         FROM us_daily_bars b
+         JOIN us_tickers t ON t.symbol = b.symbol
+                          AND t.as_of = (SELECT max(as_of) FROM us_tickers)
+        WHERE b.session_date > current_date - 45
+          AND t.type = 'CS'
+          AND t.name IS NOT NULL
+        GROUP BY t.symbol, t.name
+        ORDER BY avg(b.close * b.volume) DESC NULLS LAST
+        LIMIT $1`,
+      [usEntityLimit]
+    );
+
+    return result.rows
+      .map((row) => normalizeUsName(row.name))
+      .filter((name) => name.length >= 4);
+  });
+}
+
 /**
  * Company names a headline might use, from every stake in the market.
  *
@@ -182,11 +238,11 @@ function ownershipReasons(leader, stakes, headlineText) {
  * positional and deliberately crude: if another company is named before this
  * one, the sentence is about that company and this stock is downstream of it.
  */
-function subjectOf(text, leaderName, otherNames) {
-  const own = leaderName ? text.indexOf(leaderName) : -1;
+function subjectOf(text, leaderName, otherNames, findAt) {
+  const own = leaderName ? findAt(text, leaderName) : -1;
 
   for (const name of otherNames) {
-    const at = text.indexOf(name);
+    const at = findAt(text, name);
 
     if (at >= 0 && (own < 0 || at < own)) return name;
   }
@@ -194,16 +250,61 @@ function subjectOf(text, leaderName, otherNames) {
   return undefined;
 }
 
-function stockNewsReasons(leader, headlines, otherNames) {
+/** Korean has no word boundary, so a plain substring is the only test. */
+function findKoreanAt(text, name) {
+  return text.indexOf(name);
+}
+
+/**
+ * English does have one, and it is doing real work: Gap, Block, Apple and
+ * Target are companies and ordinary words at the same time. Matching is
+ * case-sensitive for the same reason — "the gap between" is not Gap Inc.
+ */
+function findEnglishAt(text, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).exec(text);
+
+  return match ? match.index : -1;
+}
+
+/**
+ * The 13F churn, which is a genre rather than news.
+ *
+ * US feeds carry a steady stream of machine-written filings coverage — "One Day
+ * In July LLC Acquires Shares of 1,647 Advanced Micro Devices", "Pinnacle
+ * Associates Ltd. Sells 2,276 Shares of…" — one per manager per quarter per
+ * holding. They name the stock, so they reach it, and `acquires` reads as
+ * 인수·합병, which had a small registered adviser rebalancing filed as the
+ * reason AMD rose 6.5%.
+ *
+ * Screened here rather than in the news layer on purpose: the headlines are
+ * real and belong in the flow, they are simply never why anything moved.
+ */
+// Three shapes, because the template is written three ways and the first
+// version of this caught only the active one:
+//   active     "One Day In July LLC Acquires Shares of 1,647 …"
+//   passive    "… $AMD Shares Sold by Oakwell Private Wealth Management"
+//   possessive "Mitsubishi UFJ Trust Has $27.52 Million Position in Nebius"
+const churnVerb = "acquires?|buys?|sells?|purchases?|boosts?|lowers?|trims?|raises?|reduces?|takes?|grows?|cuts?";
+const churnObject = "shares?|stake|position|holdings?";
+const institutionalChurnPattern = new RegExp([
+  `\\b(?:${churnVerb})\\s+(?:a\\s+)?(?:new\\s+)?(?:[\\d,]+\\s+)?(?:${churnObject})\\s+(?:of|in)\\b`,
+  `\\b(?:${churnObject})\\b[^.\\n]{0,40}\\b(?:sold|bought|purchased|acquired|reduced|raised|trimmed|boosted|lowered|cut|grown)\\s+by\\b`,
+  `\\bhas\\s+\\$[\\d.,]+\\s*(?:million|billion|thousand)?\\s*(?:stock\\s+)?(?:${churnObject})\\s+in\\b`,
+  "\\b13[FDG]\\b"
+].join("|"), "i");
+
+function stockNewsReasons(leader, headlines, otherNames, findAt) {
   return headlines
     .filter((headline) => (headline.relatedSymbols ?? []).includes(leader.symbol))
+    .filter((headline) => !institutionalChurnPattern.test(`${headline.label ?? ""} ${headline.text ?? ""}`))
     .flatMap((headline) => {
       const catalyst = classifyHeadline(headline);
 
       if (!catalyst || catalyst.adverse) return [];
 
       const text = `${headline.label ?? ""} ${headline.text ?? ""}`;
-      const subject = subjectOf(text, leader.name, otherNames);
+      const subject = subjectOf(text, leader.name, otherNames, findAt);
 
       return [{
         confidence: subject ? 45 : 60,
@@ -263,9 +364,20 @@ function themeNewsReasons(leader, headlines) {
 
 /* ------------------------------------------------------------------ 공시 */
 
+/**
+ * Filings that are supply arriving rather than a reason to have risen.
+ *
+ * A 424B5 is a shelf takedown and a 13D/G is somebody else's position; the
+ * catalyst rules already treat 증자·메자닌 and 수급 부담 as adverse for exactly
+ * this reason, and only rising stocks are ranked here. AMD's registration
+ * statement was ranking first on a day it rose 6.5%, ahead of the news.
+ */
+const supplyFilingPattern = /^(?:증권|지분)$/;
+
 function disclosureReasons(leader, disclosures) {
   return disclosures
     .filter((disclosure) => disclosure.symbol === leader.symbol)
+    .filter((disclosure) => !supplyFilingPattern.test(String(disclosure.urgency ?? "")))
     .slice(0, 1)
     .map((disclosure) => ({
       // A filing is the company saying it itself, which is the strongest
@@ -308,7 +420,7 @@ function toChangeRate(value) {
  * visible only in the relationship between one stock and the index, and the
  * board already has both numbers.
  */
-function regimeReasons(leader, indexChange) {
+function regimeReasons(leader, indexChange, indexLabel, displayName) {
   if (indexChange === undefined || indexChange > indexFallThreshold) return [];
   if (!(leader.changeRateValue > 0)) return [];
   // Rotation is a group arriving somewhere, so it needs a group. One stock up
@@ -321,7 +433,10 @@ function regimeReasons(leader, indexChange) {
   return [{
     confidence: Math.min(maximumRegimeConfidence, 20 + Math.round(gap * 2)),
     evidence: [
-      `KOSPI ${indexChange.toFixed(2)}% · ${leader.name} ${leader.changeRateValue > 0 ? "+" : ""}${leader.changeRateValue.toFixed(2)}%`,
+      // The trimmed name, because the registered one is not what anyone calls
+      // the company: "Sandisk Corporation Common Stock +5.20%" is the ticker
+      // file talking, not the board.
+      `${indexLabel} ${indexChange.toFixed(2)}% · ${displayName} ${leader.changeRateValue > 0 ? "+" : ""}${leader.changeRateValue.toFixed(2)}%`,
       `지수 대비 ${gap.toFixed(2)}%p 앞섰고 같은 테마 ${leader.peerCount}종목이 함께 올랐습니다`
     ],
     kind: "공유",
@@ -359,46 +474,77 @@ function cautionFor(leader, reasons) {
 }
 
 /**
- * Attaches the ranked reasons behind each domestic leader.
+ * What each market brings to the engine.
  *
- * The ownership half needs the database and the rest does not, so a database
- * that is down costs the 지분 path and leaves the other four standing.
+ * The two are not symmetric, and the asymmetry is measured rather than
+ * accidental:
+ *
+ * 보유 지분 is domestic only. DART's 타법인 출자현황 gives a stake's percentage,
+ * its book value and the year's revaluation, which is what makes Anthropic an
+ * answer rather than a footnote. No free US filing carries that. 13F points the
+ * other way entirely — it says Vanguard owns Nvidia, which explains nothing
+ * about why Nvidia moved — and EX-21 lists subsidiary names with no figures at
+ * all. A weaker imitation would read like the same evidence without being it.
+ *
+ * 산업 뉴스 is domestic only too. The fan-out has to recognise that a headline is
+ * about a theme without naming a company, and reusing classifyTheme on the
+ * sentence was the obvious way — it does not work. "Tesla recalls 400,000
+ * vehicles over autopilot software" comes back AI·소프트웨어, because software
+ * matched before vehicle, and a Reuters report on Houthi missiles in Yemen comes
+ * back 방산. Those rules classify company names; a sentence trips several at once
+ * and the first one wins. The Korean side matches the theme name literally,
+ * which is exact, and no such name appears in an English headline.
  */
-export async function attachLeaderReasons(config, leaders, { disclosures = [], headlines = [], macroSnapshot = [] } = {}) {
+const marketProfiles = {
+  KR: { findAt: findKoreanAt, indexId: "kospi-day-future", indexLabel: "KOSPI" },
+  US: { findAt: findEnglishAt, indexId: "sp500-future", indexLabel: "S&P 500" }
+};
+
+/**
+ * Attaches the ranked reasons behind each leader.
+ *
+ * Everything that reads the database is optional: a database that is down costs
+ * the 지분 path and the subject dictionary, and leaves the rest standing.
+ */
+export async function attachLeaderReasons(config, leaders, { disclosures = [], headlines = [], macroSnapshot = [], market = "KR" } = {}) {
   if (leaders.length === 0) return leaders;
 
+  const profile = marketProfiles[market] ?? marketProfiles.KR;
+  const domestic = market === "KR";
   const businessYear = new Date().getFullYear() - 1;
   let stakes = new Map();
   let entityNames = [];
 
   try {
-    [stakes, entityNames] = await Promise.all([
-      loadStakes(config, businessYear),
-      loadEntityNames(config, businessYear)
-    ]);
+    [stakes, entityNames] = domestic
+      ? await Promise.all([loadStakes(config, businessYear), loadEntityNames(config, businessYear)])
+      : [new Map(), await loadUsEntityNames(config)];
   } catch (error) {
-    console.warn("ownership graph unavailable", error instanceof Error ? error.message : error);
+    console.warn(`${market} reason dictionaries unavailable`, error instanceof Error ? error.message : error);
   }
 
   const headlineText = headlines.map((headline) => `${headline.label ?? ""} ${headline.text ?? ""}`).join(" ");
-  const indexChange = toChangeRate(macroSnapshot.find((item) => item.id === "kospi-day-future")?.changeRate);
-  const knownNames = [...new Set([
-    ...leaders.map((leader) => leader.name).filter(Boolean),
-    ...entityNames
-  ])].filter((name) => name.length >= minimumEntityNameLength);
+  const indexChange = toChangeRate(macroSnapshot.find((item) => item.id === profile.indexId)?.changeRate);
+  const leaderNames = leaders.map((leader) => domestic ? leader.name : normalizeUsName(leader.name)).filter(Boolean);
+  const knownNames = [...new Set([...leaderNames, ...entityNames])]
+    .filter((name) => name.length >= minimumEntityNameLength);
+  // Headlines carry the region they came from, and a US leader has no business
+  // being explained by a Korean market story.
+  const ownHeadlines = headlines.filter((headline) => !headline.region || headline.region === market);
 
   return leaders.map((leader) => {
     // A subsidiary named after its parent is not a different subject: 글로벌심텍
-    // in a 심텍 headline is 심텍. Excluded both ways, since either can be the
-    // longer string.
+    // in a 심텍 headline is 심텍, and Micron Technology in a Micron headline is
+    // Micron. Excluded both ways, since either can be the longer string.
+    const ownName = domestic ? leader.name : normalizeUsName(leader.name);
     const otherNames = knownNames.filter((name) =>
-      !leader.name?.includes(name) && !name.includes(leader.name ?? " "));
+      !ownName?.includes(name) && !name.includes(ownName ?? " "));
     const reasons = [
-      ...ownershipReasons(leader, stakes, headlineText),
-      ...stockNewsReasons(leader, headlines, otherNames),
-      ...themeNewsReasons(leader, headlines),
+      ...(domestic ? ownershipReasons(leader, stakes, headlineText) : []),
+      ...stockNewsReasons(leader, ownHeadlines, otherNames, profile.findAt),
+      ...(domestic ? themeNewsReasons(leader, ownHeadlines) : []),
       ...disclosureReasons(leader, disclosures),
-      ...regimeReasons(leader, indexChange)
+      ...regimeReasons(leader, indexChange, profile.indexLabel, ownName || leader.name)
     ]
       .filter((reason) => reason.confidence >= minimumConfidence)
       .sort((left, right) => right.confidence - left.confidence)

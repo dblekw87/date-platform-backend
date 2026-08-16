@@ -132,5 +132,114 @@ const quiet = await attachLeaderReasons(config, [leader("000000", "조용한회�
 
 check("a stock with no evidence gets no invented reason", (quiet[0].reasons ?? []).length === 0);
 
+console.log("\n미국 — the same engine, two generators short");
+
+function usLeader(symbol, name, theme, changeRateValue, peerCount = 0) {
+  return { ...leader(symbol, name, theme, changeRateValue, peerCount), market: "US" };
+}
+
+function usHeadline(text, relatedSymbols = []) {
+  return { ...headline(text, relatedSymbols), region: "US" };
+}
+
+const us = await attachLeaderReasons(
+  config,
+  [
+    usLeader("MU", "Micron Technology, Inc.", "반도체", 7.4, 3),
+    usLeader("SNDK", "Sandisk Corporation Common Stock", "반도체", 5.2, 3),
+    usLeader("TSLA", "Tesla, Inc. Common Stock", "자동차·전장", 0.7)
+  ],
+  {
+    headlines: [
+      usHeadline("Nvidia earnings beat lifts memory names as HBM demand accelerates", ["MU"]),
+      usHeadline("Sandisk announces $2B share repurchase program", ["SNDK"]),
+      usHeadline("Tesla recalls 400,000 vehicles over autopilot software", ["TSLA"])
+    ],
+    macroSnapshot: [{ changeRate: "-0.90%", id: "sp500-future", value: "6,100" }],
+    market: "US"
+  }
+);
+const usBySymbol = new Map(us.map((result) => [result.symbol, result]));
+const usReasons = (symbol) => usBySymbol.get(symbol)?.reasons ?? [];
+
+// The subject dictionary is the top 400 US names by dollar volume, so this also
+// checks that the query behind it still returns something.
+check(
+  "Nvidia's earnings are Micron's reason by way of Nvidia",
+  usReasons("MU").some((reason) => reason.path === "전방 수요" && reason.kind === "공유" && reason.title.includes("Nvidia")),
+  `got ${JSON.stringify(usReasons("MU").map((reason) => `${reason.path}/${reason.title}`))}`
+);
+check(
+  "a buyback is the company's own",
+  usReasons("SNDK").some((reason) => reason.path === "종목 뉴스" && reason.kind === "고유"),
+  `got ${JSON.stringify(usReasons("SNDK").map((reason) => `${reason.path}/${reason.title}`))}`
+);
+// A recall is adverse, and only rising stocks are ranked — it is not why one rose.
+check("a recall is not a reason to have risen", usReasons("TSLA").length === 0, `got ${JSON.stringify(usReasons("TSLA"))}`);
+check(
+  "the index is the S&P, not the KOSPI",
+  usReasons("MU").some((reason) => (reason.evidence ?? []).some((line) => line.includes("S&P 500"))),
+  `got ${JSON.stringify(usReasons("MU").flatMap((reason) => reason.evidence))}`
+);
+// The registered name is not what anyone calls the company.
+check(
+  "the trimmed name is what shows",
+  usReasons("SNDK").some((reason) => (reason.evidence ?? []).some((line) => line.includes("Sandisk +") && !line.includes("Common Stock"))),
+  `got ${JSON.stringify(usReasons("SNDK").flatMap((reason) => reason.evidence))}`
+);
+// The 13F churn is a genre, not news: one machine-written article per manager
+// per quarter per holding, and `acquires` reads as 인수·합병. A small registered
+// adviser rebalancing was filed as the reason AMD rose 6.5%.
+const churn = await attachLeaderReasons(
+  config,
+  [usLeader("AMD", "Advanced Micro Devices, Inc.", "반도체", 6.5)],
+  {
+    // A 424B5 is a shelf takedown — supply arriving, not a reason to have risen.
+    disclosures: [{ action: "원문 Item 확인", filedAt: "2026-08-16T00:00:00Z", originalUrl: "https://x", symbol: "AMD", title: "AMD · 증권 발행", urgency: "증권" }],
+    // All seven shapes the template was seen in on one day's board. The first
+    // version of this filter knew only the active voice and let four through.
+    headlines: [
+      usHeadline("One Day In July LLC Acquires Shares of 1,647 Advanced Micro Devices, Inc. $AMD", ["AMD"]),
+      usHeadline("Pinnacle Associates Ltd. Sells 2,276 Shares of Advanced Micro Devices, Inc. $AMD", ["AMD"]),
+      usHeadline("Advanced Micro Devices, Inc. $AMD Shares Sold by Oakwell Private Wealth Management LLC", ["AMD"]),
+      usHeadline("Advanced Micro Devices, Inc. $AMD Shares Bought by TCW Group Inc.", ["AMD"]),
+      usHeadline("25,592 Shares in Advanced Micro Devices, Inc. $AMD Bought by Meridian Wealth Management LLC", ["AMD"]),
+      usHeadline("Advanced Micro Devices, Inc. $AMD Stock Position Reduced by Janney Montgomery Scott LLC", ["AMD"]),
+      usHeadline("Trust Asset Management LLC Has $53.58 Million Stock Holdings in Advanced Micro Devices, Inc.", ["AMD"])
+    ],
+    macroSnapshot: [],
+    market: "US"
+  }
+);
+
+check("a 13F rebalance is not why a stock rose", (churn[0].reasons ?? []).length === 0, `got ${JSON.stringify((churn[0].reasons ?? []).map((reason) => reason.title))}`);
+
+// The other half of the same reading: what the churn filter must not swallow.
+// US headlines write a quarter as Q2, which a rule that only knew the word
+// earnings never matched — "Nebius Group Shares Surge After Q2 Beat" went
+// unexplained on a day the stock rose 8.9%.
+const quarterly = await attachLeaderReasons(
+  config,
+  [usLeader("NBIS", "Nebius Group N.V.", "AI·소프트웨어", 8.9)],
+  {
+    headlines: [usHeadline("Nebius Group (NBIS) Shares Surge After Q2 Beat; Price-to-Sales Valuation", ["NBIS"])],
+    macroSnapshot: [],
+    market: "US"
+  }
+);
+
+check(
+  "a Q2 beat is an earnings reason",
+  (quarterly[0].reasons ?? []).some((reason) => reason.title === "실적"),
+  `got ${JSON.stringify((quarterly[0].reasons ?? []).map((reason) => reason.title))}`
+);
+
+// 보유 지분 and 산업 뉴스 are domestic only, both for reasons written down in
+// reasons.mjs. A US leader picking one up means that decision was undone.
+check(
+  "no US reason comes through a domestic-only path",
+  us.every((result) => (result.reasons ?? []).every((reason) => reason.path !== "보유 지분" && reason.path !== "산업 뉴스"))
+);
+
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

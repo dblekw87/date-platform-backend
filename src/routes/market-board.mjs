@@ -551,7 +551,8 @@ export async function getMarketBoard(config) {
     {
       disclosures: withBurst.krDisclosures,
       headlines: withBurst.headlineFlow,
-      macroSnapshot: withBurst.macroSnapshot
+      macroSnapshot: withBurst.macroSnapshot,
+      market: "KR"
     }
   );
   const board = {
@@ -560,7 +561,19 @@ export async function getMarketBoard(config) {
     // The same candidates again, grouped by theme, because that is the unit the
     // trade is read in — 반도체 moving, and what has not moved with it yet.
     krPairTrades: buildPairBoard(krDayLeaders),
-    usDayLeaders: attachDayLeaderCatalysts(rankDayLeaders(withBurst.usLeadingStocks, "USD"), withBurst.headlineFlow),
+    // No 짝꿍 pass on this side, so peerCount comes straight off the ranking —
+    // which is all the regime generator needs to tell a rotation from one stock
+    // having a good day.
+    usDayLeaders: await attachLeaderReasons(
+      config,
+      attachDayLeaderCatalysts(rankDayLeaders(withBurst.usLeadingStocks, "USD"), withBurst.headlineFlow),
+      {
+        disclosures: withBurst.usDisclosures,
+        headlines: withBurst.headlineFlow,
+        macroSnapshot: withBurst.macroSnapshot,
+        market: "US"
+      }
+    ),
     // Not from any adapter: these read the history we collected ourselves, and
     // then what that history's candidates are doing outside the bell.
     usSurgeCandidates: await loadUsSurgeCandidateBoard(config),

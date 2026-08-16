@@ -26,7 +26,10 @@
 // not a reason, and matching it would manufacture one.
 const catalystRules = [
   [/자사주|자기주식|소각|주주환원|배당|밸류업|buyback|repurchase|dividend|shareholder return/i, { kind: "고유", label: "주주환원" }],
-  [/실적|영업이익|순이익|어닝|턴어라운드|흑자|적자|가이던스|earnings|revenue|guidance|quarterly results|profit (?:beat|miss)|beats estimates/i, { kind: "고유", label: "실적" }],
+  // \bQ[1-4]\b is how US headlines actually write a quarter — "Nebius Group
+  // Shares Surge After Q2 Beat" and "Heartflow Jumps On Q2 Results" both went
+  // unexplained against a rule that only knew the word earnings.
+  [/실적|영업이익|순이익|어닝|턴어라운드|흑자|적자|가이던스|earnings|revenue|guidance|quarterly results|\bQ[1-4]\b[^.\n]{0,20}\b(?:beat|miss|results?|report)|profit (?:beat|miss)|beats estimates|raised (?:outlook|guidance)/i, { kind: "고유", label: "실적" }],
   [/유상증자|무상증자|전환사채|신주인수권|메자닌|\bCB\b|\bBW\b|share offering|stock offering|dilution|convertible note/i, { adverse: true, kind: "고유", label: "증자·메자닌" }],
   // An overhang and a takeover were one rule, marked adverse, which is wrong in
   // both halves. Supply arriving is adverse; a controlling stake being bought is
