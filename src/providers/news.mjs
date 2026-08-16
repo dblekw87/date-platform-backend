@@ -43,11 +43,12 @@ const themeSearchTerms = {
   "전력기기": { ko: "전력기기 변압기 주식", en: "power equipment grid stocks" },
   "전자부품·전장": { ko: "전자부품 전장 카메라모듈 주식", en: "electronics components auto parts stocks" },
   "조선": { ko: "조선 수주 주식", en: "shipbuilding stocks" },
+  "패키지기판·PCB": { ko: "패키지기판 PCB 주식", en: "package substrate PCB stocks" },
   "플랫폼 AI": { ko: "플랫폼 AI 주식", en: "internet platform stocks" },
   "항공우주": { ko: "항공우주 위성 주식", en: "aerospace space satellite stocks" }
 };
 
-const marketRelevancePattern = /주식|증시|시장|코스피|코스닥|환율|금리|국채|선물|외국인|기관|거래량|거래대금|반도체|2차전지|배터리|바이오|제약|항공우주|우주|위성|로켓|조선|방산|로봇|원전|mlcc|콘덴서|커패시터|광통신|광모듈|광부품|네트워크|자동차|은행|금융|증권|에너지|유가|가상자산|비트코인|전력|수소|연료전지|신재생|재생에너지|태양광|풍력|AI|데이터센터|인수|합병|매각|공시|실적|가이던스|정책|규제|stock|stocks|market|shares|nasdaq|nyse|dow|s&p|russell|futures|etf|fed|fomc|cpi|ppi|yield|treasury|rate|rates|inflation|dollar|currency|oil|crude|fuel|gold|energy|renewable|hydrogen|fuel cell|solar|wind|earnings|guidance|merger|acquisition|m&a|sale|sec|fda|semiconductor|chip|chips|battery|biotech|pharma|aerospace|space|satellite|rocket|launch|capacitor|optical|photonics|coherent|networking|bank|banks|brokerage|defense|shipbuilding|robot|nuclear|crypto|bitcoin|ai|data center|tariff|regulation/i;
+const marketRelevancePattern = /주식|증시|시장|코스피|코스닥|환율|금리|국채|선물|외국인|기관|거래량|거래대금|반도체|패키지기판|기판|2차전지|배터리|바이오|제약|항공우주|우주|위성|로켓|조선|방산|로봇|원전|mlcc|콘덴서|커패시터|광통신|광모듈|광부품|네트워크|자동차|은행|금융|증권|에너지|유가|가상자산|비트코인|전력|수소|연료전지|신재생|재생에너지|태양광|풍력|AI|데이터센터|인수|합병|매각|공시|실적|가이던스|정책|규제|stock|stocks|market|shares|nasdaq|nyse|dow|s&p|russell|futures|etf|fed|fomc|cpi|ppi|yield|treasury|rate|rates|inflation|dollar|currency|oil|crude|fuel|gold|energy|renewable|hydrogen|fuel cell|solar|wind|earnings|guidance|merger|acquisition|m&a|sale|sec|fda|semiconductor|chip|chips|battery|biotech|pharma|aerospace|space|satellite|rocket|launch|capacitor|optical|photonics|coherent|networking|bank|banks|brokerage|defense|shipbuilding|robot|nuclear|crypto|bitcoin|ai|data center|tariff|regulation/i;
 
 const signalLabels = new Set(["매크로", "실적", "2차전지", "반도체", "AI 인프라", "AI·방산", "바이오", "항공우주", "조선·방산", "로봇·원전", "MLCC·전자부품", "광통신·네트워크", "수소·연료전지", "재생에너지", "자동차", "금융", "에너지", "암호화폐", "M&A", "정책"]);
 

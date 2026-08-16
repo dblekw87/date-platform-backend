@@ -39,17 +39,46 @@ const symbolThemes = {
   "052710": "MLCC·전자부품",
   "126730": "MLCC·전자부품",
   "011070": "전자부품·전장",
-  // Package substrates and boards. Filed with 코리아써키트 (007810, already
-  // 전자부품·전장 above) rather than under 반도체, following the choice already
-  // made here — several of these do trade on 반도체 패키지기판 news, so this is
-  // the line most worth a second opinion.
-  "007660": "전자부품·전장",
   "019180": "자동차·전장",
-  "033160": "전자부품·전장",
-  "195870": "전자부품·전장",
-  "222800": "전자부품·전장",
-  "353200": "전자부품·전장",
-  "356860": "전자부품·전장",
+
+  // 패키지기판·PCB
+  //
+  // Their own group rather than filed beside the camera modules and connectors
+  // in 전자부품·전장, which is where they started. What moves them is substrate
+  // demand — an AI accelerator order, a memory packaging story — and they move
+  // on it together, so pairing 심텍 off LG이노텍 offered a 짝꿍 nobody trades.
+  //
+  // Not folded into 반도체 either. That group is 삼성전자 and SK하이닉스, and a
+  // chip maker's move is not the trigger these follow; the substrate names run
+  // on their own days and would be buried under mega caps in a shared theme.
+  //
+  // The board makers. Every one of these is registered under KSIC 2622
+  // (인쇄회로기판 및 실장기판) — checked against DART rather than recalled, which
+  // is how 에이엔피 and 디케이티 got here and 이녹스첨단소재, filed under 2629,
+  // did not.
+  "007660": "패키지기판·PCB",
+  "007810": "패키지기판·PCB",
+  "015260": "패키지기판·PCB",
+  "051370": "패키지기판·PCB",
+  "066900": "패키지기판·PCB",
+  "085670": "패키지기판·PCB",
+  "090460": "패키지기판·PCB",
+  "222800": "패키지기판·PCB",
+  "290550": "패키지기판·PCB",
+  "353200": "패키지기판·PCB",
+  "356860": "패키지기판·PCB",
+  // Materials and equipment, registered elsewhere and overridden for the same
+  // reason the 2차전지 equipment makers below are: 와이엠티 sells plating
+  // chemistry (registered 화학) and 기가비스 and 태성 sell the inspection and
+  // wet lines a substrate fab is built from (registered 기계), and all three are
+  // priced off substrate orders rather than off chemicals or machinery demand.
+  // 해성디에스 (leadframes) and 엠케이전자 (bonding wire) sit under the parent
+  // 262 for the same reason.
+  "033160": "패키지기판·PCB",
+  "195870": "패키지기판·PCB",
+  "251370": "패키지기판·PCB",
+  "323280": "패키지기판·PCB",
+  "420770": "패키지기판·PCB",
 
   // 2차전지
   "373220": "2차전지",
@@ -177,7 +206,6 @@ const symbolThemes = {
   "460930": "조선",
   "107640": "전력기기",
   "194700": "바이오",
-  "007810": "전자부품·전장",
 
   // 기타 개별 테마
   "011330": "비건가죽",
@@ -284,7 +312,10 @@ const themeRules = [
   // 두산로보틱스 and 레인보우로보틱스 went unclassified against 로봇 alone.
   [/로봇|로보틱|로보티|자동화|robot|automation/i, "로봇"],
   [/항공우주|우주|위성|로켓|발사체|space|aerospace|satellite|rocket|launch/i, "항공우주"],
-  [/카메라모듈|기판|패키지기판|광학솔루션|전자부품|전장부품|camera module|substrate|electronics component/i, "전자부품·전장"],
+  // 기판 lives here rather than in 전자부품·전장 below, where it used to sit: a
+  // company named for a board is a board maker, and that is now its own theme.
+  [/pcb|기판|인쇄회로|연성회로|substrate|printed circuit/i, "패키지기판·PCB"],
+  [/카메라모듈|광학솔루션|전자부품|전장부품|camera module|electronics component/i, "전자부품·전장"],
   [/자동차|전기차|자율주행|전장|타이어|vehicle|ev\b|autonomous|mobility|auto parts/i, "자동차·전장"],
   [/통신|5g|6g|네트워크|rf|telecom|network|wireless/i, "통신장비"],
   [/검색|포털|portal|search/i, "AI 검색"],

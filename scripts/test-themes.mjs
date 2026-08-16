@@ -40,6 +40,18 @@ checkTheme("012450", "한화에어로스페이스", "방산");
 // Carriers are not the companies that sell them antennas.
 checkTheme("017670", "SK텔레콤", "통신서비스");
 checkTheme("030200", "KT", "통신서비스");
+// Substrate makers are their own group. They sat in 전자부품·전장 next to the
+// camera modules, which offered 심텍 as a 짝꿍 for LG이노텍 — two businesses that
+// do not move on the same news.
+checkTheme("222800", "심텍", "패키지기판·PCB");
+checkTheme("007810", "코리아써키트", "패키지기판·PCB");
+checkTheme("007660", "이수페타시스", "패키지기판·PCB");
+checkTheme("090460", "비에이치", "패키지기판·PCB");
+// Registered as chemicals and machinery, overridden because plating chemistry
+// and substrate inspection lines are priced off substrate orders.
+checkTheme("251370", "와이엠티", "패키지기판·PCB");
+checkTheme("420770", "기가비스", "패키지기판·PCB");
+checkTheme("011070", "LG이노텍", "전자부품·전장");
 
 console.log("\nname rules");
 checkTheme("999001", "가상로봇", "로봇");
@@ -49,6 +61,10 @@ checkTheme("454910", "두산로보틱스", "로봇");
 checkTheme("999002", "레인보우로보틱스", "로봇");
 checkTheme("999003", "로보티즈", "로봇");
 checkTheme("999004", "이름없는회사", "미분류");
+// A company named for a board is a board maker, so 기판 leads to the substrate
+// theme rather than to the electronics-components catch-all it used to.
+checkTheme("999005", "코스텍기판", "패키지기판·PCB");
+checkTheme("999006", "한성전자부품", "전자부품·전장");
 
 console.log("\nregistered industry, split where a KSIC division mixes trades");
 // Division 27 is 의료·정밀·광학기기 및 시계 — four unrelated businesses under one
@@ -69,6 +85,10 @@ checkIndustry("50121", "운임 반등", "외항 화물운송");
 checkIndustry("49231", "물류·운송", "화물자동차 운송");
 checkIndustry("51100", "항공운송", "항공 여객운송");
 checkIndustry("26410", "통신장비", "통신장비 제조");
+// 2622 is split out of 262 the same way 27 was split: the division mixes
+// display panels and connectors in with the board makers.
+checkIndustry("26221", "패키지기판·PCB", "인쇄회로기판 제조");
+checkIndustry("26211", "전자부품·전장", "전자표시장치 제조");
 checkIndustry("31111", "조선", "선박 건조");
 check("unknown code → undefined", themeForIndustryCode("99999"), undefined);
 check("empty code → undefined", themeForIndustryCode(""), undefined);

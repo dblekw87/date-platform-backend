@@ -30,6 +30,10 @@ const corpIndexTtlMs = 30 * 24 * 60 * 60 * 1000;
 // it is split at the group level instead.
 const industryThemes = [
   ["261", "반도체"],
+  // 인쇄회로기판 및 전자부품 실장기판, split out of 262 for the same reason the
+  // curated map splits it: substrate makers move as their own group, not with
+  // the display panels and connectors filed beside them.
+  ["2622", "패키지기판·PCB"],
   ["262", "전자부품·전장"],
   ["263", "전자부품·전장"],
   ["264", "통신장비"],
