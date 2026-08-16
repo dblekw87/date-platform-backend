@@ -291,17 +291,37 @@ const etfPattern = /(^|\s)(KODEX|TIGER|ACE|RISE|SOL|PLUS|HANARO|KOSEF|KBSTAR|ARI
 // up a theme with a name that is not a separate leader. Korean tickers mark
 // them with a trailing 우 (현대차2우B, 삼성전자우), which the lookbehind keeps
 // from catching real names ending in 대우.
-const nonOperatingPattern = /스팩|SPAC|우선주|(?<!대)\d?우[BC]?$/i;
+//
+// 스팩 alone missed most of them. A blank-cheque company registers as
+// 기업인수목적회사 and only some of them put 스팩 in the traded name, so
+// 하나금융14호기업인수목적 and 대우증권그린코리아기업인수목적회사 were being
+// classified 금리 수혜 off 금융 and 증권 and sitting in the 짝꿍 pool. The
+// resource funds registered as 특별자산투자회사 are the same kind of thing —
+// a vehicle, not a company that trades on anything.
+const nonOperatingPattern = /스팩|SPAC|우선주|기업인수목적|특별자산투자회사|투자목적회사|해외자원개발\d*호|(?<!대)\d?우[BC]?$/i;
 
 // Ordered: the first rule that matches wins, so narrower themes come first.
+//
+// Korean has no word boundary, so a keyword matches inside any longer word that
+// happens to contain it. Running the rules over all 3,927 registrations and
+// grouping the results by the keyword that matched is what surfaces these —
+// one bad keyword puts every company it caught on the same line. The lookarounds
+// below each carry the name that forced them; none was added speculatively.
 const themeRules = [
-  [/조선|중공업|해양|shipbuild|shipyard/i, "조선"],
-  [/방산|함정|미사일|무기|항공우주산업|defen[cs]e|missile|weapon/i, "방산"],
-  [/반도체|메모리|비메모리|파운드리|hbm|ddr|dram|nand|wafer|웨이퍼|패키징|후공정|소부장|semiconductor|\bchips?\b/i, "반도체"],
+  // 조선선재 makes welding rod, 조선내화 refractories, and 디지틀조선 is a
+  // newspaper. 보해양조 is a distillery caught by 해양.
+  [/(?<!디지틀|디지털)조선(?!선재|내화|일보|비즈)|중공업|해양(?!조)|shipbuild|shipyard/i, "조선"],
+  // 무기 is gone rather than fenced: 나무기술 is a cloud company, and 방산,
+  // 함정 and 미사일 already carry the theme without it.
+  [/방산|함정|미사일|항공우주산업|defen[cs]e|missile|weapon/i, "방산"],
+  // Bare 패키징 caught 삼양패키징, which bottles drinks. 후공정 and 반도체 are
+  // what actually name the packaging houses.
+  [/반도체|메모리|비메모리|파운드리|hbm|ddr|dram|nand|wafer|웨이퍼|반도체\s?패키징|후공정|소부장|semiconductor|\bchips?\b/i, "반도체"],
   [/2차전지|이차전지|배터리|전해액|양극재|음극재|분리막|리튬|니켈|battery|lithium|cathode|anode/i, "2차전지"],
   [/수소|연료전지|hydrogen|fuel cell/i, "수소·연료전지"],
   [/신재생|재생에너지|태양광|풍력|해상풍력|renewable|solar|wind/i, "재생에너지"],
-  [/원전|원자력|nuclear|uranium|우라늄|smr/i, "원전"],
+  // 대원전선 is a cable maker, and 원전 sits before 전력기기 so it won the race.
+  [/원전(?!선)|원자력|nuclear|uranium|우라늄|smr/i, "원전"],
   [/전력기기|전력|변압기|송전|배전|전선|초고압|전기설비|grid|transformer|power equipment|utility/i, "전력기기"],
   [/바이오|제약|신약|임상|항암|진단|의료기기|헬스케어|bio|biotech|pharma|medical|diagnostics|therapeutics|health|healthcare|hospital|fda/i, "바이오"],
   [/ai defense|defense ai|military ai|국방 ai|방산 ai/i, "AI·방산"],
@@ -311,7 +331,10 @@ const themeRules = [
   // 로보틱스 and 로보티즈 are how most of these companies are actually named —
   // 두산로보틱스 and 레인보우로보틱스 went unclassified against 로봇 alone.
   [/로봇|로보틱|로보티|자동화|robot|automation/i, "로봇"],
-  [/항공우주|우주|위성|로켓|발사체|space|aerospace|satellite|rocket|launch/i, "항공우주"],
+  // 우주일렉트로 makes connectors; 우주 is its founder's name, not the sky.
+  // 항공산업 and 항공기부품 are here rather than in 운임 반등 at the bottom,
+  // where 케이피항공산업 — a parts maker — was filed with the airlines.
+  [/항공우주|우주(?!일렉)|위성|로켓|발사체|항공산업|항공기부품|space|aerospace|satellite|rocket|launch/i, "항공우주"],
   // 기판 lives here rather than in 전자부품·전장 below, where it used to sit: a
   // company named for a board is a board maker, and that is now its own theme.
   [/pcb|기판|인쇄회로|연성회로|substrate|printed circuit/i, "패키지기판·PCB"],
@@ -320,14 +343,16 @@ const themeRules = [
   [/통신|5g|6g|네트워크|rf|telecom|network|wireless/i, "통신장비"],
   [/검색|포털|portal|search/i, "AI 검색"],
   [/커머스|commerce|shopping/i, "AI 커머스"],
-  [/인터넷|플랫폼|platform/i, "플랫폼 AI"],
+  // 패션플랫폼 sells clothes. It is the case that started this audit.
+  [/인터넷|(?<!패션)플랫폼|platform/i, "플랫폼 AI"],
   [/게임|엔터|음원|콘텐츠|미디어|드라마|웹툰|웹소설|game|gaming|entertainment|media|content/i, "게임·엔터"],
   [/결제|핀테크|payment|fintech|crypto|bitcoin/i, "핀테크 결제"],
   [/화장품|미용|의류|패션|소비재|식품|cosmetic|beauty|fashion|consumer|food/i, "소비재"],
   [/은행|보험|증권|금융|brokerage|bank|insurance|financial/i, "금리 수혜"],
   [/건설|건자재|시멘트|인프라|철도|construction|cement|infrastructure/i, "인프라 투자"],
   [/철강|비철|구리|알루미늄|소재|steel|copper|aluminum|materials/i, "원자재"],
-  [/화학|정유|석유|가스|lng|lpg|chemical|oil|crude|gas|refining/i, "화학·에너지"],
+  // 메가스터디 is a cram school, and 메가스터디교육 with it.
+  [/화학|정유|석유|(?<!메)가스|lng|lpg|chemical|oil|crude|\bgas\b|refining/i, "화학·에너지"],
   [/해운|항공|물류|운송|shipping|airline|logistics|transport/i, "운임 반등"]
 ];
 
@@ -370,6 +395,12 @@ export function classifyTheme(symbol, name) {
   const normalizedName = String(name ?? "").trim();
 
   if (isEtfLike(normalizedName)) return "ETF";
+
+  // A shell has no business to have a theme. The leader ranking already screens
+  // these, but the 짝꿍 pool is built from classifyTheme over every listed
+  // registration and screened only on ETF and 미분류, so every SPAC in the
+  // market was arriving as a candidate.
+  if (isNonOperatingEquity(normalizedName)) return "미분류";
 
   const mapped = symbolThemes[normalizedSymbol];
 

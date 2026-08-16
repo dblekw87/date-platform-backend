@@ -66,6 +66,37 @@ checkTheme("999004", "이름없는회사", "미분류");
 checkTheme("999005", "코스텍기판", "패키지기판·PCB");
 checkTheme("999006", "한성전자부품", "전자부품·전장");
 
+console.log("\nkeywords caught inside longer words");
+// Korean has no word boundary, so every one of these matched a real keyword
+// sitting inside a name that means something else. Found by running the rules
+// over all 3,927 registrations and grouping by the keyword that matched.
+checkTheme("999010", "나무기술", "미분류");           // 나(무기)술 — a cloud company
+checkTheme("999011", "대원전선", "전력기기");          // 대(원전)선 — cable
+checkTheme("999012", "보해양조", "미분류");           // 보(해양)조 — a distillery
+checkTheme("999013", "삼양패키징", "미분류");          // bottles, not chips
+checkTheme("999014", "패션플랫폼", "소비재");          // clothes
+checkTheme("999015", "메가스터디", "미분류");          // 메(가스)터디 — a cram school
+checkTheme("999016", "조선선재", "미분류");           // welding rod
+checkTheme("999017", "디지틀조선", "미분류");          // a newspaper
+checkTheme("999018", "우주일렉트로", "미분류");         // connectors
+// The same keywords still have to work where they mean what they say.
+checkTheme("999019", "대한조선", "조선");
+checkTheme("999020", "SK가스", "화학·에너지");
+checkTheme("999021", "심플랫폼", "플랫폼 AI");
+// Parts makers were filed with the airlines by the 항공 rule at the bottom.
+checkTheme("999022", "케이피항공산업", "항공우주");
+checkTheme("999023", "제주항공", "운임 반등");
+
+console.log("\nshells carry no theme");
+// The leader ranking screened these, but the 짝꿍 pool is built from
+// classifyTheme over every registration and screened only on ETF and 미분류,
+// so every blank-cheque company in the market arrived as a candidate — most of
+// them registered as 기업인수목적 without 스팩 anywhere in the traded name.
+checkTheme("999030", "하나금융14호기업인수목적", "미분류");
+checkTheme("999031", "대우증권그린코리아기업인수목적회사", "미분류");
+checkTheme("999032", "한국투자ANKOR유전해외자원개발특별자산투자회사1호", "미분류");
+check("기업인수목적 is non-operating", isNonOperatingEquity("하나금융14호기업인수목적"), true);
+
 console.log("\nregistered industry, split where a KSIC division mixes trades");
 // Division 27 is 의료·정밀·광학기기 및 시계 — four unrelated businesses under one
 // prefix. Mapping the division put 재영솔루텍, a camera optics maker, in 바이오.
