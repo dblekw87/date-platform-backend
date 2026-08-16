@@ -20,7 +20,8 @@
     "us:calibrate": "node scripts/calibrate-us-surges.mjs",
     "us:daily": "node scripts/run-us-pipeline.mjs",
     "check": "node --check src/server.mjs",
-    "test": "node scripts/test-sanitize-html.mjs && node scripts/test-themes.mjs"
+    "test": "node scripts/test-sanitize-html.mjs && node scripts/test-themes.mjs",
+    "test:reasons": "node scripts/test-reasons.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"

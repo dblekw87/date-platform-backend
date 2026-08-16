@@ -2,6 +2,7 @@ import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
+import { attachLeaderReasons } from "../providers/reasons.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { resolveUsIndustryThemes } from "../providers/us-industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
@@ -536,10 +537,22 @@ export async function getMarketBoard(config) {
   // 짝꿍 후보 are attached after the ranking and read a wider universe than it
   // does: the follower is smaller than the leader, so it is never in the
   // turnover list the ranking is drawn from.
-  const krDayLeaders = await attachPairCandidates(
+  // Reasons run after pairing because two of the five generators read what the
+  // pairing found: a shared reason with no peer moving scores lower than one
+  // the theme confirmed, which is the check that keeps an industry headline
+  // from being asserted as this stock's reason on a day only this stock moved.
+  const krDayLeaders = await attachLeaderReasons(
     config,
-    attachDayLeaderCatalysts(rankDayLeaders(withBurst.krLeadingStocks, "KRW"), withBurst.headlineFlow),
-    withBurst.krLeadingStocks
+    await attachPairCandidates(
+      config,
+      attachDayLeaderCatalysts(rankDayLeaders(withBurst.krLeadingStocks, "KRW"), withBurst.headlineFlow),
+      withBurst.krLeadingStocks
+    ),
+    {
+      disclosures: withBurst.krDisclosures,
+      headlines: withBurst.headlineFlow,
+      macroSnapshot: withBurst.macroSnapshot
+    }
   );
   const board = {
     ...withBurst,

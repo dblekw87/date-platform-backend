@@ -28,7 +28,18 @@ const catalystRules = [
   [/자사주|자기주식|소각|주주환원|배당|밸류업|buyback|repurchase|dividend|shareholder return/i, { kind: "고유", label: "주주환원" }],
   [/실적|영업이익|순이익|어닝|턴어라운드|흑자|적자|가이던스|earnings|revenue|guidance|quarterly results|profit (?:beat|miss)|beats estimates/i, { kind: "고유", label: "실적" }],
   [/유상증자|무상증자|전환사채|신주인수권|메자닌|\bCB\b|\bBW\b|share offering|stock offering|dilution|convertible note/i, { adverse: true, kind: "고유", label: "증자·메자닌" }],
-  [/블록딜|지분\s?매각|대주주|최대주주|보호예수|오버행|block trade|stake sale|insider sel|lock-?up/i, { adverse: true, kind: "고유", label: "지분 변동" }],
+  // An overhang and a takeover were one rule, marked adverse, which is wrong in
+  // both halves. Supply arriving is adverse; a controlling stake being bought is
+  // why 위메이드 rose on 텐센트, and calling that adverse suppressed the true
+  // reason on exactly the days it mattered.
+  [/블록딜|보호예수|오버행|block trade|insider sel|lock-?up/i, { adverse: true, kind: "고유", label: "수급 부담" }],
+  // 지분 and 매각 are separated by whatever the headline puts between them —
+  // "지분 100% 매각", "지분 전량 매각", "지분 4.9% 처분" — so requiring them
+  // adjacent missed the story. 인수 is the buyer's side of the same sentence.
+  [/지분[^.\n]{0,12}(?:매각|처분|양도|인수)|경영권\s?매각|최대주주\s?변경|대주주\s?변경|stake sale|acquires? (?:a )?stake/i, { kind: "고유", label: "지분 매각·경영권" }],
+  // A stake being revalued is not a stake changing hands, and it is the reason
+  // a holding company moves on a day nothing happened to the holding company.
+  [/지분\s?가치|평가\s?이익|평가익|지분법\s?이익|보유\s?지분[^.\n]{0,10}(?:부각|재평가|급등)|stake value|revaluation|equity method (?:gain|income)/i, { kind: "고유", label: "보유 지분 가치" }],
   [/인수|합병|피인수|물적분할|인적분할|M&A|acquisition|acquires?|merger|takeover|spin-?off/i, { kind: "고유", label: "인수·합병" }],
   [/소송|제재|횡령|배임|상장폐지|거래정지|리콜|lawsuit|probe|investigation|recall|sues?|fined/i, { adverse: true, kind: "고유", label: "악재·분쟁" }],
   [/목표주가|투자의견|증권가|커버리지|price target|analyst|upgrades?|downgrades?|initiated coverage/i, { kind: "고유", label: "증권가 의견" }],
@@ -36,13 +47,24 @@ const catalystRules = [
   [/수주|계약\s?체결|납품|공급\s?계약|공급망|new order|contract win|wins? (?:a )?contract|supply deal|supplier/i, { kind: "공유", label: "수주·공급" }],
   [/증설|설비\s?투자|신규\s?투자|신공장|캐파|생산\s?능력|capacity|new plant|new fab|expansion|capex/i, { kind: "공유", label: "증설·투자" }],
   [/협력|제휴|파트너십|\bMOU\b|partnership|partners with|collaborat|joint venture/i, { kind: "공유", label: "협력·제휴" }],
-  [/정책|정부|규제|법안|보조금|국책|지원책|policy|regulation|subsid|government|bill passes/i, { kind: "공유", label: "정책" }],
+  [/정책|정부|규제|법안|보조금|국책|지원책|요금제|policy|regulation|subsid|government|bill passes/i, { kind: "공유", label: "정책" }],
+  // An industry reaching a milestone — 5G SA 상용화, a standard fixed, a line
+  // moving to 양산 — moves everyone on it and named none of them before.
+  [/상용화|양산|표준화|주파수|로드맵|도입\s?확대|보급\s?확대|commercializ|mass production|rollout|standard(?:isation|ization)/i, { kind: "공유", label: "산업 진행" }],
+  // Not a company event at all: money choosing a kind of stock. The regime
+  // generator measures this from prices, but the headline says it too.
+  [/방어주|안전자산|안전\s?선호|위험\s?회피|자금\s?이동|순환매|risk-?off|flight to (?:safety|quality)|defensive|rotation/i, { kind: "공유", label: "수급·심리" }],
   [/관세|수출|수입|무역|공급\s?과잉|점유율|tariff|export control|sanction|trade (?:war|deal)|market share/i, { kind: "공유", label: "무역·수출" }],
   [/금리|환율|유가|원자재|가격\s?인상|단가|업황|수요\s?증가|interest rate|inflation|oil price|price hike|demand surge/i, { kind: "공유", label: "가격·업황" }],
   [/신제품|출시|임상|승인|허가|특허|launch|unveil|approval|\bFDA\b|patent|clinical/i, { kind: "공유", label: "제품·승인" }]
 ];
 
-function classifyHeadline(headline) {
+/**
+ * The kind of event a headline describes — not who it happened to. Exported
+ * because the reason engine needs the same answer for headlines that never
+ * named a symbol, where this module's own symbol-keyed pass cannot help.
+ */
+export function classifyHeadline(headline) {
   const text = `${headline.label ?? ""} ${headline.text ?? ""} ${headline.originalText ?? ""}`;
   const rule = catalystRules.find(([pattern]) => pattern.test(text));
 

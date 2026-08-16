@@ -28,6 +28,10 @@ const timeZone = "Asia/Seoul";
 // feeds. Sampling it at the price cadence would spend the day re-reading the
 // same headlines.
 const newsIntervalMs = 10 * 60_000;
+// Off hours the feeds still publish but nothing is trading on it yet, so half
+// an hour keeps the record continuous without spending the night rebuilding a
+// board nobody is reading.
+const offHoursNewsIntervalMs = 30 * 60_000;
 const idleIntervalMs = 60_000;
 
 function seoulMinute(now = new Date()) {
@@ -110,6 +114,7 @@ export function startMarketCollector(config) {
 
     const now = new Date();
     let delay = idleIntervalMs;
+    let sessionOpen = false;
 
     // The weekday window is checked first because it is free; the holiday
     // lookup only runs on days that got past it.
@@ -117,6 +122,7 @@ export function startMarketCollector(config) {
       const { minute } = seoulMinute(now);
 
       delay = intervalMsFor(minute);
+      sessionOpen = true;
 
       try {
         const saved = await samplePrices(config);
@@ -127,24 +133,30 @@ export function startMarketCollector(config) {
         // for the day — the next tick is a minute away.
         console.warn("collector: price sample failed", error instanceof Error ? error.message : error);
       }
+    }
 
-      if (Date.now() - lastNewsAt >= newsIntervalMs) {
-        lastNewsAt = Date.now();
+    // News is not a market-hours thing, and sampling it inside the block above
+    // meant everything published overnight, over a weekend or through a holiday
+    // rolled off the 300-item runtime buffer and was gone. That buffer is the
+    // only place a headline lives until it lands here, and naming why a stock
+    // rose has to be learned from months of them, so the corpus cannot lose
+    // every evening. Slower off hours because each sample costs a board build.
+    if (Date.now() - lastNewsAt >= (sessionOpen ? newsIntervalMs : offHoursNewsIntervalMs)) {
+      lastNewsAt = Date.now();
 
-        try {
-          const saved = await sampleNews(config);
+      try {
+        const saved = await sampleNews(config);
 
-          if (saved > 0) console.log(`collector: ${saved} news items`);
-        } catch (error) {
-          console.warn("collector: news sample failed", error instanceof Error ? error.message : error);
-        }
+        if (saved > 0) console.log(`collector: ${saved} news items`);
+      } catch (error) {
+        console.warn("collector: news sample failed", error instanceof Error ? error.message : error);
       }
     }
 
     if (!stopped) timeoutId = setTimeout(tick, delay);
   }
 
-  console.log(`market collector on · 평일 08:00–15:40 KST`);
+  console.log(`market collector on · 시세 평일 08:00–15:40 KST · 뉴스 상시`);
   void tick();
 
   return () => {

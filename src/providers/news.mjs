@@ -456,6 +456,14 @@ export function attachLeaderNewsTags(headlines, leaders) {
   return headlines.map((headline) => {
     const text = `${headline.source} ${headline.label} ${headline.text} ${headline.originalText ?? ""}`;
     const lowerText = text.toLowerCase();
+    // The theme match reads the story itself — not who published it, and not
+    // the label this pipeline assigned upstream. Both produced false matches by
+    // substring: a Reuters report on Houthi missiles in Yemen carries the label
+    // 조선·방산, which contains 조선, so it came back as a 조선 reason for
+    // 한화오션. Reading a theme out of our own coarse bucket is inferring from
+    // an inference, and 조선일보 in the source field is the same error with a
+    // publisher's name.
+    const storyText = `${headline.text} ${headline.originalText ?? ""}`;
     const relatedSymbols = uniqueBy(
       candidates
         .filter((leader) => headline.region === leader.market
@@ -466,7 +474,7 @@ export function attachLeaderNewsTags(headlines, leaders) {
       (symbol) => symbol
     ).slice(0, 4);
     const relatedThemes = uniqueBy(
-      candidates.filter((leader) => leader.theme && text.includes(leader.theme)).map((leader) => leader.theme),
+      candidates.filter((leader) => leader.theme && storyText.includes(leader.theme)).map((leader) => leader.theme),
       (theme) => theme
     ).slice(0, 4);
 
