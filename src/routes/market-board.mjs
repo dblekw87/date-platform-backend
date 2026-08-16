@@ -3,12 +3,16 @@ import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoar
 import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
+import { resolveUsIndustryThemes } from "../providers/us-industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
 import { rankDayLeaders } from "../providers/leadership.mjs";
+import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
+import { loadUsPremarketMovers } from "../providers/premarket.mjs";
+import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
 import { formatTradingAmount } from "../providers/format.mjs";
 import { buildThemeBrief } from "../providers/themes.mjs";
 import { readTurnoverBurst, recordTurnoverSample } from "../providers/turnover-history.mjs";
@@ -77,6 +81,9 @@ function baseMarketBoardData(providerStatuses) {
     krLeadingStocks: [],
     usDayLeaders: [],
     krDayLeaders: [],
+    krPairTrades: [],
+    usSurgeCandidates: [],
+    usPremarketMovers: [],
     smallCapScanner: []
   };
 }
@@ -108,7 +115,9 @@ function mergeMarketBoardData(base, payload) {
     flowItems: mergeById(base.flowItems, payload.flowItems),
     usLeadingStocks: payload.usLeadingStocks ?? base.usLeadingStocks,
     krLeadingStocks: payload.krLeadingStocks ?? base.krLeadingStocks,
-    smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner
+    smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
+    usSurgeCandidates: payload.usSurgeCandidates ?? base.usSurgeCandidates,
+    usPremarketMovers: payload.usPremarketMovers ?? base.usPremarketMovers
   };
 }
 
@@ -368,39 +377,49 @@ async function attachTurnoverBurst(board) {
 }
 
 /**
- * Gives a sector to domestic leaders the curated map does not cover.
+ * Gives a sector to the leaders the curated map does not cover.
  *
- * The map holds a few hundred symbols against a market of thousands, so a
- * quarter of any day's leaders arrive unclassified and drop out of the theme
- * list entirely. The registered industry is a coarser answer than a trading
- * theme, but a real sector beats no sector, and it only applies where the
+ * The map holds a few hundred symbols against markets of thousands, so leaders
+ * arrive unclassified every day — a quarter of them domestically, half on the
+ * US side, which had no registered-industry floor at all until SEC's SIC codes
+ * were wired in. A real sector beats 개별 종목, and this only speaks where the
  * curated map stayed silent.
+ *
+ * It writes `industryTheme` and leaves `theme` at 미분류, which is the whole
+ * design. Everything that groups on `theme` is answering a different question:
+ * peerCount and pairTrade are what 짝꿍매매 reads, and two companies filed under
+ * the same regulator's code have not thereby been observed moving together. A
+ * 2등주 the board never measured is the one mistake this list cannot afford.
+ *
+ * So the label shows and the pairing does not follow from it. The screen stops
+ * saying 개별 종목 about a semiconductor company; the 짝꿍 count stays measured.
  */
-async function attachIndustryThemes(config, board) {
-  const unclassified = board.krLeadingStocks.filter((stock) => stock.theme === "미분류");
+async function attachIndustryThemes(config, board, { key, resolve }) {
+  const unclassified = board[key].filter((stock) => stock.theme === "미분류");
 
   if (unclassified.length === 0) return board;
 
   try {
-    const themes = await resolveIndustryThemes(config, unclassified.map((stock) => stock.symbol));
+    const themes = await resolve(config, unclassified.map((stock) => stock.symbol));
 
     if (Object.keys(themes).length === 0) return board;
 
     return {
       ...board,
-      krLeadingStocks: board.krLeadingStocks.map((stock) => {
-        const theme = themes[stock.symbol];
+      [key]: board[key].map((stock) => {
+        const industryTheme = themes[stock.symbol];
 
-        if (!theme || stock.theme !== "미분류") return stock;
+        if (!industryTheme || stock.theme !== "미분류") return stock;
 
-        // The reason string leads with the theme, so it moves with it.
+        // The reason string leads with the theme, and it is display text rather
+        // than anything the ranking reads, so it can carry the industry.
         const [, ...rest] = stock.reason.split(" · ");
 
-        return { ...stock, theme, reason: [theme, ...rest].join(" · ") };
+        return { ...stock, industryTheme, reason: [industryTheme, ...rest].join(" · ") };
       })
     };
   } catch (error) {
-    console.warn("industry lookup failed", error instanceof Error ? error.message : error);
+    console.warn(`industry lookup failed for ${key}`, error instanceof Error ? error.message : error);
 
     return board;
   }
@@ -453,8 +472,19 @@ export async function getMarketBoard(config) {
         // the board reads them as lists.
         krDayLeaders: snapshot.krDayLeaders
           ?? attachDayLeaderCatalysts(rankDayLeaders(snapshot.krLeadingStocks ?? [], "KRW"), snapshot.headlineFlow),
+        // Not rebuilt off a snapshot: the candidates are live quotes for stocks
+        // the snapshot never held, so an old board shows the section empty
+        // rather than showing yesterday's followers as today's.
+        krPairTrades: snapshot.krPairTrades ?? [],
         usDayLeaders: snapshot.usDayLeaders
           ?? attachDayLeaderCatalysts(rankDayLeaders(snapshot.usLeadingStocks ?? [], "USD"), snapshot.headlineFlow),
+        // Read live even off a snapshot. Candidates are derived from our own
+        // history tables rather than from a licensed feed, so they neither go
+        // stale with the snapshot nor need MARKET_DATA_MODE to be licensed.
+        usSurgeCandidates: await loadUsSurgeCandidateBoard(config),
+        // Extended-hours prices, which the snapshot never holds: the board can be
+        // hours old while the stocks it names are moving.
+        usPremarketMovers: (await loadUsPremarketMovers(config)).movers,
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -482,9 +512,11 @@ export async function getMarketBoard(config) {
     krLeadingStocks: krLeaders.leaders,
     usLeadingStocks: usLeaders.leaders
   };
-  // Industry fills in before themes are scored, so a newly named sector counts
-  // toward the strength ranking rather than being left out of it.
-  const merged = await attachIndustryThemes(config, combined);
+  // Both markets fill in the same way and neither feeds the theme ranking below:
+  // a registered industry names a stock without evidence that anything moved
+  // alongside it, so it cannot invent a theme group or a 짝꿍 behind it.
+  const withKrIndustry = await attachIndustryThemes(config, combined, { key: "krLeadingStocks", resolve: resolveIndustryThemes });
+  const merged = await attachIndustryThemes(config, withKrIndustry, { key: "usLeadingStocks", resolve: resolveUsIndustryThemes });
   // Themes are scored after the merge so every provider's leaders count toward
   // the same turnover ranking.
   const themeBriefs = [
@@ -501,10 +533,25 @@ export async function getMarketBoard(config) {
   // The catalyst says why a leader rose, which the ranking cannot: turnover
   // concentration looks identical whether the reason is shared with the theme
   // or belongs to one balance sheet.
+  // 짝꿍 후보 are attached after the ranking and read a wider universe than it
+  // does: the follower is smaller than the leader, so it is never in the
+  // turnover list the ranking is drawn from.
+  const krDayLeaders = await attachPairCandidates(
+    config,
+    attachDayLeaderCatalysts(rankDayLeaders(withBurst.krLeadingStocks, "KRW"), withBurst.headlineFlow),
+    withBurst.krLeadingStocks
+  );
   const board = {
     ...withBurst,
-    krDayLeaders: attachDayLeaderCatalysts(rankDayLeaders(withBurst.krLeadingStocks, "KRW"), withBurst.headlineFlow),
-    usDayLeaders: attachDayLeaderCatalysts(rankDayLeaders(withBurst.usLeadingStocks, "USD"), withBurst.headlineFlow)
+    krDayLeaders,
+    // The same candidates again, grouped by theme, because that is the unit the
+    // trade is read in — 반도체 moving, and what has not moved with it yet.
+    krPairTrades: buildPairBoard(krDayLeaders),
+    usDayLeaders: attachDayLeaderCatalysts(rankDayLeaders(withBurst.usLeadingStocks, "USD"), withBurst.headlineFlow),
+    // Not from any adapter: these read the history we collected ourselves, and
+    // then what that history's candidates are doing outside the bell.
+    usSurgeCandidates: await loadUsSurgeCandidateBoard(config),
+    usPremarketMovers: (await loadUsPremarketMovers(config)).movers
   };
 
   if (canUseLicensedLiveData) {

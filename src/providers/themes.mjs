@@ -25,9 +25,31 @@ const symbolThemes = {
   "080580": "반도체",
 
   // 전자부품
+  //
+  // The capacitor makers are here by hand because the theme rules read names,
+  // and only 삼화콘덴서 has 콘덴서 in its. 코칩, 아모텍 and 동일기연 are the same
+  // trade under names that say nothing, which is exactly the case the curated
+  // map exists for: 삼성전기 leading MLCC with no follower on the board was the
+  // gap that started this.
   "009150": "MLCC·전자부품",
   "001820": "MLCC·전자부품",
+  "009470": "MLCC·전자부품",
+  "032960": "MLCC·전자부품",
+  "043260": "MLCC·전자부품",
+  "052710": "MLCC·전자부품",
+  "126730": "MLCC·전자부품",
   "011070": "전자부품·전장",
+  // Package substrates and boards. Filed with 코리아써키트 (007810, already
+  // 전자부품·전장 above) rather than under 반도체, following the choice already
+  // made here — several of these do trade on 반도체 패키지기판 news, so this is
+  // the line most worth a second opinion.
+  "007660": "전자부품·전장",
+  "019180": "자동차·전장",
+  "033160": "전자부품·전장",
+  "195870": "전자부품·전장",
+  "222800": "전자부품·전장",
+  "353200": "전자부품·전장",
+  "356860": "전자부품·전장",
 
   // 2차전지
   "373220": "2차전지",
@@ -36,6 +58,36 @@ const symbolThemes = {
   "247540": "2차전지",
   "086520": "2차전지",
   "066970": "2차전지",
+  // The equipment makers. A cell plant is built out of machines, so KSIC files
+  // every one of these under 292 특수 목적용 기계 — true, and useless here:
+  // they move on battery orders, not on machinery demand. None of their names
+  // carries a battery word either, so neither the industry layer nor the name
+  // rules can reach them and only this map can.
+  //
+  // Codes resolved by name through the DART corporation index rather than
+  // recalled, which is the half that would have been wrong.
+  "372170": "2차전지",
+  "137400": "2차전지",
+  "259630": "2차전지",
+  "299030": "2차전지",
+  "144630": "2차전지",
+  "302430": "2차전지",
+  "378340": "2차전지",
+  "267320": "2차전지",
+  "282880": "2차전지",
+  "262260": "2차전지",
+  "277880": "2차전지",
+  "432470": "2차전지",
+  // 290670 대보마그네틱 and 262260 에이프로 register as 전력기기 (28x) rather
+  // than machinery. Same story, different wrong answer.
+  "290670": "2차전지",
+  // Parts and materials, not equipment, and misfiled the same way: cans and cap
+  // assemblies read as 전력기기, cathode material and electrolyte additives as
+  // 화학·에너지. The market prices all four off cell demand.
+  "091580": "2차전지",
+  "243840": "2차전지",
+  "005070": "2차전지",
+  "278280": "2차전지",
 
   // 조선
   "009540": "조선",
@@ -247,6 +299,31 @@ const themeRules = [
   [/화학|정유|석유|가스|lng|lpg|chemical|oil|crude|gas|refining/i, "화학·에너지"],
   [/해운|항공|물류|운송|shipping|airline|logistics|transport/i, "운임 반등"]
 ];
+
+// Reverse index of the curated map, built once.
+//
+// This is the only place that knows a theme has members the leader board never
+// sees. 삼화콘덴서 is MLCC and has never been in a turnover top 38 in its life,
+// which is exactly what makes it a 짝꿍 candidate rather than a leader: the
+// stock that follows is by definition smaller than the one it follows.
+const membersByTheme = new Map();
+
+for (const [symbol, theme] of Object.entries(symbolThemes)) {
+  if (!membersByTheme.has(theme)) membersByTheme.set(theme, []);
+
+  membersByTheme.get(theme).push(symbol);
+}
+
+/** Domestic codes are six digits; US tickers are letters. */
+function isDomesticSymbol(symbol) {
+  return /^\d{6}$/.test(symbol);
+}
+
+export function membersOfTheme(theme, market = "KR") {
+  const domestic = market === "KR";
+
+  return (membersByTheme.get(theme) ?? []).filter((symbol) => isDomesticSymbol(symbol) === domestic);
+}
 
 export function isEtfLike(name) {
   return etfPattern.test(String(name ?? ""));

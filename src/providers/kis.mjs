@@ -1,4 +1,5 @@
 import { readThroughCache } from "../cache.mjs";
+import { hasKisCredentials } from "../config.mjs";
 import { fetchJson } from "../http.mjs";
 import { formatTradingAmount } from "./format.mjs";
 import { krTradingVenue, sessionDate } from "./market-session.mjs";
@@ -299,6 +300,89 @@ async function loadFluctuationRank(config, token, venue) {
  */
 const tradingCalendar = createRuntimeState("kr-trading-calendar", () => ({ fetchedAt: 0, byDate: {} }));
 const tradingCalendarTtlMs = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Current price for named symbols, which the ranking endpoints cannot give.
+ *
+ * Every other domestic call here asks "who is at the top". That is the wrong
+ * question for 짝꿍매매: the stock that follows a leader is by definition
+ * smaller than it, so it is not in any turnover ranking — 삼화콘덴서 follows
+ * 삼성전기 and has never once appeared in the top 38 the board reads. The only
+ * way to see it is to ask about it by name.
+ *
+ * Six at a time. KIS allows more, but this runs inside a board build and the
+ * caller asks about a curated list of a few dozen at most.
+ */
+export async function loadKrQuotes(config, symbols) {
+  if (!hasKisCredentials(config) || symbols.length === 0) return [];
+
+  const token = await getAccessToken(config);
+  const quotes = await requestQuotes(config, token, symbols);
+  const missing = symbols.filter((symbol) => !quotes.some((quote) => quote.symbol === symbol));
+
+  // KIS throttles per second and answers a burst with an error rather than a
+  // wait, so a refused symbol is not a symbol without an answer. Dropping those
+  // silently made candidates come and go between builds — 로보티즈 was behind
+  // 현대무벡스 one minute and gone the next, on a rate limit rather than a price.
+  if (missing.length === 0) return quotes;
+
+  const retried = await requestQuotes(config, token, missing);
+
+  if (retried.length < missing.length) {
+    console.warn(`kis quote: ${missing.length - retried.length} of ${symbols.length} symbols unanswered after retry`);
+  }
+
+  return [...quotes, ...retried];
+}
+
+/**
+ * Two at a time with a breath between, which is about eight a second.
+ *
+ * Four at 120ms was thirty a second and drew refusals on a third of the list.
+ * The batch is cached per symbol for a minute afterwards, so this rate is paid
+ * once rather than on every board build.
+ */
+async function requestQuotes(config, token, symbols) {
+  const quotes = [];
+
+  for (let index = 0; index < symbols.length; index += 2) {
+    const batch = symbols.slice(index, index + 2);
+    const settled = await Promise.allSettled(batch.map((symbol) => loadKrQuote(config, token, symbol)));
+
+    quotes.push(...settled.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []));
+
+    if (index + 2 < symbols.length) await new Promise((wait) => setTimeout(wait, 200));
+  }
+
+  return quotes;
+}
+
+async function loadKrQuote(config, token, symbol) {
+  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-price", {
+    FID_COND_MRKT_DIV_CODE: "J",
+    FID_INPUT_ISCD: symbol
+  }), {
+    timeoutMs: 3500,
+    headers: kisHeaders(config, token, "FHKST01010100")
+  });
+
+  if (data?.rt_cd && data.rt_cd !== "0") return null;
+
+  const price = parseNumeric(data?.output?.stck_prpr);
+
+  if (!price) return null;
+
+  return {
+    changeRateValue: parseNumeric(data?.output?.prdy_ctrt),
+    market: "KR",
+    name: String(data?.output?.hts_kor_isnm ?? "").trim() || symbol,
+    priceValue: price,
+    symbol,
+    // 누적 거래대금 arrives in won already, unlike the ranking rows.
+    turnoverValue: parseNumeric(data?.output?.acml_tr_pbmn),
+    volumeValue: parseNumeric(data?.output?.acml_vol)
+  };
+}
 
 export async function isKrMarketOpen(config, date = new Date()) {
   const day = sessionDate("KR", date).replaceAll("-", "");
