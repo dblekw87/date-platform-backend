@@ -22,6 +22,13 @@ export function readConfig() {
     // Off unless asked for: the collector writes to the database on a timer, so
     // a machine that only serves requests should not start one.
     marketCollector: process.env.MARKET_COLLECTOR === "true",
+    // Off unless asked for, like the collector: the nightly rebuild writes to
+    // the database and only one machine should be doing it.
+    usPipeline: process.env.US_PIPELINE === "true",
+    // How many share counts one nightly run refreshes. The set worth keeping
+    // current is ~2,300 symbols and a free key allows five requests a minute,
+    // so 250 a night is roughly an hour and brings the whole set round weekly.
+    usPipelineShareSlice: Number(process.env.US_PIPELINE_SHARE_SLICE ?? 250),
     toss: {
       baseUrl: process.env.TOSS_INVEST_BASE_URL ?? "https://openapi.tossinvest.com",
       clientId: process.env.TOSS_INVEST_CLIENT_ID,
@@ -44,6 +51,14 @@ export function readConfig() {
     },
     market: {
       finnhubApiKey: process.env.FINNHUB_API_KEY
+    },
+    // Whole-market US history, read by the backfill script rather than by a
+    // request. Free keys are capped at a few calls a minute, so the pace is
+    // configured instead of assumed.
+    massive: {
+      apiKey: process.env.MASSIVE_API_KEY,
+      baseUrl: process.env.MASSIVE_BASE_URL ?? "https://api.polygon.io",
+      requestsPerMinute: Number(process.env.MASSIVE_REQUESTS_PER_MINUTE ?? 5)
     },
     news: {
       benzingaApiKey: process.env.BENZINGA_API_KEY,

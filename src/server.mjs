@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { startMarketCollector } from "./collector.mjs";
+import { startUsPipelineScheduler } from "./pipeline/scheduler.mjs";
 import { readConfig, hasTossCredentials } from "./config.mjs";
 import { HttpError, readJsonBody, sendJson, sendNoContent } from "./http.mjs";
 import { handleAppDataRoute } from "./routes/app-data.mjs";
@@ -166,4 +167,5 @@ server.listen(config.port, () => {
   }
 
   if (config.marketCollector) startMarketCollector(config);
+  startUsPipelineScheduler(config);
 });
