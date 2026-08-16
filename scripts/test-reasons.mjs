@@ -132,6 +132,60 @@ const quiet = await attachLeaderReasons(config, [leader("000000", "조용한회�
 
 check("a stock with no evidence gets no invented reason", (quiet[0].reasons ?? []).length === 0);
 
+console.log("\n공시 — what a filing has to be to count as a reason");
+
+function filing(symbol, title, urgency = "공시") {
+  return { action: "원문 확인", filedAt: "2026-08-16T00:00:00Z", originalUrl: "https://x", symbol, title, urgency };
+}
+
+const filings = await attachLeaderReasons(
+  config,
+  [
+    leader("000660", "SK하이닉스", "반도체", 4.65, 2),
+    leader("005930", "삼성전자", "반도체", 2.43, 2),
+    leader("042660", "한화오션", "조선", 6.17, 2),
+    leader("012450", "한화에어로스페이스", "방산", 5.0, 2)
+  ],
+  {
+    disclosures: [
+      // Every company files one, the same week. Evidence about a business and
+      // none at all about a day.
+      filing("000660", "SK하이닉스 · 반기보고서 (2026.06)"),
+      // Material, and the opposite of a reason to have risen. This was ranking
+      // first ahead of the buyback that actually explains the move.
+      filing("000660", "SK하이닉스 · 파생상품거래손실발생"),
+      // Related-party boilerplate.
+      filing("005930", "삼성전자 · 동일인등출자계열회사와의상품ㆍ용역거래변경"),
+      // The kind that is a reason.
+      filing("042660", "한화오션 · 단일판매ㆍ공급계약체결", "계약"),
+      filing("012450", "한화에어로스페이스 · 타법인주식및출자증권취득결정", "M&A")
+    ],
+    headlines: [],
+    macroSnapshot: [],
+    market: "KR"
+  }
+);
+const filedBy = (symbol) => (filings.find((result) => result.symbol === symbol)?.reasons ?? []).filter((reason) => reason.path === "공시");
+
+check("a periodic report is not a reason", filedBy("000660").length === 0, `got ${JSON.stringify(filedBy("000660").map((reason) => reason.title))}`);
+check("related-party boilerplate is not a reason", filedBy("005930").length === 0, `got ${JSON.stringify(filedBy("005930").map((reason) => reason.title))}`);
+check("a supply contract is", filedBy("042660")[0]?.title === "계약", `got ${JSON.stringify(filedBy("042660").map((reason) => reason.title))}`);
+check("so is an acquisition", filedBy("012450")[0]?.title === "M&A", `got ${JSON.stringify(filedBy("012450").map((reason) => reason.title))}`);
+
+// The domestic classifier answers 공시 for anything it does not recognise, and
+// "공시" is not a reason anyone can read.
+const named = await attachLeaderReasons(
+  config,
+  [leader("000660", "SK하이닉스", "반도체", 4.65, 2)],
+  { disclosures: [filing("000660", "SK하이닉스 · 유형자산취득결정")], headlines: [], macroSnapshot: [], market: "KR" }
+);
+
+check(
+  "an unclassified filing is named by its report",
+  (named[0].reasons ?? [])[0]?.title === "유형자산취득결정",
+  `got ${JSON.stringify((named[0].reasons ?? []).map((reason) => reason.title))}`
+);
+
 console.log("\n미국 — the same engine, two generators short");
 
 function usLeader(symbol, name, theme, changeRateValue, peerCount = 0) {

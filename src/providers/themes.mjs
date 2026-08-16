@@ -133,7 +133,21 @@ const symbolThemes = {
   "272210": "방산",
 
   // 원전 / 전력
+  //
+  // Not one of these can be reached without the map. Their registrations read
+  // 인프라 투자 (한전기술 72129, 한전KPS 42311, 일진파워 423, 오르비텍 7291),
+  // 정밀기기 (우진 27216), 기계·장비 (비에이치아이 29176) and — the one that
+  // makes the point — AI·소프트웨어 for 우진엔텍 (7390), which maintains reactors.
+  // None of their names carries a 원전 word either, so the theme had three
+  // members and a leader in it had almost nothing to pair with.
   "034020": "원전",
+  "046120": "원전",
+  "051600": "원전",
+  "052690": "원전",
+  "083650": "원전",
+  "094820": "원전",
+  "105840": "원전",
+  "457550": "원전",
   "298040": "전력기기",
   "103590": "전력기기",
   "007070": "전력기기",
@@ -154,9 +168,8 @@ const symbolThemes = {
   "007340": "자동차·전장",
   "000430": "자동차·전장",
 
-  // 가전·전자
+  // 가전·전자. LG이노텍 is up with the component makers, where it belongs.
   "066570": "전자부품·전장",
-  "011070": "전자부품·전장",
 
   // 플랫폼 / 콘텐츠
   "035420": "플랫폼 AI",
@@ -176,9 +189,13 @@ const symbolThemes = {
   "105560": "금리 수혜",
   "055550": "금리 수혜",
   "086790": "금리 수혜",
-  // Carriers, not the companies that sell them antennas.
+  // Carriers, not the companies that sell them antennas. All three of them:
+  // SK텔레콤 led the board with KT as its only possible 짝꿍, because LG유플러스
+  // was never written down — the industry floor knew it (61220) and the pool is
+  // not built from the floor.
   "017670": "통신서비스",
   "030200": "통신서비스",
+  "032640": "통신서비스",
 
   // 로봇 / 물류자동화
   "319400": "로봇",
@@ -189,6 +206,12 @@ const symbolThemes = {
   "117730": "로봇",
 
   // 재생에너지 / 전기설비
+  //
+  // The wind names are all filed 2511 구조용 금속 — they weld steel towers, and
+  // that is genuinely what they make. It is not what moves them.
+  "018000": "재생에너지",
+  "100130": "재생에너지",
+  "112610": "재생에너지",
   "475150": "재생에너지",
   "001210": "전력기기",
 

@@ -1,5 +1,6 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
+import { resolveCorpCodes } from "./industry.mjs";
 
 /**
  * DART disclosures for the last week, classified by report title so the board
@@ -61,6 +62,63 @@ function toDisclosureItem(item) {
 
 export function hasDartCredentials(config) {
   return Boolean(config.dart.apiKey);
+}
+
+// A filing older than this is not why a stock moved today.
+const leaderDisclosureDays = 3;
+
+// One request per leader, and eight leaders on a build. At a board a minute
+// through a session that is a few thousand against a 20,000/day quota, so the
+// cache is what keeps it affordable rather than the request count.
+const leaderDisclosureTtlMs = 5 * 60_000;
+
+/**
+ * The filings made by particular companies, rather than by the market.
+ *
+ * loadDartDisclosures asks what was filed at all and keeps the newest thirty,
+ * which is the right list for the 공시 board and the wrong one for explaining a
+ * move: measured across three builds, the overlap between those thirty filings
+ * and the day's eight leaders was zero, zero and zero. The strongest evidence
+ * the reason engine has — a company saying something itself — was structurally
+ * unable to fire.
+ *
+ * DART's list endpoint takes a corp_code, so the question can simply be asked
+ * the other way round.
+ */
+export async function loadLeaderDisclosures(config, symbols) {
+  if (!config.dart.apiKey || symbols.length === 0) return [];
+
+  const corpCodes = await resolveCorpCodes(config, symbols);
+  const from = new Date();
+
+  from.setDate(from.getDate() - leaderDisclosureDays);
+
+  const results = await Promise.all([...corpCodes].map(([symbol, corpCode]) =>
+    readThroughCache(`dart:disclosures:${symbol}`, leaderDisclosureTtlMs, async () => {
+      const url = new URL("https://opendart.fss.or.kr/api/list.json");
+
+      url.searchParams.set("crtfc_key", config.dart.apiKey);
+      url.searchParams.set("corp_code", corpCode);
+      url.searchParams.set("bgn_de", yyyymmdd(from));
+      url.searchParams.set("page_count", "20");
+      url.searchParams.set("sort", "date");
+      url.searchParams.set("sort_mth", "desc");
+
+      const response = await fetchJson(url.toString(), { timeoutMs: 6000 });
+
+      // 013 is "this company filed nothing", which is an answer and is cached
+      // like one so a quiet company is not asked about on every build.
+      if (response?.status === "013") return [];
+
+      if (response?.status !== "000" || !Array.isArray(response.list)) return [];
+
+      return response.list
+        .filter((item) => item.rcept_no && item.report_nm)
+        .map(toDisclosureItem);
+    }).catch(() => [])
+  ));
+
+  return results.flat();
 }
 
 export async function loadDartDisclosures(config) {

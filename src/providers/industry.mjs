@@ -198,6 +198,23 @@ export async function resolveCompanyNames(config, symbols) {
   );
 }
 
+/**
+ * DART's own identifier for each symbol, which is what its endpoints take.
+ * The archive is already downloaded for the industry lookup, so this costs
+ * nothing beyond the read.
+ */
+export async function resolveCorpCodes(config, symbols) {
+  if (!config.dart.apiKey || symbols.length === 0) return new Map();
+
+  const byStockCode = await loadCorpIndex(config);
+
+  return new Map(symbols.flatMap((symbol) => {
+    const corpCode = byStockCode[symbol]?.corpCode;
+
+    return corpCode ? [[symbol, corpCode]] : [];
+  }));
+}
+
 export async function listRegisteredStockCodes(config) {
   if (!config.dart.apiKey) return [];
 

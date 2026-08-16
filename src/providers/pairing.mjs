@@ -28,14 +28,25 @@ import { classifyTheme, membersOfTheme } from "./themes.mjs";
 // be as fresh as it is, without every rebuild re-asking about the same names.
 const quoteCacheTtlMs = 60_000;
 
+// A symbol KIS refuses to quote is a fact about the listing, not about the
+// minute, so it is remembered for the session rather than for a tick.
+const quoteMissTtlMs = 6 * 60 * 60_000;
+
 // Each member costs a quote, and the themes asked about are only the ones a
-// leader is standing in — at most eight. Twelve apiece keeps the worst case
-// near a hundred names, which the sixty second cache below pays for once.
+// leader is standing in — at most eight.
+//
+// Twelve was set when a board build paid for these at request time. The
+// collector pays now, once a tick, and the board reads what it warmed — so the
+// limit stopped being about latency and went back to being about the daily
+// request count. Twenty-four fits every curated theme except 2차전지, which is
+// the only one with more members than that; at twelve it was cutting four names
+// off 패키지기판·PCB and eleven off 2차전지, in the arbitrary order JavaScript
+// happens to enumerate object keys.
 //
 // Curated members are taken first. They are the ones somebody chose, and 바이오
 // classifies 174 companies by name alone: without an order this would be
 // whichever hundred-and-seventy-four happened to sort first.
-const maxMembersPerTheme = 12;
+const maxMembersPerTheme = 24;
 
 // The corp index behind this changes monthly at most, and the classification is
 // pure. An hour means a board build almost never pays for it.
@@ -126,7 +137,7 @@ async function loadOutsideQuotes(config, symbols) {
     const cached = getCache(`kr-quote:${symbol}`);
 
     if (cached) known.set(symbol, cached);
-    else missing.push(symbol);
+    else if (!getCache(`kr-quote-miss:${symbol}`)) missing.push(symbol);
   });
 
   if (missing.length > 0) {
@@ -150,6 +161,17 @@ async function loadOutsideQuotes(config, symbols) {
 
       known.set(quote.symbol, setCache(`kr-quote:${quote.symbol}`, member, quoteCacheTtlMs));
     });
+
+    // Symbols KIS will not quote at all — names the DART index still lists that
+    // have been delisted, merged or suspended. Eight of forty-five on the
+    // current board, and without this they are re-asked on every tick forever,
+    // each one costing a request and a retry. Remembered far longer than a
+    // price, because the answer is about the listing rather than the day.
+    const answered = new Set(quotes.map((quote) => quote.symbol));
+
+    missing
+      .filter((symbol) => !answered.has(symbol))
+      .forEach((symbol) => setCache(`kr-quote-miss:${symbol}`, true, quoteMissTtlMs));
   }
 
   return known;

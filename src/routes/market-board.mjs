@@ -1,6 +1,6 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
-import { hasDartCredentials, loadDartDisclosures } from "../providers/dart.mjs";
+import { hasDartCredentials, loadDartDisclosures, loadLeaderDisclosures } from "../providers/dart.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
@@ -549,7 +549,14 @@ export async function getMarketBoard(config) {
       withBurst.krLeadingStocks
     ),
     {
-      disclosures: withBurst.krDisclosures,
+      // Asked about these companies by name rather than taken off the
+      // market-wide feed: the newest thirty filings overlapped the day's
+      // leaders zero times out of three builds, so the 공시 path — the
+      // strongest evidence the engine has — could not fire at all.
+      disclosures: await withTimeout(
+        loadLeaderDisclosures(config, withBurst.krLeadingStocks.map((stock) => stock.symbol)),
+        6000
+      ).catch(() => withBurst.krDisclosures),
       headlines: withBurst.headlineFlow,
       macroSnapshot: withBurst.macroSnapshot,
       market: "KR"

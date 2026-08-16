@@ -372,12 +372,47 @@ function themeNewsReasons(leader, headlines) {
  * this reason, and only rising stocks are ranked here. AMD's registration
  * statement was ranking first on a day it rose 6.5%, ahead of the news.
  */
-const supplyFilingPattern = /^(?:증권|지분)$/;
+const supplyFilingPattern = /^(?:증권|지분|자금조달)$/;
+
+/**
+ * Filings a company makes because the calendar says so.
+ *
+ * Asking DART about the leaders by name finally made the 공시 path fire, and
+ * most of what came back was 반기보고서 — one per company, every company, the
+ * same week. A periodic report is the strongest kind of evidence about a
+ * business and no evidence at all about a day.
+ */
+const routineFilingPattern = /반기보고서|분기보고서|사업보고서|감사보고서|결산|지급수단별|소유상황보고서|기업지배구조|영업보고서|정정신고|주주총회소집|동일인등출자|상품ㆍ용역거래|계열회사와의/;
+
+/**
+ * Filings that are material and are the opposite of a reason to have risen.
+ *
+ * Only rising stocks are ranked here, so a derivative loss is not why one rose
+ * — and SK하이닉스 took 파생상품거래손실발생 as its first reason on a day it
+ * rose 4.65%, ahead of the 710억 달러 주주환원 headline that actually explains
+ * it. The catalyst rules already draw this line for news; filings need it too.
+ */
+const adverseFilingPattern = /손실발생|손상차손|소송|제재|과징금|횡령|배임|거래정지|상장폐지|회생절차|부도|감사의견\s?거절|불성실공시|리콜/;
+
+/**
+ * A filing's own name, which says more than the bucket it was sorted into.
+ * The domestic classifier answers 공시 for anything it does not recognise, and
+ * "공시" is not a reason anyone can read.
+ */
+function disclosureTitle(disclosure) {
+  const reportName = String(disclosure.title ?? "").split("·").pop()?.trim();
+
+  if (disclosure.urgency && disclosure.urgency !== "공시") return disclosure.urgency;
+
+  return reportName || "공시";
+}
 
 function disclosureReasons(leader, disclosures) {
   return disclosures
     .filter((disclosure) => disclosure.symbol === leader.symbol)
     .filter((disclosure) => !supplyFilingPattern.test(String(disclosure.urgency ?? "")))
+    .filter((disclosure) => !routineFilingPattern.test(String(disclosure.title ?? "")))
+    .filter((disclosure) => !adverseFilingPattern.test(String(disclosure.title ?? "")))
     .slice(0, 1)
     .map((disclosure) => ({
       // A filing is the company saying it itself, which is the strongest
@@ -388,7 +423,7 @@ function disclosureReasons(leader, disclosures) {
       originalUrl: disclosure.originalUrl,
       path: "공시",
       publishedAt: disclosure.filedAt,
-      title: disclosure.urgency
+      title: disclosureTitle(disclosure)
     }));
 }
 
