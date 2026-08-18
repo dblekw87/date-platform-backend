@@ -93,13 +93,27 @@ function Test-DockerDaemon {
   return $LASTEXITCODE -eq 0
 }
 
+<#
+  The daily database dump.
+
+  Hung off this script because the hourly scheduled task is the only recurring
+  trigger available without elevation, and it has to run on both paths: the
+  normal case by far is a backend already up, which returns below without
+  reaching the end. backup-db.ps1 guards its own date, so eleven of the twelve
+  calls a day do nothing but check a filename.
+#>
+function Invoke-DailyBackup {
+  & (Join-Path $PSScriptRoot "backup-db.ps1") 2>&1 | ForEach-Object { Write-Line "  backup: $_" }
+}
+
 Write-Line "--- start-collector ---"
 
 # A dev window already holding :4010 is the normal case when someone is working.
 # Starting a second listener would only fail on EADDRINUSE and leave a confusing
 # error in the log, so treat it as done.
 if (Test-Port -Port $backendPort) {
-  Write-Line "backend already listening on :$backendPort - nothing to do"
+  Write-Line "backend already listening on :$backendPort - nothing to start"
+  Invoke-DailyBackup
   exit 0
 }
 
@@ -184,6 +198,7 @@ if (Wait-Port -Port $backendPort -Seconds $ServerWaitSeconds -Label "backend") {
   # ASCII only in log lines: Task Scheduler runs this under Windows PowerShell
   # 5.1, which reads a BOM-less UTF-8 script as ANSI and mangles anything else.
   Write-Line "backend listening on :$backendPort - log $serverLog"
+  Invoke-DailyBackup
   exit 0
 }
 
