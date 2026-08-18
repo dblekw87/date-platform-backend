@@ -88,6 +88,9 @@ check("Sunday 09:10 is clear", isKrOpeningWindow(seoul("2026-08-23", 9, 10)), fa
 // regular session - the exact window the per-minute cadence exists for.
 console.log("\nsampling never sleeps past a cadence change");
 check("08:59:42 wakes at 09:00, not 09:04", delayMsFrom(8 * 60 + 59, 42), 18_000);
+// The pre-market ends at 08:50 and nothing trades until the bell, so a tick at
+// 08:47 must stop at 08:50 rather than sleep into the dead ten minutes.
+check("08:47 stops at 08:50", delayMsFrom(8 * 60 + 47, 0), 3 * 60_000);
 check("08:30:00 keeps the 5 minute pre-market tick", delayMsFrom(8 * 60 + 30, 0), 5 * 60_000);
 check("09:00:00 is a plain one minute tick", delayMsFrom(9 * 60, 0), 60_000);
 check("09:29:10 stops short at 09:30", delayMsFrom(9 * 60 + 29, 10), 50_000);

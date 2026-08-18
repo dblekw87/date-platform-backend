@@ -4,7 +4,8 @@ import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples } from 
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { krAfterHoursCloseMinute, krAfterHoursOpenMinute, sessionDate } from "./providers/market-session.mjs";
+import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, sessionDate } from "./providers/market-session.mjs";
+import { loadMarketData } from "./providers/market.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
 
 /**
@@ -25,6 +26,7 @@ import { getMarketBoard } from "./routes/market-board.mjs";
 // Collection opens with the NXT pre-market rather than the KRX bell, because
 // the leadership that matters at 09:10 is often already forming at 08:30.
 const openMinute = 8 * 60;
+const openBellMinute = 9 * 60;
 const timeZone = "Asia/Seoul";
 
 // News moves in hours, not minutes, and each board build fans out to a dozen
@@ -65,6 +67,11 @@ function isCollecting(now = new Date()) {
   const { minute, weekday } = seoulMinute(now);
 
   if (weekday === "Sat" || weekday === "Sun") return false;
+  // Nothing trades between the NXT pre-market and the KRX bell. Measured
+  // 2026-08-18: the 08:54 and 08:59 samples carried identical turnover across
+  // all 39 names, to the won - a book with no trades in it, recorded twice as
+  // though it were moving.
+  if (minute >= krPreMarketCloseMinute && minute < openBellMinute) return false;
 
   return minute >= openMinute && minute < krAfterHoursCloseMinute;
 }
@@ -100,7 +107,7 @@ function intervalMsFor(minute) {
 
 // 15:40 is both the end of the KRX pass and the start of the NXT one, so it is
 // a single boundary. The others are cadence changes inside the morning.
-const cadenceBoundaries = [9 * 60, 9 * 60 + 30, 10 * 60, krAfterHoursOpenMinute];
+const cadenceBoundaries = [krPreMarketCloseMinute, openBellMinute, 9 * 60 + 30, 10 * 60, krAfterHoursOpenMinute];
 
 /**
  * Never sleep across a change of cadence.
@@ -275,6 +282,41 @@ async function sampleAfterHours(config) {
   });
 }
 
+// One screener call a tick, and the whole US session is six and a half hours,
+// so there is nothing to gain from the minute cadence the Korean open needs.
+const usIntervalMs = 5 * 60_000;
+
+/**
+ * The US leaders, while the US session is actually open.
+ *
+ * Only during the regular session, and that is measured rather than assumed.
+ * At 20:26 KST - the middle of the US pre-market - Yahoo's screener returned
+ * AXTI +17.5527, CBRS +15.0699 and SNDK +8.88057, which are Monday's closes to
+ * the second decimal. It reports the last completed session and does not move
+ * outside one, so sampling it before 22:30 would write yesterday's numbers over
+ * and over, the same trap as asking KRX in the evening.
+ *
+ * The pre-market and after-market need the per-symbol chart against a
+ * watchlist, which is a different mechanism and a separate decision about who
+ * is on that list.
+ */
+async function sampleUsPrices(config) {
+  const payload = await loadMarketData(config);
+  const stocks = payload?.usLeadingStocks ?? [];
+
+  if (stocks.length === 0) return 0;
+
+  return saveMarketPriceSamples(config, {
+    market: "US",
+    observedAt: new Date().toISOString(),
+    // The screener ranks by turnover, which is the same question the domestic
+    // ranking answers, so the rank is worth keeping.
+    sessionDate: sessionDate("US"),
+    source: "yahoo:us:regular",
+    stocks
+  });
+}
+
 async function sampleNews(config) {
   // The only reader that wants the providers' original objects. Normalization
   // keeps what the board draws and drops the rest, and the rest is what a
@@ -350,10 +392,26 @@ export function startMarketCollector(config) {
       }
     }
 
+    // The US session runs 22:30-05:00 in Seoul, so it overlaps nothing domestic
+    // and its own clock decides it. Sampled on the same loop rather than a
+    // second timer: one tick either side of midnight is easier to reason about
+    // than two loops that can both be mid-request.
+    if (isRegularSession("US", now)) {
+      delay = Math.min(delay, usIntervalMs);
+
+      try {
+        const saved = await sampleUsPrices(config);
+
+        if (saved > 0) console.log(`collector: ${saved} US price samples`);
+      } catch (error) {
+        console.warn("collector: US sample failed", error instanceof Error ? error.message : error);
+      }
+    }
+
     if (!stopped) timeoutId = setTimeout(tick, delay);
   }
 
-  console.log("market collector on · 시세 평일 08:00–15:40 KRX · 15:40–20:00 NXT · 뉴스 상시");
+  console.log("market collector on · 국내 08:00–15:40 KRX · 15:40–20:00 NXT · 미국 22:30–05:00 정규장 · 뉴스 상시");
   void tick();
 
   return () => {

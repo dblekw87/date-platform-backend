@@ -11,7 +11,9 @@
  * and a zero difference reports nothing either way.
  */
 
-// NXT reopens at 15:40, ten minutes after the KRX bell, and trades to 20:00.
+// NXT's pre-market ends at 08:50, ten minutes before the KRX bell, and its
+// after-market opens at 15:40 and trades to 20:00.
+export const krPreMarketCloseMinute = 8 * 60 + 50;
 export const krAfterHoursOpenMinute = 15 * 60 + 40;
 export const krAfterHoursCloseMinute = 20 * 60;
 
