@@ -10,7 +10,13 @@
   Polled in short sleeps rather than one long one, so a suspend in between lands
   on the target rather than overshooting by however long the lid was shut.
 
-    powershell -File scripts\run-at.ps1 -At "2026-08-19 10:30" -Script "probe:nxt-coverage"
+  Pass the moment without a space in it. Start-Process splits -ArgumentList on
+  spaces before -File sees it, so "2026-08-19 10:30" arrives as two arguments,
+  binding fails with PositionalParameterNotFound, and the process exits before
+  writing anything - which from outside looks like the schedule silently not
+  arming. The ISO form has no space.
+
+    powershell -File scripts\run-at.ps1 -At 2026-08-19T10:30 -Script probe:nxt-coverage
 #>
 
 param(
