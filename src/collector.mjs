@@ -182,6 +182,23 @@ async function samplePrices(config) {
 }
 
 /**
+ * Symbols NXT does not answer for, remembered so the evening pass stops asking.
+ *
+ * Measured on the first NXT evening: of 312 names, the same 188 returned nothing
+ * on two consecutive passes - zero random failures - and all 188 answered on
+ * KRX. That is a listing gap, not a rate limit, and re-asking cost a retry pass
+ * over 188 symbols every five minutes plus a warning line that made a normal
+ * evening look broken.
+ *
+ * An hour rather than the whole session, because tonight's silence is not proof
+ * of tomorrow's: a stock NXT lists can simply have no evening interest at 19:49
+ * and quotes at 16:30. Forgetting periodically costs one wasted request an hour
+ * and cannot strand a symbol that comes back.
+ */
+const nxtSilenceMs = 60 * 60_000;
+const nxtSilentUntil = new Map();
+
+/**
  * The evening, following the day's names rather than ranking the evening book.
  *
  * Not a second leader ranking. NXT after 15:40 is thin enough that a few
@@ -196,11 +213,17 @@ async function samplePrices(config) {
  */
 async function sampleAfterHours(config) {
   const day = sessionDate("KR");
-  const symbols = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+  const recorded = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+  const symbols = recorded.filter((symbol) => (nxtSilentUntil.get(symbol) ?? 0) < Date.now());
 
   if (symbols.length === 0) return 0;
 
   const quotes = await loadKrQuotes(config, symbols, "NX");
+  const answered = new Set(quotes.map((quote) => quote.symbol));
+
+  for (const symbol of symbols) {
+    if (!answered.has(symbol)) nxtSilentUntil.set(symbol, Date.now() + nxtSilenceMs);
+  }
 
   if (quotes.length === 0) return 0;
 

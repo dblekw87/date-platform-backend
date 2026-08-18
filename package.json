@@ -25,7 +25,8 @@
     "test:reasons": "node scripts/test-reasons.mjs",
     "theme:candidates": "node scripts/theme-candidates.mjs",
     "probe:nxt-after": "node scripts/probe-nxt-after.mjs",
-    "theme:backfill": "node scripts/backfill-sample-themes.mjs"
+    "theme:backfill": "node scripts/backfill-sample-themes.mjs",
+    "probe:nxt-coverage": "node scripts/probe-nxt-coverage.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"
