@@ -28,7 +28,8 @@
     "theme:backfill": "node scripts/backfill-sample-themes.mjs",
     "probe:nxt-coverage": "node scripts/probe-nxt-coverage.mjs",
     "us:short-interest": "node scripts/backfill-us-short-interest.mjs",
-    "kr:themes": "node scripts/backfill-kr-themes.mjs"
+    "kr:themes": "node scripts/backfill-kr-themes.mjs",
+    "theme:backfill:apply": "node scripts/backfill-sample-themes.mjs --apply"
   },
   "dependencies": {
     "pg": "^8.13.1"
