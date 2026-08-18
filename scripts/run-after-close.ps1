@@ -89,4 +89,20 @@ Write-Line "--- restart ---"
 Start-Sleep -Seconds 3
 & (Join-Path $PSScriptRoot "start-collector.ps1") 2>&1 | ForEach-Object { Write-Line "  $_" }
 
+# The running server holds whatever the theme map said when it started, so a
+# theme added during the session labels nothing until the restart above - and
+# every tick recorded in between carries the stale answer. Re-applying once the
+# day is closed leaves one consistent record rather than a map that changes
+# partway down the session.
+Write-Line "--- theme backfill ---"
+
+Push-Location $root
+try {
+  & npm run theme:backfill -- --apply 2>&1 | ForEach-Object { Write-Line "  $_" }
+} catch {
+  Write-Line "  backfill failed: $($_.Exception.Message)"
+} finally {
+  Pop-Location
+}
+
 Write-Line "=== done ==="
