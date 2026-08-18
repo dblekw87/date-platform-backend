@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { startMarketCollector } from "./collector.mjs";
+import { loadSymbolThemes } from "./providers/naver-themes.mjs";
+import { setNaverThemes } from "./providers/themes.mjs";
 import { startUsPipelineScheduler } from "./pipeline/scheduler.mjs";
 import { readConfig, hasTossCredentials } from "./config.mjs";
 import { HttpError, readJsonBody, sendJson, sendNoContent } from "./http.mjs";
@@ -166,6 +168,18 @@ server.listen(config.port, () => {
     console.warn("INTERNAL_JWT_SECRET is not set. Falling back to trusted X-Date-User-* headers, which any client can forge. Set it before exposing this server.");
   }
 
-  if (config.marketCollector) startMarketCollector(config);
-  startUsPipelineScheduler(config);
+  // Primed before the collector starts, so the first tick classifies with the
+  // same dictionary as the thousandth. A failure here is not fatal: an empty
+  // map classifies exactly as this did before the dictionary existed.
+  loadSymbolThemes(config)
+    .then((themes) => {
+      const count = setNaverThemes(themes);
+
+      console.log(`theme dictionary · ${count} symbols`);
+    })
+    .catch((error) => console.warn("theme dictionary unavailable", error instanceof Error ? error.message : error))
+    .finally(() => {
+      if (config.marketCollector) startMarketCollector(config);
+      startUsPipelineScheduler(config);
+    });
 });

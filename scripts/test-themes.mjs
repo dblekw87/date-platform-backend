@@ -252,7 +252,10 @@ check("부산산업 · 시멘트", classifyTheme("011390", "부산산업"), "남
 // 현대로템 moves on the rail link but is a defense stock the rest of the year.
 check("현대로템은 방산에 남는다", classifyTheme("064350", "현대로템"), "방산");
 // The apparel names share KSIC 141 with pure fashion, which must not follow.
-check("한섬은 딸려오지 않는다", classifyTheme("020000", "한섬"), "미분류");
+// Asserted as "not 남북경협" rather than as 미분류: once the 네이버 dictionary is
+// primed 한섬 is 패션/의류, and this suite runs without a database. The claim
+// worth pinning is that it never joins the group, not what it lands in instead.
+check("한섬은 딸려오지 않는다", classifyTheme("020000", "한섬") === "남북경협", false);
 
 /**
  * Headline labels, where the North is two different stories.

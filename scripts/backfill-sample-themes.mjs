@@ -1,4 +1,5 @@
-import { classifyTheme } from "../src/providers/themes.mjs";
+import { classifyTheme, setNaverThemes } from "../src/providers/themes.mjs";
+import { loadSymbolThemes } from "../src/providers/naver-themes.mjs";
 import { readConfig } from "../src/config.mjs";
 import { query } from "../src/db/client.mjs";
 
@@ -31,6 +32,10 @@ function readOption(name, fallback) {
 }
 
 const config = readConfig();
+// Primed first, and this is not optional: without it every symbol the 네이버
+// dictionary classifies would come back 미분류 here, and a --apply run would
+// write that over the server's answer for the whole table.
+const primed = setNaverThemes(await loadSymbolThemes(config));
 const apply = process.argv.includes("--apply");
 const date = readOption("date", null);
 

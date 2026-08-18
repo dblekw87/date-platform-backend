@@ -514,6 +514,26 @@ export function isNonOperatingEquity(name) {
 }
 
 /** Returns a sector theme, or "미분류" when nothing matches. */
+/**
+ * The 네이버 금융 theme dictionary, primed once at startup.
+ *
+ * Held in memory rather than read per call because classifyTheme is
+ * synchronous, pure, and runs over every listed registration on every tick.
+ * Empty until primed, which makes the dictionary an enhancement rather than a
+ * dependency: a process that never primes it classifies exactly as before.
+ */
+let naverThemes = new Map();
+
+export function setNaverThemes(map) {
+  naverThemes = map instanceof Map ? map : new Map();
+
+  return naverThemes.size;
+}
+
+export function naverThemeCount() {
+  return naverThemes.size;
+}
+
 export function classifyTheme(symbol, name) {
   const normalizedSymbol = String(symbol ?? "").trim().toUpperCase();
   const normalizedName = String(name ?? "").trim();
@@ -529,6 +549,18 @@ export function classifyTheme(symbol, name) {
   const mapped = symbolThemes[normalizedSymbol];
 
   if (mapped) return mapped;
+
+  // The 네이버 금융 dictionary, ahead of the name rules because an editor
+  // watching the market beats a regular expression reading a company name. Its
+  // 남북경협 had 29 members against the 14 assembled here by recall, including
+  // 남광토건 and 한국전력, which no rule could reach and nobody here thought of.
+  //
+  // Behind the curated map, because that is where the calls someone checked
+  // live - the two names this dictionary omits, 부산산업 and 대아티아이, were
+  // put there deliberately.
+  const editorial = naverThemes.get(normalizedSymbol);
+
+  if (editorial) return editorial;
 
   const text = `${normalizedSymbol} ${normalizedName}`;
   const rule = themeRules.find(([pattern]) => pattern.test(text));
