@@ -1,3 +1,4 @@
+import { normalizeNewsItem } from "../src/providers/news-normalizer.mjs";
 import { themeForIndustryCode } from "../src/providers/industry.mjs";
 import { classifyTheme, isEtfLike, isNonOperatingEquity, themeScores } from "../src/providers/themes.mjs";
 
@@ -187,6 +188,31 @@ check("ETF and 미분류 never form a theme", themeScores([
   leader("모름A", "미분류", 9, 900_000_000_000),
   leader("모름B", "미분류", 9, 900_000_000_000)
 ]).length, 0);
+
+/**
+ * Headline labels, where the North is two different stories.
+ *
+ * A missile test moves 방산 names and a summit moves 아난티 and 현대엘리베이터,
+ * so the 남북경협 rule sits ahead of 조선·방산 and matches only cooperation
+ * vocabulary. Get the order or the vocabulary wrong and one of the two swallows
+ * the other silently — the board simply files the day's real catalyst under the
+ * wrong heading.
+ */
+console.log("\n헤드라인 라벨 · 남북경협과 조선·방산");
+
+function labelOf(title) {
+  return normalizeNewsItem({ originalUrl: "http://x", publishedAt: "2026-08-18T00:00:00Z", title }, 0)?.label;
+}
+
+check("북미 정상 대화 시사", labelOf("트럼프, 김정은과 만날 수도… 북미 대화 재개 시사"), "남북경협");
+check("경협주 자체를 다룬 기사", labelOf("남북 경협주 일제히 급등… 아난티 상한가"), "남북경협");
+check("개성공단", labelOf("개성공단 재가동 논의 착수"), "남북경협");
+check("제재 완화", labelOf("대북 제재 완화 검토"), "남북경협");
+// The three below must not be taken by the rule above.
+check("미사일은 방산", labelOf("북한, 탄도미사일 발사… 군 대응 태세"), "조선·방산");
+check("동맹 분석 기사는 방산", labelOf("韓엔 北 억제 요구, 美는 조선·방산 흡수"), "조선·방산");
+check("함정 수주는 방산", labelOf("한화오션, 미 해군 함정 MRO 수주"), "조선·방산");
+check("반도체는 그대로", labelOf("SK하이닉스 HBM 공급 확대"), "반도체");
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

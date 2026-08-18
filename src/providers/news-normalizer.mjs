@@ -66,6 +66,14 @@ function labelFromRaw(item) {
   if (/\bai\b|artificial intelligence|data center|데이터센터|전력/.test(text)) return "AI 인프라";
   if (/bio|biotech|pharma|fda|바이오|제약|임상|승인/.test(text)) return "바이오";
   if (/aerospace|space|satellite|rocket|launch|항공우주|우주|위성|로켓|발사체/.test(text)) return "항공우주";
+  // Ahead of 조선·방산 because both speak about the North and the defense rule
+  // would otherwise take everything: today's one matching headline, about the
+  // North and the alliance, came back labelled 조선·방산.
+  //
+  // Cooperation vocabulary only, never a bare 북한. A missile test belongs to
+  // 방산 and moves defense names; a summit or a sanctions signal is what moves
+  // 아난티 and 현대엘리베이터, and those are different stocks on the same day.
+  if (/경협|개성공단|금강산|이산가족|남북정상|남북 대화|남북회담|종전선언|판문점|김정은|대북 제재/.test(text)) return "남북경협";
   if (/shipbuilding|shipyard|defense|missile|조선|방산|함정|미사일/.test(text)) return "조선·방산";
   if (/robot|automation|nuclear|uranium|로봇|자동화|원전|원자력/.test(text)) return "로봇·원전";
   if (/mlcc|capacitor|ceramic capacitor|적층세라믹|콘덴서|커패시터/.test(text)) return "MLCC·전자부품";
