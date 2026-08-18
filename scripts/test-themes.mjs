@@ -190,6 +190,30 @@ check("ETF and 미분류 never form a theme", themeScores([
 ]).length, 0);
 
 /**
+ * 반도체 후공정, split out of 반도체.
+ *
+ * The registrations reach none of it - 정밀기기, 기계·장비, 전자부품·전장 and,
+ * for a wafer test house, AI·소프트웨어. The two moved members matter most: left
+ * in 반도체, a 한미반도체 move offered SK하이닉스 as its 짝꿍, which is the wrong
+ * direction and the wrong size.
+ */
+console.log("\n반도체 후공정");
+
+check("하나마이크론 · OSAT", classifyTheme("067310", "하나마이크론"), "반도체 후공정");
+check("티에스이 · 정밀기기 등록", classifyTheme("131290", "티에스이"), "반도체 후공정");
+check("제너셈 · 기계·장비 등록", classifyTheme("217190", "제너셈"), "반도체 후공정");
+check("두산테스나 · AI·소프트웨어 등록", classifyTheme("131970", "두산테스나"), "반도체 후공정");
+check("한미반도체는 옮겨왔다", classifyTheme("042700", "한미반도체"), "반도체 후공정");
+check("리노공업도 옮겨왔다", classifyTheme("058470", "리노공업"), "반도체 후공정");
+// Rose alongside on 2026-08-18 without belonging: a fabless controller designer
+// and an etch gas maker. Co-movement on one day is not membership.
+check("파두는 팹리스라 제외", classifyTheme("440110", "파두"), "미분류");
+check("후성은 전공정 가스라 제외", classifyTheme("093370", "후성"), "미분류");
+// The mega caps stay where they were; that is the whole reason for the split.
+check("SK하이닉스는 반도체 유지", classifyTheme("000660", "SK하이닉스"), "반도체");
+check("삼성전자는 반도체 유지", classifyTheme("005930", "삼성전자"), "반도체");
+
+/**
  * 남북경협, the theme no industry code can reach.
  *
  * Its members are apparel, a resort, rail signalling, cement and elevators, so

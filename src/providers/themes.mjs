@@ -13,8 +13,6 @@ const symbolThemes = {
   "000660": "반도체",
   "005930": "반도체",
   "000990": "반도체",
-  "042700": "반도체",
-  "058470": "반도체",
   "036930": "반도체",
   "240810": "반도체",
   "403870": "반도체",
@@ -229,6 +227,42 @@ const symbolThemes = {
   "460930": "조선",
   "107640": "전력기기",
   "194700": "바이오",
+
+  // 반도체 후공정
+  //
+  // Packaging, bumping and test - the half of the industry that runs on a
+  // different trigger from the chip makers. An HBM stacking order or a test
+  // capacity build moves these together while 삼성전자 does nothing, which is
+  // why they are not folded into 반도체: that group is the mega caps, and a
+  // mid cap OSAT put beside them is buried in the turnover ranking and paired
+  // against a stock nobody would buy on its move.
+  //
+  // The registrations scatter across five buckets and reach none of them:
+  // 반도체 (2611/2612), 정밀기기 (27212), 기계·장비 (292/29271), 전자부품·전장
+  // (2629) and - the one that makes the point - AI·소프트웨어 for 두산테스나
+  // (739), a wafer test house.
+  //
+  // 한미반도체 and 리노공업 moved here out of 반도체. Both are pure back end, and
+  // left where they were a 한미반도체 move offered SK하이닉스 as its 짝꿍 - the
+  // wrong direction and the wrong size. Their peers are 제너셈 and 티에스이.
+  //
+  // Not here, though they rose alongside on 2026-08-18: 파두 designs SSD
+  // controllers and 후성 sells etch gas and refrigerant. Co-movement on one day
+  // is not membership, and the candidate list is a work list, not an answer.
+  "067310": "반도체 후공정",
+  "033640": "반도체 후공정",
+  "061970": "반도체 후공정",
+  "131290": "반도체 후공정",
+  "098120": "반도체 후공정",
+  "092870": "반도체 후공정",
+  "217190": "반도체 후공정",
+  "064290": "반도체 후공정",
+  "131970": "반도체 후공정",
+  "036540": "반도체 후공정",
+  "033170": "반도체 후공정",
+  "039030": "반도체 후공정",
+  "042700": "반도체 후공정",
+  "058470": "반도체 후공정",
 
   // 남북경협
   //
