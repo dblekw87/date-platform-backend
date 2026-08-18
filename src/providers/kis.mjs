@@ -313,11 +313,18 @@ const tradingCalendarTtlMs = 7 * 24 * 60 * 60 * 1000;
  * Six at a time. KIS allows more, but this runs inside a board build and the
  * caller asks about a curated list of a few dozen at most.
  */
-export async function loadKrQuotes(config, symbols) {
+/**
+ * Venue is a parameter because after 15:30 the two books stop agreeing. KRX
+ * freezes at the close - measured on 2026-08-18, SK하이닉스 sat at 1,662,000
+ * with turnover moving 21 million won across twenty minutes - while NXT traded
+ * on to 1,673,000 and 109 billion. Asking J in the evening returns a price that
+ * has not existed for hours.
+ */
+export async function loadKrQuotes(config, symbols, venue = "J") {
   if (!hasKisCredentials(config) || symbols.length === 0) return [];
 
   const token = await getAccessToken(config);
-  const quotes = await requestQuotes(config, token, symbols);
+  const quotes = await requestQuotes(config, token, symbols, venue);
   const missing = symbols.filter((symbol) => !quotes.some((quote) => quote.symbol === symbol));
 
   // KIS throttles per second and answers a burst with an error rather than a
@@ -326,7 +333,7 @@ export async function loadKrQuotes(config, symbols) {
   // 현대무벡스 one minute and gone the next, on a rate limit rather than a price.
   if (missing.length === 0) return quotes;
 
-  const retried = await requestQuotes(config, token, missing);
+  const retried = await requestQuotes(config, token, missing, venue);
 
   if (retried.length < missing.length) {
     console.warn(`kis quote: ${missing.length - retried.length} of ${symbols.length} symbols unanswered after retry`);
@@ -342,12 +349,12 @@ export async function loadKrQuotes(config, symbols) {
  * The batch is cached per symbol for a minute afterwards, so this rate is paid
  * once rather than on every board build.
  */
-async function requestQuotes(config, token, symbols) {
+async function requestQuotes(config, token, symbols, venue) {
   const quotes = [];
 
   for (let index = 0; index < symbols.length; index += 2) {
     const batch = symbols.slice(index, index + 2);
-    const settled = await Promise.allSettled(batch.map((symbol) => loadKrQuote(config, token, symbol)));
+    const settled = await Promise.allSettled(batch.map((symbol) => loadKrQuote(config, token, symbol, venue)));
 
     quotes.push(...settled.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []));
 
@@ -357,9 +364,9 @@ async function requestQuotes(config, token, symbols) {
   return quotes;
 }
 
-async function loadKrQuote(config, token, symbol) {
+async function loadKrQuote(config, token, symbol, venue = "J") {
   const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-price", {
-    FID_COND_MRKT_DIV_CODE: "J",
+    FID_COND_MRKT_DIV_CODE: venue,
     FID_INPUT_ISCD: symbol
   }), {
     timeoutMs: 3500,

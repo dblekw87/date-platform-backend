@@ -11,6 +11,10 @@
  * and a zero difference reports nothing either way.
  */
 
+// NXT reopens at 15:40, ten minutes after the KRX bell, and trades to 20:00.
+export const krAfterHoursOpenMinute = 15 * 60 + 40;
+export const krAfterHoursCloseMinute = 20 * 60;
+
 const sessions = {
   KR: { timeZone: "Asia/Seoul", openMinute: 9 * 60, closeMinute: 15 * 60 + 30 },
   US: { timeZone: "America/New_York", openMinute: 9 * 60 + 30, closeMinute: 16 * 60 }
@@ -63,12 +67,27 @@ export function minutesSinceOpen(market, now = new Date()) {
  * during that hour returns yesterday's close, so a session watched from 08:00
  * records nothing until 09:00 — which is the hour the morning is being read in.
  *
- * After the KRX close it stays on KRX rather than following NXT into the
- * after-market: leadership is judged on the regular session, and the two venues'
- * turnover must not be summed into one figure.
+ * After 15:40 it goes back to NXT, because that is the only book still trading.
+ * Measured on 2026-08-18 between 15:45 and 16:05: KRX repeated SK하이닉스 at
+ * 1,662,000 with turnover moving twenty-one million won, while NXT went
+ * 1,660,000 to 1,673,000 on a hundred and nine billion, and five of five names
+ * told the same story. Asking J in the evening does not return a quiet market,
+ * it returns a price that stopped existing at the close.
+ *
+ * This does not make the evening part of the regular session. Leadership is
+ * still read from 09:00 to 15:30, and the two venues' turnover is still never
+ * summed - the after-hours samples are stored under their own source and carry
+ * no rank.
  */
 export function krTradingVenue(now = new Date()) {
-  return localParts(sessions.KR.timeZone, now).minute < sessions.KR.openMinute ? "NX" : "J";
+  const { minute } = localParts(sessions.KR.timeZone, now);
+
+  if (minute < sessions.KR.openMinute) return "NX";
+
+  // Only inside the after-hours window. Past 20:00 both books are shut and the
+  // KRX close is the canonical last price, so the venue goes back to J rather
+  // than serving NXT's final print all night.
+  return minute >= krAfterHoursOpenMinute && minute < krAfterHoursCloseMinute ? "NX" : "J";
 }
 
 export function isRegularSession(market, now = new Date()) {

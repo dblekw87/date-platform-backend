@@ -541,6 +541,29 @@ export async function saveMarketPriceSamples(config, { market, observedAt, ranke
  * tagged onto them. Naming a theme from what was written about a stock needs
  * months of this, and until now every refresh discarded it.
  */
+/**
+ * The symbols this session already recorded, leaders and 짝꿍 candidates alike.
+ *
+ * The after-hours pass follows the day's names rather than ranking the evening
+ * book. NXT after 15:40 is thin enough that a few hundred million won tops a
+ * turnover ranking, which would surface a different cast every tick and none of
+ * it the cast the day was about. What is worth knowing after the close is where
+ * the stocks that led - and the ones that were supposed to follow them - ended
+ * up before tomorrow opens.
+ */
+export async function loadSessionSymbols(config, { market, sessionDate }) {
+  if (!config.databaseUrl) return [];
+
+  const result = await query(config, `
+    SELECT DISTINCT symbol
+    FROM market_price_samples
+    WHERE market = $1 AND session_date = $2 AND source NOT LIKE '%:after'
+    ORDER BY symbol
+  `, [market, sessionDate]);
+
+  return result.rows.map((row) => row.symbol);
+}
+
 export async function saveMarketNewsItems(config, headlines) {
   if (!config.databaseUrl || headlines.length === 0) return 0;
 

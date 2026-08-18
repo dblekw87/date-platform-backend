@@ -44,9 +44,13 @@ check("08:59 is the last NXT minute", krTradingVenue(seoul(day, 8, 59)), "NX");
 // The boundary the whole pre-market series turns on.
 check("09:00 — the KRX bell", krTradingVenue(seoul(day, 9, 0)), "J");
 check("15:29 is still KRX", krTradingVenue(seoul(day, 15, 29)), "J");
-// After the close it stays on KRX rather than following NXT into the
-// after-market, because leadership is judged on the regular session.
-check("16:00 stays on KRX", krTradingVenue(seoul(day, 16, 0)), "J");
+// 15:40 hands the book back to NXT, which is the only one still trading:
+// measured 2026-08-18, KRX repeated its close while NXT moved 109 billion won.
+check("15:39 is still KRX", krTradingVenue(seoul(day, 15, 39)), "J");
+check("15:40 hands over to NXT", krTradingVenue(seoul(day, 15, 40)), "NX");
+check("19:00 is NXT", krTradingVenue(seoul(day, 19, 0)), "NX");
+// Past 20:00 both books are shut and the KRX close is the canonical last price.
+check("20:00 goes back to KRX", krTradingVenue(seoul(day, 20, 0)), "J");
 check("23:30 stays on KRX", krTradingVenue(seoul(day, 23, 30)), "J");
 
 console.log("\nregular session");
@@ -91,6 +95,11 @@ check("09:45:00 keeps the 2 minute tick", delayMsFrom(9 * 60 + 45, 0), 2 * 60_00
 check("11:00:00 has no boundary left to guard", delayMsFrom(11 * 60, 0), 5 * 60_000);
 // A tick landing a second before a boundary must not spin.
 check("09:29:59 never schedules below a second", delayMsFrom(9 * 60 + 29, 59), 1_000);
+// The handover to NXT is a cadence change like the bell, so a tick must not
+// sleep past it either.
+check("15:36 wakes at 15:40", delayMsFrom(15 * 60 + 36, 0), 4 * 60_000);
+check("15:40 samples the evening every 5 minutes", delayMsFrom(15 * 60 + 40, 0), 5 * 60_000);
+check("19:00 is still every 5 minutes", delayMsFrom(19 * 60, 0), 5 * 60_000);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

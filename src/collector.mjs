@@ -1,8 +1,8 @@
-import { saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
-import { isKrMarketOpen, loadKisMarketBoard } from "./providers/kis.mjs";
+import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
+import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { sessionDate } from "./providers/market-session.mjs";
+import { krAfterHoursCloseMinute, krAfterHoursOpenMinute, sessionDate } from "./providers/market-session.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
 
 /**
@@ -23,7 +23,6 @@ import { getMarketBoard } from "./routes/market-board.mjs";
 // Collection opens with the NXT pre-market rather than the KRX bell, because
 // the leadership that matters at 09:10 is often already forming at 08:30.
 const openMinute = 8 * 60;
-const closeMinute = 15 * 60 + 40;
 const timeZone = "Asia/Seoul";
 
 // News moves in hours, not minutes, and each board build fans out to a dozen
@@ -65,7 +64,20 @@ function isCollecting(now = new Date()) {
 
   if (weekday === "Sat" || weekday === "Sun") return false;
 
-  return minute >= openMinute && minute < closeMinute;
+  return minute >= openMinute && minute < krAfterHoursCloseMinute;
+}
+
+/**
+ * 15:40 to 20:00, when NXT is the only book trading.
+ *
+ * A leader that ran at 15:00 has followers that often do not move until the
+ * next morning, and the tape between those two points was blank: the collector
+ * stopped at 15:40 and did not start again until 08:00. Measured on 2026-08-18,
+ * KRX repeats its close all evening while NXT traded 109 billion won in twenty
+ * minutes, so the evening is real and it is only visible on one venue.
+ */
+function isAfterHours(minute) {
+  return minute >= krAfterHoursOpenMinute && minute < krAfterHoursCloseMinute;
 }
 
 /**
@@ -84,7 +96,9 @@ function intervalMsFor(minute) {
   return 5 * 60_000;
 }
 
-const cadenceBoundaries = [9 * 60, 9 * 60 + 30, 10 * 60];
+// 15:40 is both the end of the KRX pass and the start of the NXT one, so it is
+// a single boundary. The others are cadence changes inside the morning.
+const cadenceBoundaries = [9 * 60, 9 * 60 + 30, 10 * 60, krAfterHoursOpenMinute];
 
 /**
  * Never sleep across a change of cadence.
@@ -167,6 +181,39 @@ async function samplePrices(config) {
   return saved;
 }
 
+/**
+ * The evening, following the day's names rather than ranking the evening book.
+ *
+ * Not a second leader ranking. NXT after 15:40 is thin enough that a few
+ * hundred million won tops a turnover list, which would return a different cast
+ * every tick and none of it the cast the day was about. The question worth
+ * answering after the close is narrower: the stocks that led today, and the
+ * ones that were supposed to follow them, where did they end up before tomorrow
+ * opens.
+ *
+ * Stored with no rank and under its own source, so nothing downstream can read
+ * an evening print as a leader or sum its turnover into the KRX day.
+ */
+async function sampleAfterHours(config) {
+  const day = sessionDate("KR");
+  const symbols = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+
+  if (symbols.length === 0) return 0;
+
+  const quotes = await loadKrQuotes(config, symbols, "NX");
+
+  if (quotes.length === 0) return 0;
+
+  return saveMarketPriceSamples(config, {
+    market: "KR",
+    observedAt: new Date().toISOString(),
+    ranked: false,
+    sessionDate: day,
+    source: "kis:nxt:after",
+    stocks: quotes
+  });
+}
+
 async function sampleNews(config) {
   // The only reader that wants the providers' original objects. Normalization
   // keeps what the board draws and drops the rest, and the rest is what a
@@ -203,9 +250,9 @@ export function startMarketCollector(config) {
       sessionOpen = true;
 
       try {
-        const saved = await samplePrices(config);
+        const saved = isAfterHours(minute) ? await sampleAfterHours(config) : await samplePrices(config);
 
-        if (saved > 0) console.log(`collector: ${saved} price samples`);
+        if (saved > 0) console.log(`collector: ${saved} ${isAfterHours(minute) ? "after-hours " : ""}price samples`);
       } catch (error) {
         // A failed tick is a gap in one series, not a reason to stop recording
         // for the day — the next tick is a minute away.
@@ -234,7 +281,7 @@ export function startMarketCollector(config) {
     if (!stopped) timeoutId = setTimeout(tick, delay);
   }
 
-  console.log(`market collector on · 시세 평일 08:00–15:40 KST · 뉴스 상시`);
+  console.log("market collector on · 시세 평일 08:00–15:40 KRX · 15:40–20:00 NXT · 뉴스 상시");
   void tick();
 
   return () => {
