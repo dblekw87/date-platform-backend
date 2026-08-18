@@ -1,6 +1,6 @@
 import { readConfig } from "../src/config.mjs";
 import { isKrMarketOpen } from "../src/providers/kis.mjs";
-import { krTradingVenue, sessionDate } from "../src/providers/market-session.mjs";
+import { krCollectionWindows, krTradingVenue, seoulMinuteNow, sessionDate } from "../src/providers/market-session.mjs";
 import { query } from "../src/db/client.mjs";
 
 /**
@@ -35,9 +35,24 @@ const now = new Date();
 
 console.log(`\ncollector check · ${day}\n`);
 
+const minute = seoulMinuteNow(now);
+const clock = (value) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+const openWindow = krCollectionWindows.find((window) => minute >= window.openMinute && minute < window.closeMinute);
+const nextWindow = krCollectionWindows.find((window) => window.openMinute > minute);
+
 console.log("장 상태");
 line("오늘 개장", (await isKrMarketOpen(config, now)) ? "예" : "아니오 (휴장)");
-line("현재 venue", krTradingVenue(), "NX = NXT 프리마켓, J = KRX 정규장");
+line("현재 시각", clock(minute), "KST");
+
+if (openWindow) {
+  line("현재 구간", openWindow.label, `${clock(openWindow.openMinute)}–${clock(openWindow.closeMinute)}`);
+} else if (nextWindow) {
+  line("현재 구간", "수집 대기", `다음 ${nextWindow.label} ${clock(nextWindow.openMinute)} · ${nextWindow.openMinute - minute}분 뒤`);
+} else {
+  line("현재 구간", "종료", "오늘 국내 수집은 끝났습니다");
+}
+
+line("venue", krTradingVenue(), "NX = NXT, J = KRX");
 
 if (!config.databaseUrl) {
   console.log("\nDATABASE_URL이 없어 적재 상태는 확인할 수 없습니다.");
@@ -55,24 +70,59 @@ const prices = await query(
   [day]
 );
 
-console.log("\n시세 적재");
+console.log("\n국내 시세");
 
-if (prices.rows.length === 0) {
-  console.log("  행이 없습니다. 개장일인데 비어 있으면 조용히 실패한 것입니다 — 며칠 날리기 전에 원인부터 잡으세요.");
-} else {
-  prices.rows.forEach((row) => line(row.source, `${row.rows}행 · ${row.symbols}종목`, `${row.first}–${row.last}`));
-}
+/**
+ * A window is only worth complaining about once it should have produced
+ * something.
+ *
+ * This printed "조용히 실패한 것입니다 — 며칠 날리기 전에 원인부터 잡으세요" at
+ * any hour, so running it before the bell - which is exactly when someone checks
+ * - raised an alarm every time. A check that cries wolf before the open teaches
+ * you to skip reading it, and then it is ignored on the one morning it is right.
+ */
+const graceMinutes = 12;
 
-// The premarket read is the part that has only ever been checked against an API
-// response, never against a live 08:00–09:00 window.
-if (!prices.rows.some((row) => row.source === "kis:nxt")) {
-  console.log("  kis:nxt 없음 — NXT 프리마켓 읽기를 확인하세요 (08:00–08:5x, 약 300행 기대).");
+for (const window of krCollectionWindows) {
+  const rows = prices.rows.filter((row) => row.source.startsWith(window.source));
+  const due = minute >= window.openMinute + graceMinutes;
+
+  if (rows.length > 0) {
+    rows.forEach((row) => line(row.source, `${row.rows}행 · ${row.symbols}종목`, `${row.first}–${row.last}`));
+  } else if (!due) {
+    line(window.source, "대기 중", `${clock(window.openMinute)} 시작`);
+  } else if (minute >= window.closeMinute) {
+    line(window.source, "없음", `${clock(window.openMinute)}–${clock(window.closeMinute)}이 통째로 비었습니다`);
+  } else {
+    line(window.source, "없음", `${clock(window.openMinute)}에 시작했어야 합니다 — 원인부터 잡으세요`);
+  }
 }
 
 // Without these the record can only ever show lead-lag between leaders, which
 // is the one thing 짝꿍 does not need.
-if (!prices.rows.some((row) => row.source.endsWith(":pair"))) {
+if (minute >= krCollectionWindows[1].openMinute + graceMinutes
+  && !prices.rows.some((row) => row.source.endsWith(":pair"))) {
   console.log("  :pair 없음 — 짝꿍 후보가 기록되지 않고 있습니다. 따라가는 쪽의 시계열이 비면 나중에 학습할 게 없습니다.");
+}
+
+// The US side is half the collection now and was invisible here: its rows carry
+// an Eastern session date, so a query keyed on the Korean day never saw them.
+const us = await query(
+  config,
+  `SELECT source, count(*)::int AS rows, count(DISTINCT symbol)::int AS symbols,
+          round(extract(epoch FROM (now() - max(observed_at))) / 60)::int AS age
+     FROM market_price_samples
+    WHERE market = 'US' AND observed_at > now() - interval '24 hours'
+    GROUP BY source
+    ORDER BY source`
+);
+
+console.log("\n미국 시세 (최근 24시간)");
+
+if (us.rows.length === 0) {
+  console.log("  없음 — 미국은 18:00–09:00 KST에만 수집합니다.");
+} else {
+  us.rows.forEach((row) => line(row.source, `${row.rows}행 · ${row.symbols}종목`, `${row.age}분 전`));
 }
 
 const news = await query(

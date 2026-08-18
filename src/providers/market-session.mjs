@@ -22,6 +22,24 @@ const sessions = {
   US: { timeZone: "America/New_York", openMinute: 9 * 60 + 30, closeMinute: 16 * 60 }
 };
 
+/**
+ * The domestic collection windows, in one place.
+ *
+ * Built from the same constants the collector schedules on, so a diagnostic
+ * cannot describe a timetable the collector is not keeping - which is the way a
+ * check earns the right to be believed.
+ */
+export const krCollectionWindows = [
+  { closeMinute: krPreMarketCloseMinute, label: "NXT 프리마켓", openMinute: 8 * 60, source: "kis:nxt" },
+  { closeMinute: krAfterHoursOpenMinute, label: "KRX 정규장", openMinute: 9 * 60, source: "kis:krx" },
+  { closeMinute: krAfterHoursCloseMinute, label: "NXT 애프터마켓", openMinute: krAfterHoursOpenMinute, source: "kis:nxt:after" }
+];
+
+/** Minutes past midnight in Seoul, for comparing against those windows. */
+export function seoulMinuteNow(now = new Date()) {
+  return localParts(sessions.KR.timeZone, now).minute;
+}
+
 function localParts(timeZone, now) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
