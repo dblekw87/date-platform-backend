@@ -1,6 +1,7 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
 import { loadUsSurgeCandidates } from "./surge-candidates.mjs";
+import { query } from "../db/client.mjs";
 
 /**
  * What the watchlist is doing outside the bell.
@@ -77,13 +78,48 @@ function sleep(ms) {
  * holds the last regular-session trade, which during the premarket is still
  * yesterday's close and would report every stock as flat.
  */
-async function readExtendedQuote(symbol) {
+/**
+ * The last regular close, which Yahoo's chart meta cannot be trusted for.
+ *
+ * Measured 2026-08-18 during the pre-market: WETO's chart covered 04:00 to
+ * 06:44 ET that morning, and its meta reported previousClose 8.22 - the close
+ * from four sessions earlier. The stock had closed at 24.59 the night before,
+ * so the board read +332% where the move was +44%. meta.regularMarketPrice held
+ * 24.59 correctly, and so did our own bars.
+ *
+ * Ours is preferred because it is the number the pipeline audits, and it is
+ * what every other US figure on the board is measured against. Yahoo's regular
+ * price is the fallback for a symbol we have no bar for, and its previousClose
+ * is the last resort.
+ */
+async function loadPreviousCloses(config, symbols) {
+  if (!config.databaseUrl || symbols.length === 0) return new Map();
+
+  try {
+    const result = await query(config, `
+      SELECT DISTINCT ON (symbol) symbol, close
+      FROM us_daily_bars
+      WHERE symbol = ANY($1)
+      ORDER BY symbol, session_date DESC
+    `, [symbols]);
+
+    return new Map(result.rows.map((row) => [row.symbol, Number(row.close)]));
+  } catch (error) {
+    console.warn("premarket: previous closes unavailable", error instanceof Error ? error.message : error);
+
+    return new Map();
+  }
+}
+
+async function readExtendedQuote(symbol, storedClose) {
   const data = await fetchJson(
     `${chartUrl}/${encodeURIComponent(symbol)}?includePrePost=true&interval=5m&range=1d`,
     { headers: { "User-Agent": browserUserAgent }, timeoutMs: 4000 }
   );
   const result = data?.chart?.result?.[0];
-  const previousClose = result?.meta?.previousClose;
+  const previousClose = storedClose
+    ?? (Number.isFinite(result?.meta?.regularMarketPrice) ? result.meta.regularMarketPrice : undefined)
+    ?? result?.meta?.previousClose;
   const closes = (result?.indicators?.quote?.[0]?.close ?? []).filter((value) => Number.isFinite(value));
   const highs = (result?.indicators?.quote?.[0]?.high ?? []).filter((value) => Number.isFinite(value));
 
@@ -104,11 +140,12 @@ async function readExtendedQuote(symbol) {
 
 async function readWatchlist(config, symbols) {
   const quotes = [];
+  const storedCloses = await loadPreviousCloses(config, symbols);
 
   for (let index = 0; index < symbols.length; index += requestBatch) {
     const batch = symbols.slice(index, index + requestBatch);
     const settled = await Promise.all(
-      batch.map((symbol) => readExtendedQuote(symbol).catch(() => null))
+      batch.map((symbol) => readExtendedQuote(symbol, storedCloses.get(symbol)).catch(() => null))
     );
 
     quotes.push(...settled.filter(Boolean));
