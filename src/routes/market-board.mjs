@@ -459,7 +459,25 @@ async function attachLeaderNews(board) {
   }
 }
 
-export async function getMarketBoard(config) {
+/**
+ * Headlines carry the provider's original object so the collector can store it,
+ * and the browser has no use for it: at 115 headlines it is about ninety
+ * kilobytes of every board response.
+ *
+ * Dropped here rather than at the socket because this is the one function both
+ * readers go through, and the default is the safe one — a new caller has to ask
+ * for the payloads to get them.
+ */
+function withoutRawPayloads(board) {
+  if (!board.headlineFlow) return board;
+
+  return {
+    ...board,
+    headlineFlow: board.headlineFlow.map(({ raw, ...headline }) => headline)
+  };
+}
+
+export async function getMarketBoard(config, { includeRawPayloads = false } = {}) {
   const checkedAt = new Date().toISOString();
   const canUseLicensedLiveData = config.marketDataMode === "licensed-live";
 
@@ -587,9 +605,11 @@ export async function getMarketBoard(config) {
     usPremarketMovers: (await loadUsPremarketMovers(config)).movers
   };
 
+  // The snapshot is a board to render later, not a record of what the feeds
+  // said, so it keeps the browser's shape rather than the collector's.
   if (canUseLicensedLiveData) {
-    await writeSnapshot(config, board);
+    await writeSnapshot(config, withoutRawPayloads(board));
   }
 
-  return board;
+  return includeRawPayloads ? board : withoutRawPayloads(board);
 }

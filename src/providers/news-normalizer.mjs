@@ -188,7 +188,15 @@ export function normalizeNewsItem(item, index) {
     originalUrl,
     label: labelFromRaw(item),
     text: title,
-    provider: "news"
+    provider: "news",
+    // The provider's own object, kept whole because normalization is lossy in a
+    // way that cannot be undone later. What it drops - description, summary,
+    // the feed's own category, the tickers some providers already tag - is
+    // exactly what a headline classifier would want to read, and a feed only
+    // carries a story for a day or two, so anything not captured on the tick
+    // that saw it is gone. Stripped before the board is served; see
+    // getMarketBoard.
+    raw: item
   };
 }
 

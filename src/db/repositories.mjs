@@ -551,12 +551,16 @@ export async function saveMarketNewsItems(config, headlines) {
       INSERT INTO market_news_items (
         id, provider, source, source_detail, region, label,
         headline, original_headline, original_url, published_at,
-        related_symbols, related_themes
+        related_symbols, related_themes, raw_payload
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (id) DO UPDATE SET
         related_symbols = EXCLUDED.related_symbols,
         related_themes = EXCLUDED.related_themes,
+        -- COALESCE rather than overwrite: a later sighting of the same story
+        -- can arrive through a path that carries no payload - a snapshot, or a
+        -- per-leader search - and that must not erase the one we captured.
+        raw_payload = COALESCE(EXCLUDED.raw_payload, market_news_items.raw_payload),
         updated_at = now()
     `, [
       headline.id,
@@ -570,7 +574,8 @@ export async function saveMarketNewsItems(config, headlines) {
       headline.originalUrl ?? "",
       headline.publishedAt,
       headline.relatedSymbols ?? [],
-      headline.relatedThemes ?? []
+      headline.relatedThemes ?? [],
+      headline.raw ? JSON.stringify(headline.raw) : null
     ]);
 
     saved += result.rowCount;

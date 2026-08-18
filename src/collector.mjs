@@ -30,10 +30,16 @@ const timeZone = "Asia/Seoul";
 // feeds. Sampling it at the price cadence would spend the day re-reading the
 // same headlines.
 const newsIntervalMs = 10 * 60_000;
-// Off hours the feeds still publish but nothing is trading on it yet, so half
-// an hour keeps the record continuous without spending the night rebuilding a
-// board nobody is reading.
-const offHoursNewsIntervalMs = 30 * 60_000;
+// Off hours the feeds still publish but nothing is trading on it yet, so the
+// gap can be wide without losing a story: the same headline is still in the
+// feed three quarters of an hour later.
+//
+// Forty-five rather than thirty is a quota decision. Each sample costs one
+// NewsAPI call against a free tier of a hundred a day, and the machine is now
+// meant to stay on around the clock so the overnight US feed lands — which at
+// half-hour spacing spends seventy-nine of them. This gives eleven back. The
+// larger share is the in-session cadence, and that one is not spare.
+const offHoursNewsIntervalMs = 45 * 60_000;
 const idleIntervalMs = 60_000;
 
 function seoulMinute(now = new Date()) {
@@ -42,12 +48,14 @@ function seoulMinute(now = new Date()) {
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false
   }).formatToParts(now);
   const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
 
   return {
     minute: (Number(value("hour")) % 24) * 60 + Number(value("minute")),
+    second: Number(value("second")),
     weekday: value("weekday")
   };
 }
@@ -74,6 +82,30 @@ function intervalMsFor(minute) {
   if (minute < 10 * 60) return 2 * 60_000;
 
   return 5 * 60_000;
+}
+
+const cadenceBoundaries = [9 * 60, 9 * 60 + 30, 10 * 60];
+
+/**
+ * Never sleep across a change of cadence.
+ *
+ * The interval is chosen from the minute the tick runs in, but it decides when
+ * the next one happens, so a tick at 08:59 books itself five minutes out and
+ * wakes at 09:04 — inside the window that is supposed to be sampled every
+ * minute, having skipped its first five. Measured on the first collection day:
+ * 08:59:42, then nothing until 09:04:49.
+ *
+ * Those five minutes are the ones the whole feature is for. Waking exactly on
+ * the boundary instead costs one extra sample a day at worst.
+ */
+export function delayMsFrom(minute, second) {
+  const nextBoundary = cadenceBoundaries.find((boundary) => boundary > minute);
+
+  if (nextBoundary === undefined) return intervalMsFor(minute);
+
+  const untilBoundary = (nextBoundary - minute) * 60_000 - second * 1000;
+
+  return Math.max(1_000, Math.min(intervalMsFor(minute), untilBoundary));
 }
 
 /**
@@ -136,7 +168,10 @@ async function samplePrices(config) {
 }
 
 async function sampleNews(config) {
-  const board = await getMarketBoard(config);
+  // The only reader that wants the providers' original objects. Normalization
+  // keeps what the board draws and drops the rest, and the rest is what a
+  // classifier trained on these headlines would have to read.
+  const board = await getMarketBoard(config, { includeRawPayloads: true });
 
   return saveMarketNewsItems(config, board.headlineFlow ?? []);
 }
@@ -162,9 +197,9 @@ export function startMarketCollector(config) {
     // The weekday window is checked first because it is free; the holiday
     // lookup only runs on days that got past it.
     if (isCollecting(now) && await isKrMarketOpen(config, now)) {
-      const { minute } = seoulMinute(now);
+      const { minute, second } = seoulMinute(now);
 
-      delay = intervalMsFor(minute);
+      delay = delayMsFrom(minute, second);
       sessionOpen = true;
 
       try {
