@@ -31,14 +31,27 @@ export function isWeekend(iso) {
   return [0, 6].includes(new Date(`${iso}T00:00:00Z`).getUTCDay());
 }
 
+/**
+ * Which sessions are already done, as the calendar strings the caller compares
+ * against.
+ *
+ * Formatted by Postgres rather than by isoDate. A DATE column arrives here as a
+ * JS Date at local midnight, so 2026-08-14 in Seoul is 2026-08-13T15:00Z, and
+ * toISOString then reads back the day before. Every label was shifted one day:
+ * the newest stored session never matched, so each hourly run re-fetched it —
+ * twelve thousand bars for 2026-08-14, once an hour — while the day before it
+ * was reported done on the strength of its neighbour's row.
+ *
+ * isUsPipelineDue hid this by only counting rows, never reading their dates.
+ */
 export async function loadStoredSessions(config, from, to) {
   const result = await query(
     config,
-    "SELECT session_date FROM us_backfill_progress WHERE session_date BETWEEN $1 AND $2",
+    "SELECT session_date::text AS session_date FROM us_backfill_progress WHERE session_date BETWEEN $1 AND $2",
     [from, to]
   );
 
-  return new Set(result.rows.map((row) => isoDate(row.session_date)));
+  return new Set(result.rows.map((row) => row.session_date));
 }
 
 async function saveBars(config, sessionDate, bars) {

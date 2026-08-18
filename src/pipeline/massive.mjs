@@ -21,9 +21,24 @@ export async function massiveRequest(config, path, attempt = 1) {
 
   lastRequestAt = Date.now();
 
-  const response = await fetch(`${config.massive.baseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${config.massive.apiKey}` }
-  });
+  let response;
+
+  try {
+    response = await fetch(`${config.massive.baseUrl}${path}`, {
+      headers: { Authorization: `Bearer ${config.massive.apiKey}` }
+    });
+  } catch (error) {
+    // A dropped connection is not an answer about this request, and one of them
+    // used to end the whole nightly run: the laptop's wifi blinked partway
+    // through a two hundred and fifty symbol refresh and the pipeline reported
+    // only "fetch failed". Runs here are long enough that a transient failure
+    // somewhere in them is close to certain.
+    if (attempt > 5) throw error;
+
+    await sleep(attempt * 10_000);
+
+    return massiveRequest(config, path, attempt + 1);
+  }
 
   // A 429 means the configured pace is wrong for this plan rather than that the
   // request was bad, so it backs off and keeps going instead of failing the run.

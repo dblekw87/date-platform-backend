@@ -132,13 +132,16 @@ async function backfillSplits() {
 }
 
 async function loadDoneDates() {
+  // ::text so Postgres formats the day. Read as a JS Date it would be local
+  // midnight, and toISOString would hand back the day before east of UTC - the
+  // same shift that had the scheduler re-fetching its newest session hourly.
   const result = await query(
     config,
-    "SELECT session_date FROM us_backfill_progress WHERE session_date BETWEEN $1 AND $2",
+    "SELECT session_date::text AS session_date FROM us_backfill_progress WHERE session_date BETWEEN $1 AND $2",
     [from, to]
   );
 
-  return new Set(result.rows.map((row) => isoDate(row.session_date)));
+  return new Set(result.rows.map((row) => row.session_date));
 }
 
 async function saveBars(sessionDate, bars) {
