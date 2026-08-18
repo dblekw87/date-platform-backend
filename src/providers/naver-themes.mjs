@@ -85,16 +85,28 @@ export async function saveThemeMembers(config, themeNo, themeName, members) {
  *
  * Ties break on the lower theme number, which is the older theme, so the answer
  * does not move around between loads.
+ *
+ * It is wrong when a stock carries a small legacy line: 브이티 sells cosmetics
+ * and sits in 2차전지(LFP) at 12 members against 화장품 at 93, so narrowness
+ * picks the battery. Nothing in the membership distinguishes a main business
+ * from a leftover one, and guessing from size alone cannot. That is what the
+ * curated map above it is for, and no membership is lost either way - every
+ * theme a symbol belongs to stays in kr_theme_members, and only the one label
+ * shown is a simplification.
  */
 export async function loadSymbolThemes(config) {
   if (!config.databaseUrl) return new Map();
 
+  // 밸류업 is index membership, not a reason a stock moved. It is also small
+  // enough to win on narrowness - 코스맥스 came out 밸류업 at 84 members over
+  // 화장품 at 93 - so it has to be excluded rather than ranked.
   const result = await query(config, `
     SELECT DISTINCT ON (m.symbol) m.symbol, m.theme_name
     FROM kr_theme_members m
     JOIN (
       SELECT theme_no, count(*) AS members FROM kr_theme_members GROUP BY theme_no
     ) size ON size.theme_no = m.theme_no
+    WHERE m.theme_name NOT LIKE '%밸류업%'
     ORDER BY m.symbol, size.members ASC, m.theme_no ASC
   `);
 

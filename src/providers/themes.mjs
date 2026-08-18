@@ -331,6 +331,14 @@ const symbolThemes = {
   "002100": "남북경협",
   "026040": "남북경협",
 
+  // 주업이 부업에 진 경우.
+  //
+  // 브이티 sells cosmetics and also sits in 2차전지(LFP) at 12 members against
+  // 화장품 at 93, so the dictionary's narrowest-wins rule takes the battery
+  // line. Nothing in a membership list marks which business is the main one,
+  // which is exactly the call this map exists to make.
+  "018290": "화장품",
+
   // 기타 개별 테마
   "011330": "비건가죽",
   "336260": "수소·연료전지",

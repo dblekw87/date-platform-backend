@@ -43,6 +43,11 @@ const industryThemes = [
   ["272", "정밀기기"],
   ["273", "광학·카메라"],
   ["274", "소비재"],
+  // 화장품 제조, split out of division 20 for the reason division 27 was split:
+  // "화학물질 및 화학제품" is a chemistry heading, and it buried 마녀공장,
+  // 코스맥스, 한국콜마 and 클리오 under 화학·에너지 beside the refiners. K-뷰티
+  // moves on its own news and shares none with a petrochemical.
+  ["2042", "화장품"],
   ["311", "조선"],
   ["312", "기계·장비"],
   ["313", "항공우주"],
