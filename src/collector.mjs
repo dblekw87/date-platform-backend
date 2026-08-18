@@ -366,6 +366,8 @@ export function startMarketCollector(config) {
   let stopped = false;
   let timeoutId;
   let lastNewsAt = 0;
+  let lastUsAt = 0;
+  let lastUsExtendedAt = 0;
   let reportedDay = null;
 
   async function tick() {
@@ -426,27 +428,37 @@ export function startMarketCollector(config) {
     // and its own clock decides it. Sampled on the same loop rather than a
     // second timer: one tick either side of midnight is easier to reason about
     // than two loops that can both be mid-request.
+    // Gated on elapsed time rather than on the tick delay. delay is already the
+    // sixty-second idle when nothing domestic is open, so Math.min against it
+    // never raised anything and the US passes ran on every tick: measured over
+    // the first full night, the session sampled every 1.03 minutes against a
+    // stated five, and the watchlist every 1.43 against ten. Five times the
+    // requests to an unauthenticated endpoint, for resolution nothing asked for.
     if (isRegularSession("US", now)) {
-      delay = Math.min(delay, usIntervalMs);
+      if (Date.now() - lastUsAt >= usIntervalMs) {
+        lastUsAt = Date.now();
 
-      try {
-        const saved = await sampleUsPrices(config);
+        try {
+          const saved = await sampleUsPrices(config);
 
-        if (saved > 0) console.log(`collector: ${saved} US price samples`);
-      } catch (error) {
-        console.warn("collector: US sample failed", error instanceof Error ? error.message : error);
+          if (saved > 0) console.log(`collector: ${saved} US price samples`);
+        } catch (error) {
+          console.warn("collector: US sample failed", error instanceof Error ? error.message : error);
+        }
       }
     } else if (usMarketPhase() !== "closed") {
       // A watchlist pass is 25 seconds of requests rather than one screener
       // call, so it runs at half the session cadence.
-      delay = Math.min(delay, usExtendedIntervalMs);
+      if (Date.now() - lastUsExtendedAt >= usExtendedIntervalMs) {
+        lastUsExtendedAt = Date.now();
 
-      try {
-        const saved = await sampleUsExtended(config);
+        try {
+          const saved = await sampleUsExtended(config);
 
-        if (saved > 0) console.log(`collector: ${saved} US extended-hours samples`);
-      } catch (error) {
-        console.warn("collector: US extended sample failed", error instanceof Error ? error.message : error);
+          if (saved > 0) console.log(`collector: ${saved} US extended-hours samples`);
+        } catch (error) {
+          console.warn("collector: US extended sample failed", error instanceof Error ? error.message : error);
+        }
       }
     }
 
