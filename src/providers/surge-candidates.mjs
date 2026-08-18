@@ -278,7 +278,7 @@ function toSurgeCandidateDto(candidate, { asOf, horizonDays }) {
 /**
  * Board-shaped candidates, empty rather than throwing.
  *
- * The tables behind this are filled by scripts that run on a laptop, so an
+ * The tables behind this are filled by scripts run on one machine, so an
  * install that has never run them is the normal case rather than a fault. The
  * board renders an empty state and the rest of the screen is unaffected.
  */

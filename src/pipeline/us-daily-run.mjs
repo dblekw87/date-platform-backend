@@ -45,7 +45,7 @@ export async function runUsDailyPipeline(config, { log = () => {} } = {}) {
   }
 
   // A week of catch-up rather than one day, because the machine this runs on is
-  // a laptop that gets turned off. Sessions already stored cost nothing.
+  // not guaranteed to have been on. Sessions already stored cost nothing.
   log(`us pipeline · ${pending.length} session(s) to fetch`);
 
   let storedSessions = 0;

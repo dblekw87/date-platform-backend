@@ -7,11 +7,11 @@ import { hasUsPipelineTables, isUsPipelineDue, runUsDailyPipeline } from "./us-d
 /**
  * Keeps the US surge data current without anyone remembering to.
  *
- * Not a cron. The machine this runs on is a laptop that is off overnight, so a
- * fixed 07:00 firing would simply be missed on the mornings it matters. Instead
- * the check is "is yesterday's session in the database", asked once at startup
- * and every hour after — which means turning the laptop on at any hour brings
- * the board up to date, and leaving it on all day costs one query an hour.
+ * Not a cron. This runs on one desktop that is meant to stay on but will not
+ * always have, so a fixed 07:00 firing is missed on exactly the mornings it
+ * matters. Instead the check is "is yesterday's session in the database", asked
+ * once at startup and every hour after — which means the machine coming back at
+ * any hour brings the board up to date, and staying on costs one query an hour.
  *
  * The run takes fifteen to twenty minutes, almost all of it the rate rebuild,
  * so it is deliberately started detached from the request path.

@@ -29,9 +29,9 @@ export async function massiveRequest(config, path, attempt = 1) {
     });
   } catch (error) {
     // A dropped connection is not an answer about this request, and one of them
-    // used to end the whole nightly run: the laptop's wifi blinked partway
-    // through a two hundred and fifty symbol refresh and the pipeline reported
-    // only "fetch failed". Runs here are long enough that a transient failure
+    // used to end the whole nightly run: the network blinked partway through a
+    // two hundred and fifty symbol refresh and the pipeline reported only
+    // "fetch failed". Runs here are long enough that a transient failure
     // somewhere in them is close to certain.
     if (attempt > 5) throw error;
 

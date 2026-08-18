@@ -1,5 +1,5 @@
 <#
-  The evening sequence, for a laptop nobody is sitting at.
+  The evening sequence, for a machine nobody is sitting at.
 
   Three things have to happen after the domestic session ends at 15:40, and all
   three are easy to forget:
