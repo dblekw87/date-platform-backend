@@ -190,6 +190,26 @@ check("ETF and 미분류 never form a theme", themeScores([
 ]).length, 0);
 
 /**
+ * 조선기자재, split out of 조선.
+ *
+ * 조선 held five yards and nothing else, so a 한화오션 move offered 삼성중공업 as
+ * its 짝꿍 - too heavy to follow and usually moving on the same order anyway.
+ * The register files the suppliers by what they weld: 원자재 for the forgers and
+ * fitting makers, 기계·장비 for engines and cranes, 화학·에너지 for the LNG
+ * insulation that a carrier is ordered for.
+ */
+console.log("\n조선기자재");
+
+check("동성화인텍 · 화학 등록", classifyTheme("033500", "동성화인텍"), "조선기자재");
+check("태웅 · 원자재 등록", classifyTheme("044490", "태웅"), "조선기자재");
+check("성광벤드 · 원자재 등록", classifyTheme("014620", "성광벤드"), "조선기자재");
+check("오리엔탈정공 · 기계 등록", classifyTheme("014940", "오리엔탈정공"), "조선기자재");
+check("현대힘스는 옮겨왔다", classifyTheme("460930", "현대힘스"), "조선기자재");
+// The yards stay put; separating them from the suppliers is the whole point.
+check("한화오션은 조선 유지", classifyTheme("042660", "한화오션"), "조선");
+check("삼성중공업은 조선 유지", classifyTheme("010140", "삼성중공업"), "조선");
+
+/**
  * 반도체 후공정, split out of 반도체.
  *
  * The registrations reach none of it - 정밀기기, 기계·장비, 전자부품·전장 and,

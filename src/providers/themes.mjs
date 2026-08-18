@@ -224,9 +224,40 @@ const symbolThemes = {
   "009830": "재생에너지",
   "489790": "방산",
   "034220": "전자부품·전장",
-  "460930": "조선",
   "107640": "전력기기",
   "194700": "바이오",
+
+  // 조선기자재
+  //
+  // The same split as 반도체 후공정, for the same reason. 조선 holds five yards,
+  // every one of them a mega cap, so a 한화오션 move offered HD현대중공업 and
+  // 삼성중공업 as its 짝꿍 - stocks that are too heavy to follow and are usually
+  // moving on the same order anyway. The names that actually follow a yard are
+  // the suppliers, and none of them was written down.
+  //
+  // Unreachable from the register, which files them by what they weld rather
+  // than by what they are priced off: 원자재 for the forging and fitting makers
+  // (2511/2512/24133/25912), 기계·장비 for the engine and crane makers (291),
+  // 화학·에너지 for 동성화인텍, whose insulation is what an LNG carrier is
+  // ordered for. Only 세진중공업 and 인화정공 register as 조선 at all.
+  //
+  // 현대힘스 moved here out of 조선: it fabricates blocks for a yard rather than
+  // being one, and it is the size that follows.
+  //
+  // Codes resolved against the register, which is how 221610 was dropped - it
+  // is 자안바이오, not the 파나시아 it was reached for.
+  "033500": "조선기자재",
+  "075580": "조선기자재",
+  "044490": "조선기자재",
+  "073010": "조선기자재",
+  "017960": "조선기자재",
+  "014940": "조선기자재",
+  "013030": "조선기자재",
+  "014620": "조선기자재",
+  "054540": "조선기자재",
+  "101930": "조선기자재",
+  "085310": "조선기자재",
+  "460930": "조선기자재",
 
   // 반도체 후공정
   //
