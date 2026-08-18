@@ -487,7 +487,17 @@ export async function saveMarketDataSnapshot(config, input) {
   return result.rows[0];
 }
 
+/**
+ * Absent stays absent.
+ *
+ * Number(null) is 0 and so is Number(""), and both are finite, so the obvious
+ * version of this turned every missing measurement into a measured zero. Found
+ * when Yahoo reported no extended-hours volume and 432 rows landed claiming
+ * nothing had traded in a pre-market where prices doubled.
+ */
 function numericOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+
   const numeric = Number(value);
 
   return Number.isFinite(numeric) ? numeric : null;

@@ -6,6 +6,7 @@ import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
 import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
+import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
 
 /**
@@ -285,6 +286,7 @@ async function sampleAfterHours(config) {
 // One screener call a tick, and the whole US session is six and a half hours,
 // so there is nothing to gain from the minute cadence the Korean open needs.
 const usIntervalMs = 5 * 60_000;
+const usExtendedIntervalMs = 10 * 60_000;
 
 /**
  * The US leaders, while the US session is actually open.
@@ -313,6 +315,34 @@ async function sampleUsPrices(config) {
     // ranking answers, so the rank is worth keeping.
     sessionDate: sessionDate("US"),
     source: "yahoo:us:regular",
+    stocks
+  });
+}
+
+/**
+ * The US pre-market and after-market, which the screener cannot see.
+ *
+ * A different mechanism from the session pass and not a choice: the screener is
+ * frozen outside the bell, so these hours have to be read one symbol at a time
+ * against a list decided in advance. Measured live at 20:18 KST - 431 of a 475
+ * name watchlist answered in 25 seconds, with PFSA +113% and WETO +44%, both
+ * matching what a broker's screen showed for the same minute.
+ *
+ * Stored unranked. There is no turnover to rank on out here, and the watchlist
+ * is not the market - a stock missing from it is missing from this entirely,
+ * which is a limit of the free data rather than a fact about the day.
+ */
+async function sampleUsExtended(config) {
+  const { phase, stocks } = await loadUsExtendedSamples(config);
+
+  if (stocks.length === 0) return 0;
+
+  return saveMarketPriceSamples(config, {
+    market: "US",
+    observedAt: new Date().toISOString(),
+    ranked: false,
+    sessionDate: sessionDate("US"),
+    source: `yahoo:us:${phase}`,
     stocks
   });
 }
@@ -406,12 +436,24 @@ export function startMarketCollector(config) {
       } catch (error) {
         console.warn("collector: US sample failed", error instanceof Error ? error.message : error);
       }
+    } else if (usMarketPhase() !== "closed") {
+      // A watchlist pass is 25 seconds of requests rather than one screener
+      // call, so it runs at half the session cadence.
+      delay = Math.min(delay, usExtendedIntervalMs);
+
+      try {
+        const saved = await sampleUsExtended(config);
+
+        if (saved > 0) console.log(`collector: ${saved} US extended-hours samples`);
+      } catch (error) {
+        console.warn("collector: US extended sample failed", error instanceof Error ? error.message : error);
+      }
     }
 
     if (!stopped) timeoutId = setTimeout(tick, delay);
   }
 
-  console.log("market collector on · 국내 08:00–15:40 KRX · 15:40–20:00 NXT · 미국 22:30–05:00 정규장 · 뉴스 상시");
+  console.log("market collector on · 국내 08:00–20:00 · 미국 18:00–09:00(프리·정규·애프터) · 뉴스 상시");
   void tick();
 
   return () => {

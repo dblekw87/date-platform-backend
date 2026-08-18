@@ -1,5 +1,6 @@
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
+import { loadMarketData } from "./market.mjs";
 import { loadUsSurgeCandidates } from "./surge-candidates.mjs";
 import { query } from "../db/client.mjs";
 
@@ -122,6 +123,7 @@ async function readExtendedQuote(symbol, storedClose) {
     ?? result?.meta?.previousClose;
   const closes = (result?.indicators?.quote?.[0]?.close ?? []).filter((value) => Number.isFinite(value));
   const highs = (result?.indicators?.quote?.[0]?.high ?? []).filter((value) => Number.isFinite(value));
+  const volumes = (result?.indicators?.quote?.[0]?.volume ?? []).filter((value) => Number.isFinite(value));
 
   if (!previousClose || closes.length === 0) return null;
 
@@ -133,8 +135,14 @@ async function readExtendedQuote(symbol, storedClose) {
     high,
     highRate: high / previousClose - 1,
     last,
+    name: String(result?.meta?.shortName ?? "").trim() || symbol,
     previousClose,
-    symbol
+    symbol,
+    // Yahoo returns a full array of zeros for extended hours - 41 bars, no
+    // nulls, nothing traded according to a feed that is also reporting a price
+    // that doubled. Absent rather than zero, because zero would read as a
+    // measurement.
+    volume: volumes.reduce((sum, value) => sum + value, 0) || null
   };
 }
 
@@ -156,6 +164,92 @@ async function readWatchlist(config, symbols) {
   }
 
   return quotes;
+}
+
+/**
+ * Who to watch outside the bell.
+ *
+ * There is no free market-wide pre-market scanner - the snapshot endpoint that
+ * would answer this returns 403 on our plan - so a list has to be chosen in
+ * advance and anything off it is invisible. On 2026-08-18 the biggest US
+ * pre-market move in the country was a stock we were not watching.
+ *
+ * Three sources, because each is blind where the others are not:
+ *
+ *   surge candidates   stocks our own history says surge, which is the only
+ *                      source built from what actually happened here
+ *   yesterday's leaders  the screener is frozen at the last close outside the
+ *                      session, so its numbers are useless before 22:30 - but
+ *                      the names are exactly right. A stock that led yesterday
+ *                      is the likeliest one still moving this morning
+ *   recently recorded  whatever the US session pass stored over the last week,
+ *                      so the list grows into the market rather than staying
+ *                      whatever the backfill decided months ago
+ */
+export async function loadUsWatchlist(config) {
+  const symbols = new Set();
+
+  try {
+    const { candidates } = await loadUsSurgeCandidates(config, { limit: watchlistSize });
+
+    for (const candidate of candidates) symbols.add(candidate.symbol);
+  } catch (error) {
+    console.warn("premarket: surge candidates unavailable", error instanceof Error ? error.message : error);
+  }
+
+  try {
+    const payload = await loadMarketData(config);
+
+    for (const stock of payload?.usLeadingStocks ?? []) symbols.add(stock.symbol);
+  } catch (error) {
+    console.warn("premarket: screener names unavailable", error instanceof Error ? error.message : error);
+  }
+
+  if (config.databaseUrl) {
+    try {
+      const result = await query(config, `
+        SELECT DISTINCT symbol
+        FROM market_price_samples
+        WHERE market = 'US' AND session_date >= (CURRENT_DATE - 7)
+      `);
+
+      for (const row of result.rows) symbols.add(row.symbol);
+    } catch (error) {
+      console.warn("premarket: recorded symbols unavailable", error instanceof Error ? error.message : error);
+    }
+  }
+
+  return [...symbols];
+}
+
+/**
+ * Extended-hours quotes shaped for the samples table.
+ *
+ * changeRate here is a ratio and change_rate in the table is a percentage. The
+ * column already holds Korean rows written as percentages, so a fraction
+ * arriving in the same column would not fail, it would quietly read as a
+ * hundredth of the move.
+ */
+export async function loadUsExtendedSamples(config) {
+  const phase = usMarketPhase();
+
+  if (phase !== "pre" && phase !== "post") return { phase, stocks: [] };
+
+  const symbols = await loadUsWatchlist(config);
+  const quotes = await readWatchlist(config, symbols);
+
+  return {
+    phase,
+    stocks: quotes.map((quote) => ({
+      changeRateValue: quote.changeRate * 100,
+      market: "US",
+      name: quote.name,
+      symbol: quote.symbol,
+      // The chart carries no turnover, only the shares that traded.
+      turnoverValue: null,
+      volumeValue: quote.volume
+    }))
+  };
 }
 
 export async function loadUsPremarketMovers(config, { limit = 10 } = {}) {
