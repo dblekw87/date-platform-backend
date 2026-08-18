@@ -230,6 +230,41 @@ const symbolThemes = {
   "107640": "전력기기",
   "194700": "바이오",
 
+  // 남북경협
+  //
+  // The one theme here that no industry code can reach, and the clearest case
+  // for why this map exists. On 2026-08-18 the top three domestic leaders by
+  // turnover were 아난티, 대아티아이 and 좋은사람들, all limit-up or near it on
+  // remarks about the North, and every one of them classified 미분류 - so no
+  // group could form and the board showed 반도체 instead.
+  //
+  // Registered industries of the members: apparel, a resort, rail signalling,
+  // cement, elevators, fertiliser, stone. KSIC 141 would catch three of the
+  // apparel names and sweep in 한섬 and F&F, which did not move, and it would
+  // miss 아난티 entirely. What connects them is 개성공단, 금강산 and the rail
+  // link, and nothing in a company register records that.
+  //
+  // Curated rather than clustered because this theme is twenty years old and
+  // its membership barely moves - the same reason 원전 and 재생에너지 are listed
+  // by hand above. A theme nobody has named yet still needs the co-movement
+  // series, which is a separate problem.
+  //
+  // 현대로템 is deliberately absent: it moves on the rail link too, but it is a
+  // defense stock the rest of the year and 방산 is the group it belongs in.
+  "017800": "남북경협",
+  "025980": "남북경협",
+  "033340": "남북경협",
+  "014990": "남북경협",
+  "047770": "남북경협",
+  "045390": "남북경협",
+  "011390": "남북경협",
+  "009270": "남북경협",
+  "049630": "남북경협",
+  "007110": "남북경협",
+  "001550": "남북경협",
+  "025860": "남북경협",
+  "002100": "남북경협",
+
   // 기타 개별 테마
   "011330": "비건가죽",
   "336260": "수소·연료전지",

@@ -190,6 +190,27 @@ check("ETF and 미분류 never form a theme", themeScores([
 ]).length, 0);
 
 /**
+ * 남북경협, the theme no industry code can reach.
+ *
+ * Its members are apparel, a resort, rail signalling, cement and elevators, so
+ * every automatic layer files them apart and the group cannot form. These cases
+ * exist because on 2026-08-18 the top three leaders by turnover were all in it
+ * and the board showed 반도체.
+ */
+console.log("\n남북경협");
+
+check("아난티 · 리조트", classifyTheme("025980", "아난티"), "남북경협");
+check("좋은사람들 · 의류", classifyTheme("033340", "좋은사람들"), "남북경협");
+check("코데즈컴바인 · 의류", classifyTheme("047770", "코데즈컴바인"), "남북경협");
+check("대아티아이 · 철도신호", classifyTheme("045390", "대아티아이"), "남북경협");
+check("현대엘리베이터 · 승강기", classifyTheme("017800", "현대엘리베이터"), "남북경협");
+check("부산산업 · 시멘트", classifyTheme("011390", "부산산업"), "남북경협");
+// 현대로템 moves on the rail link but is a defense stock the rest of the year.
+check("현대로템은 방산에 남는다", classifyTheme("064350", "현대로템"), "방산");
+// The apparel names share KSIC 141 with pure fashion, which must not follow.
+check("한섬은 딸려오지 않는다", classifyTheme("020000", "한섬"), "미분류");
+
+/**
  * Headline labels, where the North is two different stories.
  *
  * A missile test moves 방산 names and a summit moves 아난티 and 현대엘리베이터,
