@@ -20,13 +20,28 @@ const cacheTtlMs = 30_000;
 // catalyst. Sixteen queries and not one of them political: the event that moved
 // the board could not enter the corpus at all.
 //
-// Not on NewsAPI: a developer key allows a hundred requests a day and this file
-// already spends twenty-seven per sample, so those queries are answering 429 by
-// mid-morning. Naver and the Google feed are the ones that actually deliver.
+// On Naver and the Google feed, not NewsAPI. Those two carry the Korean side
+// and neither is metered the way NewsAPI is.
 const naverQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "금리 환율", "원달러 환율", "반도체 2차전지", "AI 데이터센터", "전력 설비", "바이오 제약", "조선 방산", "방산 수출", "로봇 원전", "우주 항공", "자동차 은행", "정책 수혜", "인수합병 공시", "남북 경협", "대북 정책"];
-const koreanNewsApiQueries = ["국내 증시", "미국 증시", "금리 환율", "반도체 2차전지", "AI 데이터센터", "바이오 제약", "조선 방산", "정책 수혜"];
+// Six queries at two-hour spacing, which is the whole NewsAPI budget.
+//
+// A developer key allows a hundred requests a day and this file was asking for
+// twenty-seven per sample - about 1,800 a day against that hundred, so the key
+// was exhausted within minutes of the first morning sample and answered 429 for
+// the rest of the day. Measured 2026-08-18, mid-afternoon: rateLimited.
+//
+// Kept rather than dropped because of what it uniquely carries. Of the 51
+// outlets it supplied, 47 appear in no other feed - 120 articles Google News
+// and Naver never produced. It is 20% of the corpus by volume and most of its
+// breadth.
+//
+// Korean queries are gone: Naver and the Google feed cover that side far
+// better, and the budget buys more where NewsAPI is actually unique.
+const newsApiQueries = ["stock market", "earnings", "semiconductor stocks", "ai stocks", "biotech stocks", "tariff stocks"];
+const newsApiIntervalMs = 2 * 60 * 60_000;
+
+let lastNewsApiAt = 0;
 const koreanRssQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "반도체 주식", "AI 데이터센터 주식", "전력 설비 주식", "2차전지 주식", "바이오 제약 주식", "조선 방산 주식", "방산 수출 주식", "로봇 원전 주식", "우주 항공 주식", "수소 연료전지 주식", "재생에너지 태양광 풍력 주식", "정책 수혜주", "국내 공시 인수합병", "남북 경협주", "대북 정책 수혜주"];
-const globalNewsApiQueries = ["stock market", "earnings", "interest rates", "fed rate cuts", "inflation data", "semiconductor stocks", "ai stocks", "data center power", "energy oil", "nuclear energy stocks", "hydrogen fuel cell stocks", "renewable energy solar wind stocks", "defense stocks", "aerospace stocks", "banks", "biotech stocks", "small cap stocks", "tariff stocks", "merger acquisition"];
 
 const usCompanySearchNames = {
   AMD: "Advanced Micro Devices",
@@ -546,9 +561,13 @@ export async function loadNewsHeadlines(config) {
 
     naverQueries.forEach((query) => loaders.push(naverApiHubFeed(config, query)));
     naverQueries.forEach((query) => loaders.push(naverDevelopersFeed(config, query)));
-    koreanNewsApiQueries.forEach((query) => loaders.push(newsApiFeed(config, query, { language: "ko", region: "KR" })));
     koreanRssQueries.forEach((query) => loaders.push(googleNewsRssFeed(query)));
-    globalNewsApiQueries.forEach((query) => loaders.push(newsApiFeed(config, query, { language: "en", region: "US" })));
+
+    if (Date.now() - lastNewsApiAt >= newsApiIntervalMs) {
+      lastNewsApiAt = Date.now();
+      newsApiQueries.forEach((query) => loaders.push(newsApiFeed(config, query, { language: "en", region: "US" })));
+    }
+
     loaders.push(finnhubFeed(config, "general"));
     loaders.push(finnhubFeed(config, "forex"));
     loaders.push(benzingaFeed(config));

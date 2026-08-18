@@ -40,8 +40,18 @@ const staleFirstSql = `
     SELECT b.symbol
     FROM us_daily_bars b
     CROSS JOIN latest l
-    JOIN us_tickers u ON u.symbol = b.symbol AND u.as_of = l.session_date
-      AND u.type IN ('CS', 'ADRC')
+    -- As-of rather than equality. us_tickers is a reference snapshot taken a
+    -- few times a year - nine of them in two years, the newest 2026-08-13 -
+    -- while us_daily_bars advances every session. Requiring the two dates to
+    -- match meant this joined nothing on all but the handful of days a snapshot
+    -- happened to land on a session, and the eligible half of the watchlist
+    -- silently evaluated to zero rows. Measured 2026-08-18: 0 eligible, and the
+    -- refresh spending fifty minutes a day walking the surge history instead.
+    JOIN LATERAL (
+      SELECT t.cik FROM us_tickers t
+      WHERE t.symbol = b.symbol AND t.as_of <= l.session_date AND t.type IN ('CS', 'ADRC')
+      ORDER BY t.as_of DESC LIMIT 1
+    ) u ON true
     JOIN LATERAL (
       SELECT sc.shares FROM us_share_counts sc
       WHERE sc.cik = u.cik AND sc.period_end <= b.session_date AND sc.shares >= 100000
