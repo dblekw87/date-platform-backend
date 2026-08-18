@@ -202,6 +202,10 @@ function toLeadingStock(item, index, venue) {
     // ranking compares markets, so it is carried as a multiple like the US feed.
     volumeRatioValue: volumeIncrease > 0 ? 1 + volumeIncrease / 100 : undefined,
     burst: volumeIncrease > 0 ? `거래량증가율 ${volumeIncrease.toFixed(1)}%` : `당일 거래량 ${accumulatedVolume.toLocaleString("ko-KR")}주`,
+    // Price times shares, because the ranking response carries both and the
+    // pairing rule turns on size: the follower has to be small enough to move
+    // on somebody else's news.
+    marketCapValue: parseNumeric(item.stck_prpr) * parseNumeric(item.lstn_stcn) || null,
     turnover: formatTradingAmount(turnoverValue, "KRW"),
     intraday: `현재가 ${parseNumeric(item.stck_prpr).toLocaleString("ko-KR")}원 · ${changeRate}`,
     reason: `${theme} · 당일 거래대금 ${formatTradingAmount(turnoverValue, "KRW")} · 거래대금 순위 #${rank}${volumeIncrease > 0 ? ` · 거래량증가 ${volumeIncrease.toFixed(0)}%` : ""}`,
@@ -382,6 +386,10 @@ async function loadKrQuote(config, token, symbol, venue = "J") {
   return {
     changeRateValue: parseNumeric(data?.output?.prdy_ctrt),
     market: "KR",
+    // The same definition as the ranking path. hts_avls is also here and
+    // disagrees by about 0.7%, which is a different snapshot rather than a
+    // different stock - one column cannot hold two definitions.
+    marketCapValue: price * parseNumeric(data?.output?.lstn_stcn) || null,
     name: String(data?.output?.hts_kor_isnm ?? "").trim() || symbol,
     priceValue: price,
     symbol,

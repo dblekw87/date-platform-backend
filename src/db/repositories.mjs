@@ -518,7 +518,7 @@ function numericOrNull(value) {
 export async function saveMarketPriceSamples(config, { market, observedAt, ranked = true, sessionDate, source, stocks }) {
   if (!config.databaseUrl || stocks.length === 0) return 0;
 
-  const columns = 10;
+  const columns = 11;
   const values = stocks.flatMap((stock, index) => [
     market,
     stock.symbol,
@@ -529,15 +529,16 @@ export async function saveMarketPriceSamples(config, { market, observedAt, ranke
     numericOrNull(stock.turnoverValue),
     numericOrNull(stock.volumeValue),
     stock.theme ?? null,
-    ranked ? index + 1 : null
+    ranked ? index + 1 : null,
+    numericOrNull(stock.marketCapValue)
   ]);
   const rows = stocks
-    .map((stock, index) => `($${index * columns + 1}, $${index * columns + 2}, $${index * columns + 3}, $${index * columns + 4}, $${index * columns + 5}, $${index * columns + 6}, $${index * columns + 7}, $${index * columns + 8}, $${index * columns + 9}, $${index * columns + 10}, $${stocks.length * columns + 1})`)
+    .map((stock, index) => `($${index * columns + 1}, $${index * columns + 2}, $${index * columns + 3}, $${index * columns + 4}, $${index * columns + 5}, $${index * columns + 6}, $${index * columns + 7}, $${index * columns + 8}, $${index * columns + 9}, $${index * columns + 10}, $${index * columns + 11}, $${stocks.length * columns + 1})`)
     .join(", ");
   const result = await query(config, `
     INSERT INTO market_price_samples (
       market, symbol, name, session_date, observed_at,
-      change_rate, turnover, volume, theme, leader_rank, source
+      change_rate, turnover, volume, theme, leader_rank, market_cap, source
     )
     VALUES ${rows}
     ON CONFLICT (market, symbol, observed_at) DO NOTHING
