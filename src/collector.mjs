@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
@@ -182,6 +184,42 @@ async function samplePrices(config) {
 }
 
 /**
+ * The day's unexplained groups, written once when the KRX session closes.
+ *
+ * 남북경협 was found on 2026-08-18 because somebody looked at the board and
+ * asked why the top three leaders had no theme. Nothing in the system would
+ * have raised it, and the six names were out of the leader list by 09:20 - the
+ * evidence is gone from the screen long before anyone reads it, and only the
+ * stored series still holds it.
+ *
+ * Written to a file rather than logged, because it is read the next morning
+ * rather than watched, and the server log is a stream of collector ticks by
+ * then. Failing to write a report is never a reason to interrupt collecting.
+ *
+ * Finding the group is the automatable half. Naming it is not: the same run
+ * that surfaced 남북경협 also grouped 파두 and 후성 with the semiconductor names,
+ * and they belong to neither.
+ */
+async function writeThemeReport(config, day) {
+  try {
+    const report = await buildThemeCandidates(config, day);
+
+    if (report.symbols === 0) return;
+
+    // Written whole rather than appended: the report is a view of stored rows,
+    // so regenerating it after a restart should replace the day rather than
+    // leave two copies for someone to diff in the morning.
+    await mkdir("logs", { recursive: true });
+    await writeFile(`logs/theme-candidates-${day}.log`, `${formatThemeCandidates(report)}
+`, "utf8");
+
+    console.log(`collector: theme report written · ${report.groups.length} groups · logs/theme-candidates-${day}.log`);
+  } catch (error) {
+    console.warn("collector: theme report failed", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
  * Symbols NXT does not answer for, remembered so the evening pass stops asking.
  *
  * Measured on the first NXT evening: of 312 names, the same 188 returned nothing
@@ -256,6 +294,7 @@ export function startMarketCollector(config) {
   let stopped = false;
   let timeoutId;
   let lastNewsAt = 0;
+  let reportedDay = null;
 
   async function tick() {
     if (stopped) return;
@@ -273,9 +312,19 @@ export function startMarketCollector(config) {
       sessionOpen = true;
 
       try {
-        const saved = isAfterHours(minute) ? await sampleAfterHours(config) : await samplePrices(config);
+        const afterHours = isAfterHours(minute);
 
-        if (saved > 0) console.log(`collector: ${saved} ${isAfterHours(minute) ? "after-hours " : ""}price samples`);
+        // The KRX day is complete at the handover, so the report is written on
+        // the first evening tick rather than at 20:00 - a session that ends
+        // early, or a machine shut at seven, still leaves one behind.
+        if (afterHours && reportedDay !== sessionDate("KR")) {
+          reportedDay = sessionDate("KR");
+          await writeThemeReport(config, reportedDay);
+        }
+
+        const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);
+
+        if (saved > 0) console.log(`collector: ${saved} ${afterHours ? "after-hours " : ""}price samples`);
       } catch (error) {
         // A failed tick is a gap in one series, not a reason to stop recording
         // for the day — the next tick is a minute away.
