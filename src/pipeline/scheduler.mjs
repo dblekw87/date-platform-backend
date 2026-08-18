@@ -1,4 +1,6 @@
+import { fetchShortInterest, loadStoredSettlements, saveShortInterest, settlementCandidates } from "../providers/short-interest.mjs";
 import { fillUsIntraday, loadRecentTargets } from "./us-intraday.mjs";
+import { isUniverseStale, newestUniverseDate, refreshUsUniverse, universeSnapshotDate } from "./us-reference.mjs";
 import { sessionDate } from "../providers/market-session.mjs";
 import { hasUsPipelineTables, isUsPipelineDue, runUsDailyPipeline } from "./us-daily-run.mjs";
 
@@ -28,6 +30,10 @@ const krOpeningTo = 9 * 60 + 30;
 const intradayDays = 2;
 const intradayLimit = 60;
 const intradayMinMove = 10;
+
+// FINRA settles twice a month and publishes about eight business days later,
+// so a fortnight without a new one is normal and three weeks is not.
+const shortInterestMaxAgeDays = 21;
 
 let running = false;
 
@@ -90,6 +96,53 @@ async function fillIntraday(config) {
   console.log(`us intraday · ${result.fetched} filled · ${result.bars} bars`);
 }
 
+/**
+ * Reference data nobody was refreshing.
+ *
+ * Both of these were written once by a script somebody ran by hand and then
+ * left to age - the universe snapshot at nine samples in two years, the short
+ * interest at whatever the backfill fetched. Neither reports being stale; they
+ * just quietly describe an older market, which is how the eligible watchlist
+ * came to be empty without anything failing.
+ */
+async function refreshReference(config) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    const newest = await newestUniverseDate(config);
+
+    if (isUniverseStale(newest, today)) {
+      await refreshUsUniverse(config, universeSnapshotDate(today), { log: (message) => console.log(message) });
+    }
+  } catch (error) {
+    console.warn("us universe refresh failed", error instanceof Error ? error.message : error);
+  }
+
+  try {
+    const stored = await loadStoredSettlements(config);
+    const newest = [...stored].sort().at(-1);
+    const age = newest ? (new Date(`${today}T00:00:00Z`) - new Date(`${newest}T00:00:00Z`)) / 86400000 : Infinity;
+
+    if (age < shortInterestMaxAgeDays) return;
+
+    // Only the recent candidates. The two-year sweep is the backfill script's
+    // job; this is here to notice a settlement that published since yesterday.
+    const from = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+
+    for (const date of settlementCandidates(from, today).filter((candidate) => !stored.has(candidate))) {
+      const rows = await fetchShortInterest(config, date);
+
+      if (rows.length === 0) continue;
+
+      const saved = await saveShortInterest(config, rows);
+
+      console.log(`us short interest · ${date} ${saved} rows`);
+    }
+  } catch (error) {
+    console.warn("us short interest refresh failed", error instanceof Error ? error.message : error);
+  }
+}
+
 async function tick(config) {
   if (running) return;
   if (isKrOpeningWindow()) return;
@@ -106,6 +159,7 @@ async function tick(config) {
     // between them.
     running = true;
 
+    await refreshReference(config);
     await fillIntraday(config);
 
     if (!await isUsPipelineDue(config)) return;
@@ -124,7 +178,7 @@ async function tick(config) {
 export function startUsPipelineScheduler(config) {
   if (!config.usPipeline) return;
 
-  console.log("us pipeline on · 매 시각 확인 · 분봉 채우기 포함 · 09:00–09:30 KST 제외");
+  console.log("us pipeline on · 매 시각 확인 · 분봉·참조데이터 갱신 포함 · 09:00–09:30 KST 제외");
 
   // Late enough that the server is answering requests before a twenty-minute
   // job starts competing with it for the connection pool.

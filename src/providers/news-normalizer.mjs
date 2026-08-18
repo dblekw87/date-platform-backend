@@ -85,7 +85,11 @@ function labelFromRaw(item) {
   if (/bank|banks|brokerage|은행|금융|증권/.test(text)) return "금융";
   if (/crypto|bitcoin|btc|가상자산|비트코인/.test(text)) return "암호화폐";
   if (/merger|acquisition|m&a|인수|합병/.test(text)) return "M&A";
-  if (/policy|정책|규제/.test(text)) return "정책";
+  // 관세 belongs here rather than in its own bucket, and it has to be listed
+  // explicitly: the fallback below returns the feed's own query string when no
+  // rule matches, so "tariff stocks" was arriving as a label and sitting in the
+  // same column as the Korean taxonomy.
+  if (/policy|정책|규제|tariff|관세/.test(text)) return "정책";
 
   const fallback = item.label?.trim() || item.category?.trim();
 
