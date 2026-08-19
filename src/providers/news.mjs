@@ -3,6 +3,8 @@ import { fetchJson, fetchText } from "../http.mjs";
 import { dedupeNews, normalizeNewsFeed } from "./news-normalizer.mjs";
 import { createRuntimeState } from "./runtime-state.mjs";
 import { classifyTheme } from "./themes.mjs";
+import { loadActiveThemes, themeQueryTerm } from "./active-themes.mjs";
+import { sessionDate } from "./market-session.mjs";
 
 /**
  * Headline flow assembled from every configured news source, plus the Finnhub
@@ -22,6 +24,7 @@ const cacheTtlMs = 30_000;
 //
 // On Naver and the Google feed, not NewsAPI. Those two carry the Korean side
 // and neither is metered the way NewsAPI is.
+const activeThemeQueryLimit = 12;
 const naverQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "금리 환율", "원달러 환율", "반도체 2차전지", "AI 데이터센터", "전력 설비", "바이오 제약", "조선 방산", "방산 수출", "로봇 원전", "우주 항공", "자동차 은행", "정책 수혜", "인수합병 공시", "남북 경협", "대북 정책"];
 // Six queries at two-hour spacing, which is the whole NewsAPI budget.
 //
@@ -576,6 +579,17 @@ export async function loadLeaderNewsHeadlines(leaders) {
   return tagged.map((item) => ({ ...item, isNew: newHeadlineIds.has(item.id) }));
 }
 
+/** Today's moving themes, and never a failure that costs the whole news pull. */
+async function activeThemeQueries(config) {
+  try {
+    return await loadActiveThemes(config, sessionDate("KR"), { limit: activeThemeQueryLimit });
+  } catch (error) {
+    console.warn("active theme queries unavailable", error instanceof Error ? error.message : error);
+
+    return [];
+  }
+}
+
 export async function loadNewsHeadlines(config) {
   return readThroughCache("news:headlines", cacheTtlMs, async () => {
     const loaders = [];
@@ -587,6 +601,17 @@ export async function loadNewsHeadlines(config) {
     naverQueries.forEach((query) => loaders.push(naverApiHubFeed(config, query)));
     naverQueries.forEach((query) => loaders.push(naverDevelopersFeed(config, query)));
     koreanRssQueries.forEach((query) => loaders.push(googleNewsRssFeed(query)));
+
+    // The fixed queries above name eighteen themes because somebody thought of
+    // them. These are the themes carrying money today, whatever they are, so
+    // 탈모 치료 and 페라이트 get searched on the day they run rather than never.
+    // The Google feed only: Naver's search has a quota and the fixed list
+    // already spends it.
+    for (const { theme } of await activeThemeQueries(config)) {
+      const terms = themeSearchTerms[theme];
+
+      loaders.push(googleNewsRssFeed(terms?.ko ?? themeQueryTerm(theme), { label: `${theme} 테마` }));
+    }
 
     if (Date.now() - lastNewsApiAt >= newsApiIntervalMs) {
       lastNewsApiAt = Date.now();

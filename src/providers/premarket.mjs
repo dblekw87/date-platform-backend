@@ -39,6 +39,8 @@ const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 // page refresh never triggers a sweep. Six hundred names take about a minute.
 const cacheTtlMs = 150_000;
 const watchlistSize = 600;
+const liquidCoreSize = 600;
+const liquidCoreWindowDays = 30;
 const requestBatch = 8;
 const minimumMove = 0.15;
 
@@ -167,6 +169,41 @@ async function readWatchlist(config, symbols) {
 }
 
 /**
+ * The most liquid names, whether or not they have done anything lately.
+ *
+ * The watchlist was built entirely from stocks that had already moved: surge
+ * candidates, the screener's leaders, and whatever was sampled in the last
+ * week. A large cap that trades quietly is in none of those, so on 2026-08-19
+ * Moderna announced a Phase 3 melanoma readout, ran 60% in the premarket, and
+ * was invisible here until the screener picked it up at +88% - after the move,
+ * which is the one time it is no use.
+ *
+ * Ranked out of our own daily bars rather than a list typed in by hand, so it
+ * follows the market instead of aging. Median dollar volume rather than mean:
+ * one 26-million-share day would otherwise promote a shell for a month. MRNA
+ * sits 498th at $288M a day, which is why the cut is here and not at 300.
+ */
+async function loadLiquidCore(config, { limit = liquidCoreSize } = {}) {
+  if (!config.databaseUrl) return [];
+
+  const result = await query(config, `
+    WITH recent AS (
+      SELECT symbol, close * volume AS dollar_volume
+      FROM us_daily_bars
+      WHERE session_date > (SELECT max(session_date) FROM us_daily_bars) - $2::int
+        AND close IS NOT NULL AND volume IS NOT NULL
+    )
+    SELECT symbol
+    FROM recent
+    GROUP BY symbol
+    ORDER BY percentile_cont(0.5) WITHIN GROUP (ORDER BY dollar_volume) DESC
+    LIMIT $1
+  `, [limit, liquidCoreWindowDays]);
+
+  return result.rows.map((row) => row.symbol);
+}
+
+/**
  * Who to watch outside the bell.
  *
  * There is no free market-wide pre-market scanner - the snapshot endpoint that
@@ -203,6 +240,12 @@ export async function loadUsWatchlist(config) {
     for (const stock of payload?.usLeadingStocks ?? []) symbols.add(stock.symbol);
   } catch (error) {
     console.warn("premarket: screener names unavailable", error instanceof Error ? error.message : error);
+  }
+
+  try {
+    for (const symbol of await loadLiquidCore(config)) symbols.add(symbol);
+  } catch (error) {
+    console.warn("premarket: liquid core unavailable", error instanceof Error ? error.message : error);
   }
 
   if (config.databaseUrl) {
