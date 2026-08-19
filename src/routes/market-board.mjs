@@ -14,6 +14,7 @@ import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
 import { loadThemeGroups } from "../providers/theme-groups.mjs";
+import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
 import { formatTradingAmount } from "../providers/format.mjs";
@@ -82,6 +83,7 @@ function baseMarketBoardData(providerStatuses) {
     flowItems: [],
     usLeadingStocks: [],
     krEtfLeaders: [],
+    usEtfLeaders: [],
     krLeadingStocks: [],
     usDayLeaders: [],
     krDayLeaders: [],
@@ -120,6 +122,7 @@ function mergeMarketBoardData(base, payload) {
     flowItems: mergeById(base.flowItems, payload.flowItems),
     usLeadingStocks: payload.usLeadingStocks ?? base.usLeadingStocks,
     krEtfLeaders: payload.krEtfLeaders ?? base.krEtfLeaders,
+    usEtfLeaders: payload.usEtfLeaders ?? base.usEtfLeaders,
     krLeadingStocks: payload.krLeadingStocks ?? base.krLeadingStocks,
     smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
     usSurgeCandidates: payload.usSurgeCandidates ?? base.usSurgeCandidates,
@@ -464,6 +467,27 @@ async function attachLeaderNews(board) {
   }
 }
 
+/**
+ * The screener's leaders plus whichever extended session is open.
+ *
+ * Appended rather than merged over: a symbol the screener already named carries
+ * its regular-session turnover and average-volume figures, which the extended
+ * record does not have. Only names the screener never saw are added.
+ */
+async function withExtendedUsLeaders(config, leaders) {
+  const extended = await loadUsExtendedLeaders(config).catch((error) => {
+    console.warn("us extended leaders unavailable", error instanceof Error ? error.message : error);
+
+    return [];
+  });
+
+  if (extended.length === 0) return leaders;
+
+  const known = new Set(leaders.map((leader) => leader.symbol));
+
+  return [...leaders, ...extended.filter((mover) => !known.has(mover.symbol))];
+}
+
 // 시장 지정 read back onto the names the board is about to show. The collector
 // writes these from its own quotes, so the board pays nothing for them.
 const warnLabels = { "01": "투자주의", "02": "투자경고", "03": "투자위험" };
@@ -577,6 +601,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
         // the snapshot never held, so an old board shows the section empty
         // rather than showing yesterday's followers as today's.
         krEtfLeaders: snapshot.krEtfLeaders ?? [],
+        usEtfLeaders: snapshot.usEtfLeaders ?? [],
         krPairTrades: snapshot.krPairTrades ?? [],
         usDayLeaders: snapshot.usDayLeaders
           ?? attachDayLeaderCatalysts(rankDayLeaders(snapshot.usLeadingStocks ?? [], "USD"), snapshot.headlineFlow),
@@ -612,7 +637,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
   const combined = {
     ...payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses)),
     krLeadingStocks: await attachSymbolFlags(config, krLeaders.leaders),
-    usLeadingStocks: usLeaders.leaders
+    usLeadingStocks: await withExtendedUsLeaders(config, usLeaders.leaders)
   };
   // Both markets fill in the same way and neither feeds the theme ranking below:
   // a registered industry names a stock without evidence that anything moved

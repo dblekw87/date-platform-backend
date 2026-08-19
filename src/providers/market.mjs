@@ -248,16 +248,22 @@ async function loadUsLeaders() {
     const bySymbol = new Map();
 
     // Equities only: the actives list is thick with ETFs, which are not leaders.
-    [...actives, ...gainers]
-      .filter((quote) => quote?.quoteType === "EQUITY" && quote.symbol)
-      .forEach((quote) => bySymbol.set(quote.symbol, quote));
+    // They are kept aside rather than dropped — the board carries an ETF tab,
+    // and this list is where the domestic one's counterpart comes from.
+    const funds = new Map();
 
-    // Deep enough that a theme holds several names, as on the domestic board.
-    return [...bySymbol.values()]
+    [...actives, ...gainers]
+      .filter((quote) => quote?.symbol)
+      .forEach((quote) => (quote.quoteType === "EQUITY" ? bySymbol : funds).set(quote.symbol, quote));
+
+    const rank = (quotes, limit) => [...quotes.values()]
       .sort((left, right) => usLeadershipScore(right) - usLeadershipScore(left))
       .map(toUsLeader)
       .filter(Boolean)
-      .slice(0, 30);
+      .slice(0, limit);
+
+    // Deep enough that a theme holds several names, as on the domestic board.
+    return { usEtfLeaders: rank(funds, 30), usLeadingStocks: rank(bySymbol, 30) };
   });
 }
 
@@ -324,17 +330,18 @@ async function loadMacroSnapshot(config) {
 }
 
 export async function loadMarketData(config) {
-  const [macroSnapshot, usLeadingStocks] = await Promise.all([
+  const [macroSnapshot, leaders] = await Promise.all([
     loadMacroSnapshot(config),
     loadUsLeaders().catch((error) => {
       console.warn("us leaders lookup failed", error instanceof Error ? error.message : error);
 
-      return [];
+      return { usEtfLeaders: [], usLeadingStocks: [] };
     })
   ]);
 
   return {
     ...(macroSnapshot.length > 0 ? { macroSnapshot, marketBrief: buildMarketBriefs(macroSnapshot) } : {}),
-    ...(usLeadingStocks.length > 0 ? { usLeadingStocks } : {})
+    ...(leaders.usEtfLeaders.length > 0 ? { usEtfLeaders: leaders.usEtfLeaders } : {}),
+    ...(leaders.usLeadingStocks.length > 0 ? { usLeadingStocks: leaders.usLeadingStocks } : {})
   };
 }
