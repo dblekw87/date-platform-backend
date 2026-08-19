@@ -29,7 +29,8 @@
     "probe:nxt-coverage": "node scripts/probe-nxt-coverage.mjs",
     "us:short-interest": "node scripts/backfill-us-short-interest.mjs",
     "kr:themes": "node scripts/backfill-kr-themes.mjs",
-    "theme:backfill:apply": "node scripts/backfill-sample-themes.mjs --apply"
+    "theme:backfill:apply": "node scripts/backfill-sample-themes.mjs --apply",
+    "find": "node scripts/find-symbol.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"

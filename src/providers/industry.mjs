@@ -141,7 +141,7 @@ export function themeForIndustryCode(code) {
   return industryThemes.find(([prefix]) => normalized.startsWith(prefix))?.[1];
 }
 
-async function loadCorpIndex(config) {
+export async function loadCorpIndex(config) {
   const cached = await corpIndex.read();
 
   if (Object.keys(cached.byStockCode).length > 0 && Date.now() - cached.fetchedAt < corpIndexTtlMs) {
