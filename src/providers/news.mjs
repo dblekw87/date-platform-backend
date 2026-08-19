@@ -398,6 +398,9 @@ export async function readNewsHeadlineEvents() {
   return (await state.read()).events;
 }
 
+const maximumEarnings = 90;
+const maximumEarningsPerDay = 6;
+
 async function loadEarningsCalendar(config) {
   if (!config.news.finnhubApiKey) return [];
 
@@ -408,7 +411,29 @@ async function loadEarningsCalendar(config) {
     token: config.news.finnhubApiKey
   }), { timeoutMs: 3000 });
 
-  return (response?.earningsCalendar ?? [])
+  // Finnhub answers newest date first. Slicing that took the far end of the
+  // window and threw away everything near — on 2026-08-19 the calendar showed
+  // nothing until 09-07 while 72 companies reported that same day.
+  //
+  // Sorted forward, and then thinned, because the raw list is not a calendar
+  // anybody can read: 495 rows over three weeks, 72 of them on one date. The
+  // ones kept are the largest by expected revenue, which is the closest thing
+  // the feed carries to "a name that moves the tape".
+  const ordered = [...(response?.earningsCalendar ?? [])].sort((left, right) =>
+    String(left.date).localeCompare(String(right.date))
+      || (right.revenueEstimate ?? -1) - (left.revenueEstimate ?? -1));
+  const perDay = new Map();
+
+  return ordered
+    .filter((item) => {
+      const seen = perDay.get(item.date) ?? 0;
+
+      if (seen >= maximumEarningsPerDay) return false;
+
+      perDay.set(item.date, seen + 1);
+
+      return true;
+    })
     .flatMap((item) => {
       if (!item.date || !item.symbol) return [];
 
@@ -430,7 +455,7 @@ async function loadEarningsCalendar(config) {
         originalUrl: `https://www.nasdaq.com/market-activity/stocks/${item.symbol.toLowerCase()}/earnings`
       }];
     })
-    .slice(0, 40);
+    .slice(0, maximumEarnings);
 }
 
 function leaderSearchName(leader) {
