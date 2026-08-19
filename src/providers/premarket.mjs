@@ -273,10 +273,16 @@ export async function loadUsWatchlist(config) {
  * arriving in the same column would not fail, it would quietly read as a
  * hundredth of the move.
  */
-export async function loadUsExtendedSamples(config) {
+export async function loadUsExtendedSamples(config, { allowRegular = false } = {}) {
   const phase = usMarketPhase();
 
-  if (phase !== "pre" && phase !== "post") return { phase, stocks: [] };
+  if (phase === "closed") return { phase, stocks: [] };
+
+  // The regular session is the screener's, and the screener answers with thirty
+  // names. Everything outside those thirty is invisible for six and a half
+  // hours - the same keyhole the domestic board had - so the watchlist is also
+  // swept during the session when asked for.
+  if (phase === "regular" && !allowRegular) return { phase, stocks: [] };
 
   const symbols = await loadUsWatchlist(config);
   const quotes = await readWatchlist(config, symbols);

@@ -432,6 +432,48 @@ async function sampleUsPrices(config) {
 }
 
 /**
+ * The whole watchlist during the session, beside the screener's thirty.
+ *
+ * The screener is the only US ranking there is and it answers with thirty
+ * names, so from the bell to the close everything else was invisible. Measured
+ * 2026-08-19 at 22:48 against a broker's list of the day's risers: of eighteen
+ * names above +20%, the board had one. The others were not missing from the
+ * market, they were missing from the question.
+ *
+ * Started rather than awaited, and guarded, exactly as the domestic sweep is: a
+ * 1,200-name pass takes about three minutes and must not delay the five-minute
+ * screener tick behind it.
+ */
+let usSeenRunning = false;
+
+function startUsSeenSample(config) {
+  if (usSeenRunning) return;
+
+  usSeenRunning = true;
+
+  (async () => {
+    const { stocks } = await loadUsExtendedSamples(config, { allowRegular: true });
+
+    if (stocks.length === 0) return;
+
+    const saved = await saveMarketPriceSamples(config, {
+      market: "US",
+      observedAt: new Date().toISOString(),
+      ranked: false,
+      sessionDate: sessionDate("US"),
+      source: "yahoo:us:regular:seen",
+      stocks
+    });
+
+    if (saved > 0) console.log(`collector: ${saved} US session-wide samples`);
+  })()
+    .catch((error) => console.warn("collector: US seen sample failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      usSeenRunning = false;
+    });
+}
+
+/**
  * The US pre-market and after-market, which the screener cannot see.
  *
  * A different mechanism from the session pass and not a choice: the screener is
@@ -481,6 +523,7 @@ export function startMarketCollector(config) {
   let lastSeenAt = 0;
   let lastUsAt = 0;
   let lastUsExtendedAt = 0;
+  let lastUsSeenAt = 0;
   let reportedDay = null;
 
   async function tick() {
@@ -565,6 +608,13 @@ export function startMarketCollector(config) {
         } catch (error) {
           console.warn("collector: US sample failed", error instanceof Error ? error.message : error);
         }
+      }
+
+      // Half the session cadence, because it is a pass over the whole watchlist
+      // rather than one screener call.
+      if (Date.now() - lastUsSeenAt >= usExtendedIntervalMs) {
+        lastUsSeenAt = Date.now();
+        startUsSeenSample(config);
       }
     } else if (usMarketPhase() !== "closed") {
       // A watchlist pass is 25 seconds of requests rather than one screener

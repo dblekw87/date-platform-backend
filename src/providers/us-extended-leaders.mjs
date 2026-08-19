@@ -26,7 +26,7 @@ import { usMarketPhase } from "./premarket.mjs";
 const maximumMovers = 30;
 const minimumChangeRate = 3;
 
-const sourceForPhase = { post: "yahoo:us:post", pre: "yahoo:us:pre" };
+const sourceForPhase = { post: "yahoo:us:post", pre: "yahoo:us:pre", regular: "yahoo:us:regular:seen" };
 
 export async function loadUsExtendedLeaders(config, { now = new Date() } = {}) {
   const phase = usMarketPhase(now);
@@ -44,7 +44,7 @@ export async function loadUsExtendedLeaders(config, { now = new Date() } = {}) {
       AND change_rate IS NOT NULL
     ORDER BY symbol, observed_at DESC
   `, [source]);
-  const label = phase === "pre" ? "미국 프리마켓" : "미국 애프터마켓";
+  const label = { post: "미국 애프터마켓", pre: "미국 프리마켓", regular: "미국 정규장" }[phase];
 
   return result.rows
     .map((row) => ({ ...row, changeRate: Number(row.change_rate) }))
