@@ -110,8 +110,8 @@ export async function saveInvestorFlow(config, rows) {
 export async function collectInvestorFlow(config, symbols, { log = () => {} } = {}) {
   const { getAccessToken } = await import("./kis.mjs");
   const token = await getAccessToken(config);
+  const answered = new Set();
   let saved = 0;
-  let answered = 0;
 
   for (let index = 0; index < symbols.length; index += batchSize) {
     const batch = symbols.slice(index, index + batchSize);
@@ -119,14 +119,17 @@ export async function collectInvestorFlow(config, symbols, { log = () => {} } = 
     const rows = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
 
     if (rows.length > 0) {
-      answered += 1;
+      // Symbols, not batches. This counted once per batch of two and reported
+      // "222/452 symbols" for a run that actually answered 423 of them.
+      for (const symbol of new Set(rows.map((row) => row.symbol))) answered.add(symbol);
+
       saved += await saveInvestorFlow(config, rows);
     }
 
     if (index + batchSize < symbols.length) await sleep(batchSpacingMs);
   }
 
-  log(`investor flow · ${answered}/${symbols.length} symbols · ${saved} rows`);
+  log(`investor flow · ${answered.size}/${symbols.length} symbols · ${saved} rows`);
 
-  return { answered, saved };
+  return { answered: answered.size, saved };
 }
