@@ -58,7 +58,7 @@ async function requestAccessToken(config) {
 
 // KIS issues tokens sparingly, so concurrent cold-start calls must share one
 // request and restarts must reuse the token already on disk.
-async function getAccessToken(config) {
+export async function getAccessToken(config) {
   if (tokenCache && tokenCache.expiresAt > Date.now() + tokenCacheSkewMs) {
     return tokenCache.accessToken;
   }
