@@ -7,11 +7,13 @@ import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { resolveUsIndustryThemes } from "../providers/us-industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
+import { sessionDate } from "../providers/market-session.mjs";
 import { rankDayLeaders } from "../providers/leadership.mjs";
 import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
+import { loadThemeGroups } from "../providers/theme-groups.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
 import { formatTradingAmount } from "../providers/format.mjs";
@@ -83,6 +85,7 @@ function baseMarketBoardData(providerStatuses) {
     usDayLeaders: [],
     krDayLeaders: [],
     krPairTrades: [],
+    krThemeGroups: [],
     usSurgeCandidates: [],
     usPremarketMovers: [],
     smallCapScanner: []
@@ -580,12 +583,23 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
       market: "KR"
     }
   );
+  const krPairTrades = buildPairBoard(krDayLeaders);
   const board = {
     ...withBurst,
     krDayLeaders,
     // The same candidates again, grouped by theme, because that is the unit the
     // trade is read in — 반도체 moving, and what has not moved with it yet.
-    krPairTrades: buildPairBoard(krDayLeaders),
+    krPairTrades: krPairTrades,
+    // The themes the ranking never reached. buildPairBoard can only offer a
+    // theme that put a name in the turnover top; this reads the collector's own
+    // record, which covers every symbol the day touched.
+    krThemeGroups: await loadThemeGroups(config, sessionDate("KR"), {
+      exclude: krPairTrades.map((pair) => pair.theme)
+    }).catch((error) => {
+      console.warn("theme groups unavailable", error instanceof Error ? error.message : error);
+
+      return [];
+    }),
     // No 짝꿍 pass on this side, so peerCount comes straight off the ranking —
     // which is all the regime generator needs to tell a rotation from one stock
     // having a good day.
