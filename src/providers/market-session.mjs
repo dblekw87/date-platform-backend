@@ -110,6 +110,29 @@ export function krTradingVenue(now = new Date()) {
   return minute >= krAfterHoursOpenMinute && minute < krAfterHoursCloseMinute ? "NX" : "J";
 }
 
+/**
+ * The venue a *ranking* is asked of, which is not the venue a quote is asked of.
+ *
+ * A quote follows the book that is trading, so the evening asks NXT. A ranking
+ * answers "what rose today", and after 15:30 the day is over — asking NXT for
+ * it returns the evening's thin book instead. Measured 2026-08-19 at 17:30 with
+ * both venues side by side:
+ *
+ *   J   한켐 29.94, 아이윈 30.00, 덱스터 29.94, 에이엔피 30.00, 화신정공 29.79
+ *   NX  바이오니아 29.99, 에이프릴바이오 -14.99, 비츠로셀 13.58, 두산퓨얼셀 9.81
+ *
+ * Nine stocks closed limit-up that day and the board showed one of them, because
+ * the other eight are not listed on NXT and vanish from its ranking entirely.
+ * The J list is the same one every other broker shows for 오늘.
+ *
+ * So NXT ranks only the pre-market, where KRX is genuinely not trading.
+ */
+export function krRankingVenue(now = new Date()) {
+  const { minute } = localParts(sessions.KR.timeZone, now);
+
+  return minute < sessions.KR.openMinute ? "NX" : "J";
+}
+
 export function isRegularSession(market, now = new Date()) {
   const session = sessions[market];
 

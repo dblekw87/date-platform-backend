@@ -2,7 +2,7 @@ import { readThroughCache } from "../cache.mjs";
 import { hasKisCredentials } from "../config.mjs";
 import { fetchJson } from "../http.mjs";
 import { formatTradingAmount } from "./format.mjs";
-import { krTradingVenue, sessionDate } from "./market-session.mjs";
+import { krRankingVenue, sessionDate } from "./market-session.mjs";
 import { createRuntimeState } from "./runtime-state.mjs";
 import { classifyTheme, isEtfLike, isNonOperatingEquity } from "./themes.mjs";
 import { readStoredToken, writeStoredToken } from "./token-store.mjs";
@@ -252,11 +252,36 @@ async function loadVolumeRank(config, token, venue) {
  * mid caps never enters the candidate pool at all. Ranking by change rate is the
  * only way those names are seen.
  */
+/**
+ * The two boards asked separately, because 0000 does not mean both.
+ *
+ * Measured 2026-08-19 at 17:40. The ranking answers with thirty rows whatever
+ * is asked, and 0000 "전체" returns a mixed page rather than the union of the
+ * two boards - 본느 at 1.75% sat sixth while 바이오니아 at 29.99%, 인디에프 at
+ * 29.85% and 좋은사람들 at 29.84% were absent from it entirely. Asking 0001 and
+ * 1001 returns thirty rows each and finds them.
+ *
+ * Sorting is KIS's and is not by 등락률 in any of the five sort codes, so the
+ * board sorts these itself. Two requests instead of one, behind the same
+ * thirty-second cache.
+ */
+const fluctuationBoards = ["0001", "1001"];
+
 async function loadFluctuationRank(config, token, venue) {
+  const pages = await Promise.all(fluctuationBoards.map((board) =>
+    loadFluctuationPage(config, token, venue, board).catch(() => [])));
+  const bySymbol = new Map();
+
+  for (const row of pages.flat()) bySymbol.set(row.mksc_shrn_iscd, row);
+
+  return [...bySymbol.values()];
+}
+
+async function loadFluctuationPage(config, token, venue, board) {
   const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/ranking/fluctuation", {
     fid_cond_mrkt_div_code: venue,
     fid_cond_scr_div_code: "20170",
-    fid_input_iscd: "0000",
+    fid_input_iscd: board,
     fid_rank_sort_cls_code: "0",
     fid_input_cnt_1: "0",
     fid_prc_cls_code: "0",
@@ -531,9 +556,10 @@ function buildFlowItems(leaders) {
 
 export async function loadKisMarketBoard(config) {
   // Before the KRX bell the only book trading is NXT's, so the venue is chosen
-  // by the clock. Cached per venue: the two return different numbers for the
+  // by the clock — and only there, because after 15:30 the ranking is answering
+  // about a day that is over. Cached per venue: the two return different numbers for the
   // same stock and one must not be served as the other.
-  const venue = krTradingVenue();
+  const venue = krRankingVenue();
 
   return readThroughCache(`kis:market-board:${venue}`, 30_000, async () => {
     const token = await getAccessToken(config);
