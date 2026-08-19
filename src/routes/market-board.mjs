@@ -1,5 +1,5 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
-import { getLatestMarketBoardSnapshot, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
+import { getLatestMarketBoardSnapshot, loadSymbolFlags, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadDartDisclosures, loadLeaderDisclosures } from "../providers/dart.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
@@ -81,6 +81,7 @@ function baseMarketBoardData(providerStatuses) {
     krDisclosures: [],
     flowItems: [],
     usLeadingStocks: [],
+    krEtfLeaders: [],
     krLeadingStocks: [],
     usDayLeaders: [],
     krDayLeaders: [],
@@ -118,6 +119,7 @@ function mergeMarketBoardData(base, payload) {
     krDisclosures: payload.krDisclosures ?? base.krDisclosures,
     flowItems: mergeById(base.flowItems, payload.flowItems),
     usLeadingStocks: payload.usLeadingStocks ?? base.usLeadingStocks,
+    krEtfLeaders: payload.krEtfLeaders ?? base.krEtfLeaders,
     krLeadingStocks: payload.krLeadingStocks ?? base.krLeadingStocks,
     smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
     usSurgeCandidates: payload.usSurgeCandidates ?? base.usSurgeCandidates,
@@ -462,6 +464,45 @@ async function attachLeaderNews(board) {
   }
 }
 
+// 시장 지정 read back onto the names the board is about to show. The collector
+// writes these from its own quotes, so the board pays nothing for them.
+const warnLabels = { "01": "투자주의", "02": "투자경고", "03": "투자위험" };
+
+function cautionLabels(flags) {
+  if (!flags) return [];
+
+  return [
+    warnLabels[flags.market_warn],
+    flags.managed ? "관리종목" : null,
+    flags.halted ? "거래정지" : null,
+    flags.liquidation ? "정리매매" : null,
+    flags.short_overheated ? "단기과열" : null,
+    flags.investment_caution ? "투자유의" : null
+    // crdt_able_yn is deliberately not a label. It is margin eligibility rather
+    // than a designation, and it is false for most small caps - it labelled 33
+    // of 60 leaders and buried the six the exchange had actually designated.
+  ].filter(Boolean);
+}
+
+async function attachSymbolFlags(config, leaders) {
+  if (leaders.length === 0) return leaders;
+
+  const flags = await loadSymbolFlags(config, {
+    sessionDate: sessionDate("KR"),
+    symbols: leaders.map((leader) => leader.symbol)
+  }).catch((error) => {
+    console.warn("symbol flags unavailable", error instanceof Error ? error.message : error);
+
+    return new Map();
+  });
+
+  return leaders.map((leader) => {
+    const labels = cautionLabels(flags.get(leader.symbol));
+
+    return labels.length === 0 ? leader : { ...leader, cautionLabels: labels };
+  });
+}
+
 /**
  * The two 짝꿍 panels, one per session, each true to the hours it names.
  *
@@ -535,6 +576,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
         // Not rebuilt off a snapshot: the candidates are live quotes for stocks
         // the snapshot never held, so an old board shows the section empty
         // rather than showing yesterday's followers as today's.
+        krEtfLeaders: snapshot.krEtfLeaders ?? [],
         krPairTrades: snapshot.krPairTrades ?? [],
         usDayLeaders: snapshot.usDayLeaders
           ?? attachDayLeaderCatalysts(rankDayLeaders(snapshot.usLeadingStocks ?? [], "USD"), snapshot.headlineFlow),
@@ -569,7 +611,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
   // which keeps every downstream figure on one ruler.
   const combined = {
     ...payloads.reduce(mergeMarketBoardData, baseMarketBoardData(statuses)),
-    krLeadingStocks: krLeaders.leaders,
+    krLeadingStocks: await attachSymbolFlags(config, krLeaders.leaders),
     usLeadingStocks: usLeaders.leaders
   };
   // Both markets fill in the same way and neither feeds the theme ranking below:

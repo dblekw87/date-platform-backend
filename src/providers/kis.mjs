@@ -163,7 +163,6 @@ function isUsableLeaderCandidate(item) {
   return Boolean(
     symbol &&
     name &&
-    !isLikelyNonOperatingEquity(name) &&
     turnover > 0 &&
     price > 0 &&
     Math.abs(changeRate) >= 1 &&
@@ -413,6 +412,19 @@ async function loadKrQuote(config, token, symbol, venue = "J") {
 
   return {
     changeRateValue: parseNumeric(data?.output?.prdy_ctrt),
+    // Designations, which arrive with every quote and used to be discarded. A
+    // stock being 관리종목 or 투자경고 is the first thing a trader checks before
+    // taking a 짝꿍, and it was the one thing the board could not say.
+    flags: {
+      creditAllowed: data?.output?.crdt_able_yn === "Y",
+      halted: data?.output?.temp_stop_yn === "Y",
+      investmentCaution: data?.output?.invt_caful_yn === "Y",
+      liquidation: data?.output?.sltr_yn === "Y",
+      managed: data?.output?.mang_issu_cls_code === "Y",
+      marketWarn: String(data?.output?.mrkt_warn_cls_code ?? "").trim() || null,
+      shortOverheated: data?.output?.short_over_yn === "Y",
+      statusCode: String(data?.output?.iscd_stat_cls_code ?? "").trim() || null
+    },
     market: "KR",
     // The same definition as the ranking path. hts_avls is also here and
     // disagrees by about 0.7%, which is a different snapshot rather than a
@@ -579,14 +591,23 @@ export async function loadKisMarketBoard(config) {
 
     // Deep enough that a theme holds several names, not just its top stock —
     // the board groups these by theme and lists every member.
-    const krLeadingStocks = [...bySymbol.values()]
+    const ranked = [...bySymbol.values()]
       .sort((left, right) => leadershipScore(right) - leadershipScore(left))
       .map((item, index) => toLeadingStock(item, index, venue))
-      .filter(Boolean)
-      .slice(0, 60);
+      .filter(Boolean);
+    // ETFs and holding shells were dropped here and the board carried an ETF tab
+    // that could never fill. They still cannot join the leaders — an index fund
+    // has no theme, and summing its turnover into one would say 반도체 is moving
+    // because somebody bought KODEX 200. So they are kept, in their own list.
+    // isEtfLike rather than the wider exclusion: a preferred share is also kept
+    // out of the leaders, but 두산퓨얼셀2우B on 0.1억 is not an ETF and does not
+    // belong in a list labelled one.
+    const krEtfLeaders = ranked.filter((stock) => isEtfLike(stock.name)).slice(0, 30);
+    const krLeadingStocks = ranked.filter((stock) => !isLikelyNonOperatingEquity(stock.name)).slice(0, 60);
 
     return {
       flowItems: krLeadingStocks.length > 0 ? buildFlowItems(krLeadingStocks) : [],
+      krEtfLeaders,
       krLeadingStocks,
       macroSnapshot,
       marketBrief: buildMarketBrief(macroSnapshot)

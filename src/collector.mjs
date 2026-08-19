@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
-import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
+import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
@@ -339,8 +339,16 @@ function startSeenSample(config) {
       source: `kis:${venue === "NX" ? "nxt" : "krx"}:seen`,
       stocks: await withThemes(config, quotes)
     });
+    // Designations ride along on the same quotes, so this is free. Written from
+    // the widest pass because it is the one that sees every symbol.
+    const flagged = await saveSymbolFlags(config, { sessionDate: day, stocks: quotes })
+      .catch((error) => {
+        console.warn("collector: symbol flags failed", error instanceof Error ? error.message : error);
 
-    if (saved > 0) console.log(`collector: ${saved} seen-symbol samples`);
+        return 0;
+      });
+
+    if (saved > 0) console.log(`collector: ${saved} seen-symbol samples · ${flagged} flags`);
   })()
     .catch((error) => console.warn("collector: seen sample failed", error instanceof Error ? error.message : error))
     .finally(() => {

@@ -617,3 +617,66 @@ export async function saveMarketNewsItems(config, headlines) {
 
   return saved;
 }
+
+/**
+ * 시장 지정 — one row per symbol per day.
+ *
+ * A designation belongs to the listing rather than to the tick, so writing it
+ * per sample would repeat the same fact 190 times a day. It can change during
+ * the session, though — 투자경고 is announced mid-day — so the row is updated
+ * rather than left at its first reading.
+ */
+export async function saveSymbolFlags(config, { sessionDate, stocks }) {
+  const rows = stocks.filter((stock) => stock.flags);
+
+  if (rows.length === 0) return 0;
+
+  const result = await query(config, `
+    INSERT INTO kr_symbol_flags
+      (symbol, session_date, market_warn, status_code, managed, halted,
+       liquidation, short_overheated, investment_caution, credit_allowed)
+    SELECT symbol, $2::date, market_warn, status_code, managed, halted,
+           liquidation, short_overheated, investment_caution, credit_allowed
+    FROM unnest($1::text[], $3::text[], $4::text[], $5::boolean[], $6::boolean[],
+                $7::boolean[], $8::boolean[], $9::boolean[], $10::boolean[])
+      AS t(symbol, market_warn, status_code, managed, halted, liquidation,
+           short_overheated, investment_caution, credit_allowed)
+    ON CONFLICT (symbol, session_date) DO UPDATE
+      SET market_warn = EXCLUDED.market_warn,
+          status_code = EXCLUDED.status_code,
+          managed = EXCLUDED.managed,
+          halted = EXCLUDED.halted,
+          liquidation = EXCLUDED.liquidation,
+          short_overheated = EXCLUDED.short_overheated,
+          investment_caution = EXCLUDED.investment_caution,
+          credit_allowed = EXCLUDED.credit_allowed,
+          observed_at = now()
+  `, [
+    rows.map((row) => row.symbol),
+    sessionDate,
+    rows.map((row) => row.flags.marketWarn),
+    rows.map((row) => row.flags.statusCode),
+    rows.map((row) => row.flags.managed),
+    rows.map((row) => row.flags.halted),
+    rows.map((row) => row.flags.liquidation),
+    rows.map((row) => row.flags.shortOverheated),
+    rows.map((row) => row.flags.investmentCaution),
+    rows.map((row) => row.flags.creditAllowed)
+  ]);
+
+  return result.rowCount;
+}
+
+/** Today's designations, for the symbols the board is about to describe. */
+export async function loadSymbolFlags(config, { sessionDate, symbols }) {
+  if (!config.databaseUrl || symbols.length === 0) return new Map();
+
+  const result = await query(config, `
+    SELECT symbol, market_warn, status_code, managed, halted, liquidation,
+           short_overheated, investment_caution, credit_allowed
+    FROM kr_symbol_flags
+    WHERE session_date = $1 AND symbol = ANY($2::text[])
+  `, [sessionDate, symbols]);
+
+  return new Map(result.rows.map((row) => [row.symbol, row]));
+}
