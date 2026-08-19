@@ -1,4 +1,5 @@
 import { fetchShortInterest, loadStoredSettlements, saveShortInterest, settlementCandidates } from "../providers/short-interest.mjs";
+import { loadShortVolume, saveShortVolume, storedShortVolumeDates } from "../providers/short-volume.mjs";
 import { fillUsIntraday, loadRecentTargets } from "./us-intraday.mjs";
 import { isUniverseStale, newestUniverseDate, refreshUsUniverse, universeSnapshotDate } from "./us-reference.mjs";
 import { sessionDate } from "../providers/market-session.mjs";
@@ -34,6 +35,7 @@ const intradayMinMove = 10;
 // FINRA settles twice a month and publishes about eight business days later,
 // so a fortnight without a new one is normal and three weeks is not.
 const shortInterestMaxAgeDays = 21;
+const shortVolumeLookbackDays = 5;
 
 let running = false;
 
@@ -116,6 +118,30 @@ async function refreshReference(config) {
     }
   } catch (error) {
     console.warn("us universe refresh failed", error instanceof Error ? error.message : error);
+  }
+
+  // Before the short-interest block, which returns early when it is fresh.
+  try {
+    const stored = await storedShortVolumeDates(config);
+    let saved = 0;
+
+    // FINRA publishes the previous session the next morning, so a short look
+    // back catches it without re-reading the archive the backfill already has.
+    for (let back = 1; back <= shortVolumeLookbackDays; back += 1) {
+      const date = new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+
+      if (stored.has(date)) continue;
+
+      const rows = await loadShortVolume(date);
+
+      if (rows.length === 0) continue;
+
+      saved += await saveShortVolume(config, rows);
+    }
+
+    if (saved > 0) console.log(`us short volume · ${saved} rows`);
+  } catch (error) {
+    console.warn("us short volume refresh failed", error instanceof Error ? error.message : error);
   }
 
   try {

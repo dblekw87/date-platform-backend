@@ -32,7 +32,8 @@
     "us:label": "node scripts/label-us-surges.mjs",
     "us:listed-shares": "node scripts/backfill-us-listed-shares.mjs",
     "us:reference": "node scripts/backfill-us-reference.mjs",
-    "us:short-interest": "node scripts/backfill-us-short-interest.mjs"
+    "us:short-interest": "node scripts/backfill-us-short-interest.mjs",
+    "us:short-volume": "node scripts/backfill-us-short-volume.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"
