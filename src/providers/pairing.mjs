@@ -58,7 +58,7 @@ const universeCacheTtlMs = 60 * 60_000;
 //
 // Lower than the 30억 floor themes are scored on, deliberately: a 짝꿍 is
 // smaller than what it follows, so the same floor would delete the whole idea.
-const minimumCandidateTurnover = 1_000_000_000;
+export const minimumCandidateTurnover = 1_000_000_000;
 
 /**
  * Theme membership across every listed company, not just the curated map.
@@ -102,7 +102,7 @@ const nonThemeLabels = new Set(["ETF", "미분류", "개별 이슈", "거래대�
  * themes.mjs screens these by name, which is no help here: the pool is symbols
  * and the price endpoint returns no name to screen on.
  */
-function isPreferredShare(symbol) {
+export function isPreferredShare(symbol) {
   return /^\d{5}[^0]$/.test(symbol);
 }
 

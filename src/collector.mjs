@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
+import { classifyTheme } from "./providers/themes.mjs";
+import { loadCorpIndex } from "./providers/industry.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
 import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
@@ -251,6 +253,49 @@ const seenIntervalMs = 5 * 60_000;
 let seenRunning = false;
 
 /**
+ * The name and theme a bare quote does not carry.
+ *
+ * loadKisMarketBoard classifies as it builds, but loadKrQuotes answers with a
+ * price and nothing else, so the two widest passes - the seen sweep and the
+ * evening follow - stored 30,963 rows on 2026-08-19 without a single theme on
+ * them. That is the whole population the theme panel is meant to read, so it
+ * was grouping the 251 ranked names and calling it the market.
+ *
+ * The name is missing for a reason worth writing down: KIS inquire-price simply
+ * does not return one. Probed on 064550, the only name-ish fields in the
+ * response are the market (KOSDAQ) and the industry (제약), so the quote falls
+ * back to its own code and 바이오니아 was recorded as "064550". DART's
+ * corporation index already maps code to name and is cached on disk for the
+ * industry lookup, so it is read once and kept.
+ *
+ * Both lookups are in memory after that, so this is free on every tick. The
+ * name is resolved first because classifyTheme reads it.
+ */
+let symbolNames = null;
+
+async function withThemes(config, quotes) {
+  if (symbolNames === null) {
+    try {
+      const index = await loadCorpIndex(config);
+
+      symbolNames = new Map(Object.entries(index).map(([symbol, entry]) => [symbol, entry.corpName]));
+    } catch (error) {
+      console.warn("collector: corp index unavailable", error instanceof Error ? error.message : error);
+      symbolNames = new Map();
+    }
+  }
+
+  return quotes.map((quote) => {
+    // A quote whose name is its own code is a quote KIS did not name.
+    const name = quote.name && quote.name !== quote.symbol
+      ? quote.name
+      : symbolNames.get(quote.symbol) ?? quote.name;
+
+    return { ...quote, name, theme: quote.theme ?? classifyTheme(quote.symbol, name) };
+  });
+}
+
+/**
  * Every stock the day has already shown us, whether or not it is ranked now.
  *
  * The turnover ranking is a keyhole: a stock is visible only while it is inside
@@ -292,7 +337,7 @@ function startSeenSample(config) {
       ranked: false,
       sessionDate: day,
       source: `kis:${venue === "NX" ? "nxt" : "krx"}:seen`,
-      stocks: quotes
+      stocks: await withThemes(config, quotes)
     });
 
     if (saved > 0) console.log(`collector: ${saved} seen-symbol samples`);
@@ -304,7 +349,6 @@ function startSeenSample(config) {
 }
 
 /**
- * The evening, following the day's names rather than ranking the evening book./**
  * The evening, following the day's names rather than ranking the evening book.
  *
  * Not a second leader ranking. NXT after 15:40 is thin enough that a few
@@ -339,7 +383,7 @@ async function sampleAfterHours(config) {
     ranked: false,
     sessionDate: day,
     source: "kis:nxt:after",
-    stocks: quotes
+    stocks: await withThemes(config, quotes)
   });
 }
 

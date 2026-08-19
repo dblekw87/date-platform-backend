@@ -1,4 +1,5 @@
 import { formatTradingAmount } from "./format.mjs";
+import { isPreferredShare, minimumCandidateTurnover } from "./pairing.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -55,10 +56,25 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [] } = {}
   for (const [theme, rows] of byTheme) {
     if (rows.length < minimumMembers) continue;
 
-    const byTurnover = [...rows].sort((left, right) => Number(right.turnover ?? 0) - Number(left.turnover ?? 0));
+    // The same test rankDayLeaders applies: turnover, and up. Ranking a theme
+    // purely by turnover made 현대차 the leader of 자동차·전장 at -4.71% on
+    // 2026-08-19, and a theme nobody is buying has no 1등주 to follow.
+    const rising = rows.filter((row) => Number(row.turnover ?? 0) > 0 && Number(row.change_rate) > 0);
+
+    if (rising.length === 0) continue;
+
+    const byTurnover = [...rising].sort((left, right) => Number(right.turnover ?? 0) - Number(left.turnover ?? 0));
     const leader = byTurnover[0];
-    const followers = byTurnover.slice(1)
-      .sort((left, right) => Number(left.change_rate) - Number(right.change_rate))
+    // The same three tests attachPairCandidates applies, so both panels mean the
+    // same thing by "후보": up, takeable, and an ordinary share. Sorted
+    // strongest first - the follower already moving with the theme is the one
+    // the trade reads, not the one falling hardest.
+    const followers = rows
+      .filter((row) => row.symbol !== leader.symbol
+        && Number(row.change_rate) > 0
+        && Number(row.turnover ?? 0) >= minimumCandidateTurnover
+        && !isPreferredShare(row.symbol))
+      .sort((left, right) => Number(right.change_rate) - Number(left.change_rate))
       .slice(0, maximumCandidates);
 
     if (followers.length === 0) continue;
