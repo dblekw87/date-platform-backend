@@ -14,6 +14,7 @@ import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
 import { loadThemeGroups } from "../providers/theme-groups.mjs";
+import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
@@ -468,6 +469,42 @@ async function attachLeaderNews(board) {
 }
 
 /**
+ * Dated announcements the companies on the board made about themselves.
+ *
+ * The calendar knew about listings and earnings dates and nothing else, so a
+ * readout, an investor day or a conference call never appeared. Asked only for
+ * the names already being shown, so it is bounded by the board rather than by
+ * the watchlist.
+ */
+async function withSymbolEvents(config, board) {
+  // Biggest movers first, not list order. The leaders arrive ranked by turnover
+  // and the cap took the first twenty of those, so YJ - up 203% in the premarket
+  // and twenty-sixth by turnover - was never asked about. "Why did this move" is
+  // a question about the movers.
+  const symbols = [...board.usLeadingStocks, ...board.usDayLeaders]
+    .filter((stock) => stock.symbol)
+    .sort((left, right) => Math.abs(Number(right.changeRateValue) || 0) - Math.abs(Number(left.changeRateValue) || 0))
+    .map((stock) => stock.symbol);
+  const events = await loadSymbolCalendarItems(symbols, { today: sessionDate("US") }).catch((error) => {
+    console.warn("symbol events unavailable", error instanceof Error ? error.message : error);
+
+    return [];
+  });
+
+  if (events.length === 0) return board;
+
+  const known = new Set(board.calendarItems.map((item) => item.id));
+
+  return {
+    ...board,
+    calendarItems: [...board.calendarItems, ...events.filter((event) => !known.has(event.id))]
+      .sort((left, right) => left.date.localeCompare(right.date)
+        || left.type.localeCompare(right.type)
+        || left.title.localeCompare(right.title))
+  };
+}
+
+/**
  * The screener's leaders plus whichever extended session is open.
  *
  * Appended rather than merged over: a symbol the screener already named carries
@@ -718,11 +755,13 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     usPremarketMovers: (await loadUsPremarketMovers(config)).movers
   };
 
+  const dated = await withSymbolEvents(config, board);
+
   // The snapshot is a board to render later, not a record of what the feeds
   // said, so it keeps the browser's shape rather than the collector's.
   if (canUseLicensedLiveData) {
-    await writeSnapshot(config, withoutRawPayloads(board));
+    await writeSnapshot(config, withoutRawPayloads(dated));
   }
 
-  return includeRawPayloads ? board : withoutRawPayloads(board);
+  return includeRawPayloads ? dated : withoutRawPayloads(dated);
 }
