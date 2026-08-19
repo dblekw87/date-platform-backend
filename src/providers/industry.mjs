@@ -2,6 +2,18 @@ import { fetchJson } from "../http.mjs";
 import { createRuntimeState } from "./runtime-state.mjs";
 import { readZipEntry } from "./zip.mjs";
 
+// DART writes the corporation index as XML, so a name containing & arrives
+// escaped and THE E&M was stored as "THE E&amp;M". Only the five XML entities
+// can appear in it.
+function decodeXmlText(text) {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 /**
  * Registered industry, used as the floor beneath the curated theme map.
  *
@@ -165,7 +177,9 @@ export async function loadCorpIndex(config) {
     const corpName = entry.match(/<corp_name>\s*([\s\S]*?)\s*<\/corp_name>/)?.[1];
 
     // Most rows are unlisted companies, which carry no stock code.
-    if (stockCode && corpCode) byStockCode[stockCode] = { corpCode, corpName: corpName ?? null };
+    if (stockCode && corpCode) {
+      byStockCode[stockCode] = { corpCode, corpName: corpName ? decodeXmlText(corpName) : null };
+    }
   }
 
   await corpIndex.save({ fetchedAt: Date.now(), byStockCode });

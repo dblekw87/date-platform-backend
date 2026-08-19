@@ -3,33 +3,43 @@ import { isPreferredShare, minimumCandidateTurnover } from "./pairing.mjs";
 import { query } from "../db/client.mjs";
 
 /**
- * 짝꿍 candidates for the themes the leader board never reaches.
+ * 짝꿍 candidates read out of the record, one panel per trading session.
  *
- * buildPairBoard works off the day's ranked leaders, so it can only ever offer
- * a theme that put someone in the turnover top - four of them on 2026-08-19.
- * Every other theme that moved that day was invisible, which is the same
- * keyhole the collector had: what is ranked is a small slice of what is moving.
+ * buildPairBoard works off whatever the leader board is showing right now, so
+ * it cannot answer "what was pairable in the regular session" once the regular
+ * session is over, and it has nothing at all to say about the NXT evening. Both
+ * are in market_price_samples, which the collector fills for every symbol it
+ * has seen rather than only the ranked ones.
  *
- * The collector already samples every symbol it has seen once, ranked or not,
- * so the wider picture is sitting in market_price_samples. This reads the most
- * recent tick out of it and groups by theme - no additional request, and it
- * covers the 446 symbols the day actually touched rather than the 38 in the
- * ranking.
+ * The two windows are kept apart because they are different books with
+ * different liquidity, and a pair that held at 14:00 on KRX says nothing about
+ * the same two names at 18:00 on NXT.
  *
- * Shaped exactly like buildPairBoard's rows so the board renders both with one
- * component. The leader is the theme's highest turnover, and the followers are
- * ordered by how little they have moved, which is the order the trade is read
- * in.
+ *   regular  09:00-15:30 KRX. The KRX book stops updating after 15:30, so
+ *            anything later is the closing auction repeating itself.
+ *   after    15:40-20:00 NXT, which is the session the evening panel is about.
+ *
+ * Only the newest tick inside the window counts, so a pair whose condition has
+ * since broken - the leader no longer up, the follower no longer following -
+ * drops out on its own rather than lingering as a stale row.
+ *
+ * Shaped exactly like buildPairBoard's rows so one component renders both.
  */
+
+const windows = {
+  after: { from: "15:40", source: "kis:nxt:after", to: "20:00" },
+  regular: { from: "09:00", source: "kis:krx%", to: "15:30" }
+};
 
 const minimumMembers = 2;
 const maximumThemes = 12;
 const maximumCandidates = 8;
 
-export async function loadThemeGroups(config, sessionDate, { exclude = [] } = {}) {
+export async function loadThemeGroups(config, sessionDate, { exclude = [], window = "regular" } = {}) {
   if (!config.databaseUrl) return [];
 
   const excluded = new Set(exclude);
+  const bounds = windows[window] ?? windows.regular;
   // The newest observation per symbol, which is the board's "now". Themes are
   // grouped from that rather than from the whole day, so a name that led at
   // 09:10 and faded does not still read as the theme's leader at 15:00.
@@ -37,10 +47,12 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [] } = {}
     SELECT DISTINCT ON (symbol) symbol, name, theme, change_rate, turnover, market_cap
     FROM market_price_samples
     WHERE session_date = $1 AND market = 'KR'
+      AND source LIKE $2
+      AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN $3::time AND $4::time
       AND theme IS NOT NULL AND theme NOT IN ('미분류', 'ETF')
       AND change_rate IS NOT NULL
     ORDER BY symbol, observed_at DESC
-  `, [sessionDate]);
+  `, [sessionDate, bounds.source, bounds.from, bounds.to]);
   const byTheme = new Map();
 
   for (const row of result.rows) {
@@ -87,7 +99,7 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [] } = {}
         symbol: row.symbol,
         turnover: formatTradingAmount(Number(row.turnover ?? 0), "KRW")
       })),
-      id: `theme-group-kr-${theme}`,
+      id: `theme-group-kr-${window}-${theme}`,
       leader: {
         changeRateValue: Number(leader.change_rate),
         name: leader.name ?? leader.symbol,

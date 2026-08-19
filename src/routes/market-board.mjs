@@ -7,7 +7,7 @@ import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { resolveUsIndustryThemes } from "../providers/us-industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
-import { sessionDate } from "../providers/market-session.mjs";
+import { seoulMinuteNow, sessionDate } from "../providers/market-session.mjs";
 import { rankDayLeaders } from "../providers/leadership.mjs";
 import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
@@ -84,8 +84,8 @@ function baseMarketBoardData(providerStatuses) {
     krLeadingStocks: [],
     usDayLeaders: [],
     krDayLeaders: [],
+    krAfterPairs: [],
     krPairTrades: [],
-    krThemeGroups: [],
     usSurgeCandidates: [],
     usPremarketMovers: [],
     smallCapScanner: []
@@ -463,6 +463,44 @@ async function attachLeaderNews(board) {
 }
 
 /**
+ * The two 짝꿍 panels, one per session, each true to the hours it names.
+ *
+ * The live leader board follows whichever book is open, so reading it as "the
+ * regular session" is only right between 09:00 and 15:30 — before that it is
+ * the NXT pre-market and after 15:40 it is the NXT evening. Outside those hours
+ * the regular panel therefore comes out of the record rather than off the
+ * screen, and the record is also what the whole evening panel is built from.
+ *
+ * The live board is still preferred while it is the right book, because its
+ * candidate pool reaches the whole theme universe rather than only the symbols
+ * sampled so far. The recorded themes are appended behind it for the themes it
+ * never saw.
+ */
+async function buildKrPairPanels(config, livePairs) {
+  const day = sessionDate("KR");
+  const minute = seoulMinuteNow();
+  const inRegularSession = minute >= 9 * 60 && minute <= 15 * 60 + 30;
+  const read = (window, exclude) => loadThemeGroups(config, day, { exclude, window })
+    .catch((error) => {
+      console.warn(`${window} theme groups unavailable`, error instanceof Error ? error.message : error);
+
+      return [];
+    });
+  const pairs = inRegularSession ? livePairs : [];
+  const [recorded, after] = await Promise.all([
+    read("regular", pairs.map((pair) => pair.theme)),
+    read("after")
+  ]);
+  // A gap that has gone negative is a follower that overtook the leader, which
+  // is the setup gone rather than a setup to read. It used to be kept and shown
+  // last; a panel that names a session is a claim that the pair held in it, so
+  // it is dropped instead.
+  const holding = (list) => list.filter((pair) => pair.leadGap > 0);
+
+  return { after: holding(after), regular: holding([...pairs, ...recorded]) };
+}
+
+/**
  * Headlines carry the provider's original object so the collector can store it,
  * and the browser has no use for it: at 115 headlines it is about ninety
  * kilobytes of every board response.
@@ -583,23 +621,17 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
       market: "KR"
     }
   );
-  const krPairTrades = buildPairBoard(krDayLeaders);
+  const krPairTrades = await buildKrPairPanels(config, buildPairBoard(krDayLeaders));
   const board = {
     ...withBurst,
     krDayLeaders,
+    // The evening on NXT, which the leader board cannot describe: after 15:40
+    // the KRX book is closed and the ranking it produces is yesterday repeating
+    // itself. Read out of the collector's own record instead.
+    krAfterPairs: krPairTrades.after,
     // The same candidates again, grouped by theme, because that is the unit the
     // trade is read in — 반도체 moving, and what has not moved with it yet.
-    krPairTrades: krPairTrades,
-    // The themes the ranking never reached. buildPairBoard can only offer a
-    // theme that put a name in the turnover top; this reads the collector's own
-    // record, which covers every symbol the day touched.
-    krThemeGroups: await loadThemeGroups(config, sessionDate("KR"), {
-      exclude: krPairTrades.map((pair) => pair.theme)
-    }).catch((error) => {
-      console.warn("theme groups unavailable", error instanceof Error ? error.message : error);
-
-      return [];
-    }),
+    krPairTrades: krPairTrades.regular,
     // No 짝꿍 pass on this side, so peerCount comes straight off the ranking —
     // which is all the regime generator needs to tell a rotation from one stock
     // having a good day.
