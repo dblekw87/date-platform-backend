@@ -1,0 +1,5 @@
+numpy
+pandas
+psycopg[binary]
+scikit-learn
+scipy
