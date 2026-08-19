@@ -4,7 +4,7 @@ import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples } from 
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, sessionDate } from "./providers/market-session.mjs";
+import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
@@ -244,7 +244,67 @@ async function writeThemeReport(config, day) {
 const nxtSilenceMs = 60 * 60_000;
 const nxtSilentUntil = new Map();
 
+// A pass over everything seen today costs about 24 seconds for 237 names, so it
+// runs at five minutes and never on the tick's critical path.
+const seenIntervalMs = 5 * 60_000;
+
+let seenRunning = false;
+
 /**
+ * Every stock the day has already shown us, whether or not it is ranked now.
+ *
+ * The turnover ranking is a keyhole: a stock is visible only while it is inside
+ * the top of it, so the record holds the middle of a move and neither end. On
+ * 2026-08-19 this cost four separate things before lunch - 대화제약 first
+ * appeared already up 11.38%, 바이오니아 was recorded once at 09:03 and then
+ * vanished for eleven minutes during which it fell to about 14% and came back
+ * to 26%, and SHD's first tick of the day was its limit-up. The eleven minutes
+ * are the ones a 짝꿍 sets up or fails in, and none of it was written down.
+ *
+ * So once a symbol has been seen, it keeps being sampled. Unranked and under
+ * its own source, because these are not a leader list and must not be read as
+ * one.
+ *
+ * Started rather than awaited. The 09:00-09:30 leaders are sampled every minute
+ * and that cadence is the entire point of the exercise; a 24 second pass in the
+ * middle of the tick would push it out. Guarded so a slow pass cannot overlap
+ * itself.
+ */
+function startSeenSample(config) {
+  if (seenRunning) return;
+
+  seenRunning = true;
+
+  (async () => {
+    const day = sessionDate("KR");
+    const symbols = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+
+    if (symbols.length === 0) return;
+
+    const venue = krTradingVenue();
+    const quotes = await loadKrQuotes(config, symbols, venue);
+
+    if (quotes.length === 0) return;
+
+    const saved = await saveMarketPriceSamples(config, {
+      market: "KR",
+      observedAt: new Date().toISOString(),
+      ranked: false,
+      sessionDate: day,
+      source: `kis:${venue === "NX" ? "nxt" : "krx"}:seen`,
+      stocks: quotes
+    });
+
+    if (saved > 0) console.log(`collector: ${saved} seen-symbol samples`);
+  })()
+    .catch((error) => console.warn("collector: seen sample failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      seenRunning = false;
+    });
+}
+
+/**
+ * The evening, following the day's names rather than ranking the evening book./**
  * The evening, following the day's names rather than ranking the evening book.
  *
  * Not a second leader ranking. NXT after 15:40 is thin enough that a few
@@ -366,6 +426,7 @@ export function startMarketCollector(config) {
   let stopped = false;
   let timeoutId;
   let lastNewsAt = 0;
+  let lastSeenAt = 0;
   let lastUsAt = 0;
   let lastUsExtendedAt = 0;
   let reportedDay = null;
@@ -399,6 +460,13 @@ export function startMarketCollector(config) {
         const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);
 
         if (saved > 0) console.log(`collector: ${saved} ${afterHours ? "after-hours " : ""}price samples`);
+
+        // Only while the ranked pass runs. After 15:40 the evening pass already
+        // follows the day's names and this would ask the same question twice.
+        if (!afterHours && Date.now() - lastSeenAt >= seenIntervalMs) {
+          lastSeenAt = Date.now();
+          startSeenSample(config);
+        }
       } catch (error) {
         // A failed tick is a gap in one series, not a reason to stop recording
         // for the day — the next tick is a minute away.
