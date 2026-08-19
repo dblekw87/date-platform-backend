@@ -2,6 +2,7 @@ import { readThroughCache } from "../cache.mjs";
 import { fetchJson, fetchText } from "../http.mjs";
 import { formatShareVolume, formatTradingAmount } from "./format.mjs";
 import { classifyTheme } from "./themes.mjs";
+import { loadUsEtfLeaders } from "./us-etf.mjs";
 
 /**
  * Public market data: US index/commodity ETFs via Finnhub, plus BTC, USD/KRW,
@@ -96,24 +97,67 @@ async function loadBitcoin() {
   };
 }
 
+function usdKrwSnapshot({ changeRate, note, rate, timestamp }) {
+  return {
+    changeRate: formatChangeRate(changeRate),
+    id: "usd-krw",
+    instrumentType: "fx",
+    label: "원/달러 환율",
+    market: "KR",
+    note,
+    source: "market",
+    symbol: "USD/KRW",
+    timestamp,
+    tone: toneFromChange(changeRate),
+    value: formatValue(rate)
+  };
+}
+
+/**
+ * The rate now, not the rate the ECB published yesterday.
+ *
+ * Frankfurter serves the ECB reference rate, which is fixed once per business
+ * day at 14:15 CET and carries no intraday move. Read from Seoul that is always
+ * at least a day behind: on 2026-08-19 at 18:00 KST the board showed 1,410.07
+ * dated 08-18 while the market was at 1,395.03 - fifteen won, on the number the
+ * whole macro row is read against.
+ *
+ * Yahoo quotes KRW=X continuously and is already the source for every other
+ * quote on this board. Frankfurter stays as the fallback, still labelled as the
+ * daily reference it is.
+ */
 async function loadUsdKrw() {
+  try {
+    const data = await fetchJson("https://query2.finance.yahoo.com/v8/finance/chart/KRW=X?range=1d&interval=1d", {
+      timeoutMs: 3000,
+      headers: { "User-Agent": browserUserAgent }
+    });
+    const meta = data?.chart?.result?.[0]?.meta;
+    const rate = meta?.regularMarketPrice;
+    const previousClose = meta?.chartPreviousClose ?? meta?.previousClose;
+
+    if (rate) {
+      return usdKrwSnapshot({
+        changeRate: previousClose ? ((rate / previousClose) - 1) * 100 : undefined,
+        note: "Yahoo USD/KRW 실시간",
+        rate,
+        timestamp: meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.warn("usd/krw live lookup failed", error instanceof Error ? error.message : error);
+  }
+
   const data = await fetchJson("https://api.frankfurter.app/latest?from=USD&to=KRW", { timeoutMs: 2500 });
   const rate = data?.rates?.KRW;
 
   if (!rate) return null;
 
-  return {
-    id: "usd-krw",
-    label: "원/달러 환율",
-    market: "KR",
-    instrumentType: "fx",
-    symbol: "USD/KRW",
-    value: formatValue(rate),
-    tone: "flat",
-    note: `Frankfurter ${data.date ?? "latest"} 기준`,
-    timestamp: data.date ? `${data.date}T00:00:00+00:00` : new Date().toISOString(),
-    source: "market"
-  };
+  return usdKrwSnapshot({
+    note: `Frankfurter ${data.date ?? "latest"} 고시 · 일 1회`,
+    rate,
+    timestamp: data.date ? `${data.date}T00:00:00+00:00` : new Date().toISOString()
+  });
 }
 
 function treasuryField(entry, field) {
@@ -338,10 +382,17 @@ export async function loadMarketData(config) {
       return { usEtfLeaders: [], usLeadingStocks: [] };
     })
   ]);
+  // Yahoo has no ETF ranking to ask for, so this is our own list rather than a
+  // filter over the screener's equities.
+  const usEtfLeaders = await loadUsEtfLeaders().catch((error) => {
+    console.warn("us etf lookup failed", error instanceof Error ? error.message : error);
+
+    return [];
+  });
 
   return {
     ...(macroSnapshot.length > 0 ? { macroSnapshot, marketBrief: buildMarketBriefs(macroSnapshot) } : {}),
-    ...(leaders.usEtfLeaders.length > 0 ? { usEtfLeaders: leaders.usEtfLeaders } : {}),
+    ...(usEtfLeaders.length > 0 ? { usEtfLeaders } : {}),
     ...(leaders.usLeadingStocks.length > 0 ? { usLeadingStocks: leaders.usLeadingStocks } : {})
   };
 }
