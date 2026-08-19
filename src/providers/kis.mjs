@@ -206,6 +206,9 @@ function toLeadingStock(item, index, venue) {
     // pairing rule turns on size: the follower has to be small enough to move
     // on somebody else's news.
     marketCapValue: parseNumeric(item.stck_prpr) * parseNumeric(item.lstn_stcn) || null,
+    // The DTO has always declared this and the domestic side never sent it, so
+    // the board was digging the number back out of the reason sentence.
+    rank: Number(rank),
     turnover: formatTradingAmount(turnoverValue, "KRW"),
     intraday: `현재가 ${parseNumeric(item.stck_prpr).toLocaleString("ko-KR")}원 · ${changeRate}`,
     reason: `${theme} · 당일 거래대금 ${formatTradingAmount(turnoverValue, "KRW")} · 거래대금 순위 #${rank}${volumeIncrease > 0 ? ` · 거래량증가 ${volumeIncrease.toFixed(0)}%` : ""}`,
