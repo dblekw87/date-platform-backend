@@ -404,7 +404,7 @@ function buildMarketBriefs(macroSnapshot) {
       points: [
         soxx ? `반도체 기준 ${soxx.symbol} ${soxx.changeRate ?? soxx.value}` : "반도체 ETF 확인 대기",
         us10y ? `10년물 ${us10y.value}${us10y.change ? ` · ${us10y.change}` : ""}` : "10년물 금리 확인 대기",
-        "선물 원본이 아닌 ETF/공식 금리 기준으로 참고합니다."
+        "지수·상품은 실제 선물이며 CME 기준 10분 지연입니다."
       ],
       source: "market",
       timestamp
