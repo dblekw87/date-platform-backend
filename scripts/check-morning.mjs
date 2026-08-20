@@ -82,6 +82,19 @@ if (what === "us") {
   console.log(result.rows
     .map((row) => `${row.source.replace("yahoo:us:", "")} ${row.rows}행/${row.symbols}종목 ${row.first_at}~${row.last_at}`)
     .join(" · ") || "없음");
+} else if (what === "program") {
+  const row = await one(`
+    SELECT count(*)::int AS rows, count(DISTINCT symbol)::int AS symbols,
+           min(observed_time) AS first_at, max(observed_time) AS last_at
+    FROM kr_program_trade
+    WHERE session_date = (now() AT TIME ZONE 'Asia/Seoul')::date`);
+
+  console.log(JSON.stringify({
+    firstAt: row.first_at,
+    lastAt: row.last_at,
+    rows: row.rows,
+    symbols: row.symbols
+  }));
 }
 
 process.exit(0);
