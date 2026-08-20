@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
+import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
@@ -517,6 +518,53 @@ async function sampleUsExtended(config) {
   });
 }
 
+const programIntervalMs = 5 * 60_000;
+// Program flow is only worth asking about where money is concentrated, and one
+// request per symbol means the whole watchlist is out of reach. Forty is about
+// eight seconds of calls, comfortably inside a five minute tick.
+const programSymbolLimit = 40;
+let programRunning = false;
+
+/**
+ * 프로그램매매 — 그날의 주도주만.
+ *
+ * 장중에 읽을 수 있는 수급은 이것뿐입니다. 개인·외국인·기관은 장이 끝나고 정산된
+ * 뒤에야 나오므로, "지금 누가 들어오고 있나"에 답하는 유일한 계열입니다.
+ *
+ * 훑기 패스와 같은 이유로 await 하지 않습니다: 마흔 번의 요청이 5분 틱을 붙잡고
+ * 있으면 그동안 가격 표본이 빕니다.
+ */
+function startProgramSample(config) {
+  if (programRunning) return;
+
+  programRunning = true;
+
+  (async () => {
+    const day = sessionDate("KR");
+    const payload = await loadKisMarketBoard(config);
+    const symbols = (payload?.krLeadingStocks ?? [])
+      .filter((stock) => stock.venue !== "NXT")
+      .sort((left, right) => Number(right.turnoverValue ?? 0) - Number(left.turnoverValue ?? 0))
+      .slice(0, programSymbolLimit)
+      .map((stock) => stock.symbol);
+
+    if (symbols.length === 0) return;
+
+    const { answered, rows } = await collectProgramTrade(config, symbols);
+
+    if (rows.length === 0) return;
+
+    const saved = await saveProgramTrade(config, { rows, sessionDate: day });
+
+    if (saved > 0) console.log(`collector: program trade ${answered}/${symbols.length} symbols · ${saved} rows`);
+  })()
+    .catch((error) => console.warn("collector: program trade failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      programRunning = false;
+    });
+}
+
+
 const snapshotIntervalMs = 10 * 60_000;
 // A board this young is worth republishing as it is. Wider than that and the
 // prices in it are older than the ten minutes the snapshot promises.
@@ -589,6 +637,7 @@ export function startMarketCollector(config) {
   let timeoutId;
   let lastNewsAt = 0;
   let lastSeenAt = 0;
+  let lastProgramAt = 0;
   let lastUsAt = 0;
   let lastUsExtendedAt = 0;
   let lastUsSeenAt = 0;
@@ -629,6 +678,13 @@ export function startMarketCollector(config) {
         if (!afterHours && Date.now() - lastSeenAt >= seenIntervalMs) {
           lastSeenAt = Date.now();
           startSeenSample(config);
+        }
+
+        // Program flow, for the ranked names only. KRX publishes it for the
+        // regular session, so the evening and the pre-market have none.
+        if (!afterHours && Date.now() - lastProgramAt >= programIntervalMs) {
+          lastProgramAt = Date.now();
+          startProgramSample(config);
         }
       } catch (error) {
         // A failed tick is a gap in one series, not a reason to stop recording
