@@ -526,7 +526,7 @@ async function loadIndexQuote(config, token, indexConfig) {
  * 종가가 유지되는데, 현물 카드와 같은 성질이라 따로 표기하지 않습니다.
  */
 const futuresQuotes = [
-  { id: "kosdaq150-future", kisCode: "106000", label: "코스닥150 선물", note: "KIS 연결선물 · 코스닥 현물과의 간격이 프로그램 방향", symbol: "F-KQ150" },
+  { id: "kosdaq150-future", kisCode: "106000", label: "KOSDAQ150 선물", note: "KIS 연결선물 · KOSDAQ150 현물과의 간격이 프로그램 방향", symbol: "F-KQ150" },
   { id: "kospi200-future", kisCode: "101000", label: "KOSPI200 선물", note: "KIS 연결선물 · 현물과의 베이시스 확인용", symbol: "F-K200" }
 ];
 
