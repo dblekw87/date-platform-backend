@@ -44,6 +44,25 @@ if (what === "us") {
   const volume = await one("SELECT count(DISTINCT session_date)::int AS n FROM us_short_volume");
 
   console.log(JSON.stringify({ ...row, flags: flags.n, shortVolumeSessions: volume.n }));
+} else if (what === "pulse") {
+  // One line a watchdog can read: how many minutes since anything landed. A
+  // collector that has quietly stopped looks exactly like a quiet market until
+  // somebody measures the gap.
+  const row = await one(`
+    SELECT
+      round(extract(epoch from now() - max(observed_at) FILTER (WHERE market = 'KR')) / 60)::int AS kr_minutes,
+      round(extract(epoch from now() - max(observed_at) FILTER (WHERE market = 'US')) / 60)::int AS us_minutes
+    FROM market_price_samples
+    WHERE observed_at > now() - interval '12 hours'`);
+  const news = await one("SELECT round(extract(epoch from now() - max(observed_at)) / 60)::int AS minutes FROM market_news_items");
+  const volume = await one("SELECT count(DISTINCT session_date)::int AS n FROM us_short_volume");
+
+  console.log(JSON.stringify({
+    krMinutes: row.kr_minutes,
+    newsMinutes: news.minutes,
+    shortVolumeSessions: volume.n,
+    usMinutes: row.us_minutes
+  }));
 }
 
 process.exit(0);
