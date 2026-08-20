@@ -517,7 +517,7 @@ function startSnapshotPublish(config, board) {
 
   lastSnapshotAt = Date.now();
 
-  publishBoardSnapshot(board)
+  publishBoardSnapshot(board, { config })
     .then((result) => {
       if (result.published) console.log(`collector: board snapshot published · ${result.generatedAt}`);
     })

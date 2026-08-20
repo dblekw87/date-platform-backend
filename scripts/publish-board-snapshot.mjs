@@ -9,8 +9,9 @@ import { readConfig } from "../src/config.mjs";
  *   npm run snapshot:publish
  */
 
-const board = await getMarketBoard(readConfig());
-const result = await publishBoardSnapshot(board);
+const config = readConfig();
+const board = await getMarketBoard(config);
+const result = await publishBoardSnapshot(board, { config });
 
 if (!result.published) {
   console.error(`올리지 않음 · ${result.reason}`);

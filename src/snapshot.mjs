@@ -3,6 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 
+import { query } from "./db/client.mjs";
+
 /**
  * 보드 한 장을 공개 저장소로 내보냅니다.
  *
@@ -27,9 +29,32 @@ export function snapshotRepoPath() {
   return process.env.BOARD_SNAPSHOT_REPO ?? "C:/Users/Pangwoo/date-board-snapshot";
 }
 
-export async function publishBoardSnapshot(board, { repoPath = snapshotRepoPath() } = {}) {
+/**
+ * 보드가 완전한지, 아니면 DB가 죽은 채 그려진 반쪽인지.
+ *
+ * 주도주와 뉴스는 provider에서 바로 오므로 데이터베이스가 없어도 채워집니다.
+ * 짝꿍 패널·테마 그룹·시장 지정은 기록에서 읽으므로 통째로 빕니다. 2026-08-20
+ * 10:47에 도커 엔진이 죽은 채로 한 장이 나갔고, 주도주 60종목은 그대로인데 짝꿍
+ * 테마만 14개에서 4개로 줄어 있었습니다 — 화면만 봐서는 조용한 날과 구분되지
+ * 않습니다.
+ */
+async function databaseAnswers(config) {
+  try {
+    await query(config, "SELECT 1");
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function publishBoardSnapshot(board, { config, repoPath = snapshotRepoPath() } = {}) {
   if (!board || (board.krLeadingStocks ?? []).length === 0) {
     return { published: false, reason: "보드가 비어 있습니다" };
+  }
+
+  if (config && !(await databaseAnswers(config))) {
+    return { published: false, reason: "데이터베이스가 응답하지 않아 보드가 반쪽입니다" };
   }
 
   const git = (args) => run("git", ["-C", repoPath, ...args], { windowsHide: true });
