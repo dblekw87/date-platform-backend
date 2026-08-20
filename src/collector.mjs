@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
-import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
+import { loadRecordedNames, loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
@@ -283,6 +283,21 @@ async function withThemes(config, quotes) {
     } catch (error) {
       console.warn("collector: corp index unavailable", error instanceof Error ? error.message : error);
       symbolNames = new Map();
+    }
+
+    // DART does not list every symbol the exchange ranks. 950260 is
+    // 인제니아테라퓨틱스(Reg.S), a foreign Reg.S listing absent from the
+    // corporation index, so the sweep stored its code and the 짝꿍 panel showed
+    // "950260" as a theme's leader — while the ranking rows had carried the name
+    // all along. Whatever the ranking already named, the sweep can reuse.
+    try {
+      const seen = await loadRecordedNames(config);
+
+      for (const [symbol, name] of seen) {
+        if (!symbolNames.has(symbol)) symbolNames.set(symbol, name);
+      }
+    } catch (error) {
+      console.warn("collector: recorded names unavailable", error instanceof Error ? error.message : error);
     }
   }
 

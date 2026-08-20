@@ -680,3 +680,23 @@ export async function loadSymbolFlags(config, { sessionDate, symbols }) {
 
   return new Map(result.rows.map((row) => [row.symbol, row]));
 }
+
+/**
+ * 이미 기록해 둔 종목명 — 사전에 없는 종목의 대안입니다.
+ *
+ * 시세 조회는 이름을 주지 않고 DART 인덱스는 전 종목을 담지 않습니다. 그 사이에
+ * 빠지는 것이 Reg.S 같은 외국 상장인데, 거래소 순위 응답에는 이름이 들어 있으므로
+ * 한 번 기록된 이름을 다시 씁니다.
+ */
+export async function loadRecordedNames(config, { market = "KR" } = {}) {
+  if (!config.databaseUrl) return new Map();
+
+  const result = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol, name
+    FROM market_price_samples
+    WHERE market = $1 AND name IS NOT NULL AND name <> symbol
+    ORDER BY symbol, observed_at DESC
+  `, [market]);
+
+  return new Map(result.rows.map((row) => [row.symbol, row.name]));
+}

@@ -44,7 +44,13 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [], windo
   // grouped from that rather than from the whole day, so a name that led at
   // 09:10 and faded does not still read as the theme's leader at 15:00.
   const result = await query(config, `
-    SELECT DISTINCT ON (symbol) symbol, name, theme, change_rate, turnover, market_cap
+    -- name <> symbol first, so a row the sweep could not name never becomes
+    -- the label. A theme whose leader reads "950260" is a theme nobody can read.
+    SELECT DISTINCT ON (symbol) symbol,
+           coalesce(nullif(name, symbol), (SELECT n.name FROM market_price_samples n
+             WHERE n.symbol = market_price_samples.symbol AND n.name <> n.symbol
+             ORDER BY n.observed_at DESC LIMIT 1), symbol) AS name,
+           theme, change_rate, turnover, market_cap
     FROM market_price_samples
     WHERE session_date = $1 AND market = 'KR'
       AND source LIKE $2
