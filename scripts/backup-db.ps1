@@ -21,7 +21,8 @@ param(
   [string] $Container = "date-platform-postgres",
   [string] $Database = "date_platform",
   [string] $User = "date_user",
-  [string] $Destination = "C:\Users\Pangwoo\date-platform-backups",
+  # Under the home directory rather than a path with a username written into it.
+  [string] $Destination = (Join-Path $env:USERPROFILE "date-platform-backups"),
   [int] $KeepDays = 14,
   [int] $MinimumBytes = 20MB
 )

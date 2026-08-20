@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
+import { homedir } from "node:os";
 
 import { query } from "./db/client.mjs";
 
@@ -23,10 +24,12 @@ import { query } from "./db/client.mjs";
 const run = promisify(execFile);
 
 export function snapshotRepoPath() {
-  // Forward slashes on purpose: with backslashes this collapses through the JS
-  // escapes into a relative path, node creates it inside the backend checkout,
-  // and `git -C` then walks up and commits the board into the backend repo.
-  return process.env.BOARD_SNAPSHOT_REPO ?? "C:/Users/Pangwoo/date-board-snapshot";
+  // Beside the checkout under the home directory rather than an absolute path
+  // with somebody's username in it. Forward slashes on purpose: written with
+  // backslashes the literal collapsed through the JS escapes into a relative
+  // path, node created it inside the backend checkout, and `git -C` walked up
+  // and committed the board into the backend repo.
+  return process.env.BOARD_SNAPSHOT_REPO ?? `${homedir().replaceAll("\\", "/")}/date-board-snapshot`;
 }
 
 /**
