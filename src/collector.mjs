@@ -4,6 +4,7 @@ import { loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSy
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
+import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
 import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
@@ -501,11 +502,35 @@ async function sampleUsExtended(config) {
   });
 }
 
+const snapshotIntervalMs = 10 * 60_000;
+let lastSnapshotAt = 0;
+
+/**
+ * The board the news sample just built, pushed out for the deployed site.
+ *
+ * Reuses that board rather than building its own: a second build would ask
+ * every provider again for the same minute. Never awaited by the tick — a git
+ * push over a home connection is not something a sampling loop should wait on.
+ */
+function startSnapshotPublish(config, board) {
+  if (Date.now() - lastSnapshotAt < snapshotIntervalMs) return;
+
+  lastSnapshotAt = Date.now();
+
+  publishBoardSnapshot(board)
+    .then((result) => {
+      if (result.published) console.log(`collector: board snapshot published · ${result.generatedAt}`);
+    })
+    .catch((error) => console.warn("collector: snapshot publish failed", error instanceof Error ? error.message : error));
+}
+
 async function sampleNews(config) {
   // The only reader that wants the providers' original objects. Normalization
   // keeps what the board draws and drops the rest, and the rest is what a
   // classifier trained on these headlines would have to read.
   const board = await getMarketBoard(config, { includeRawPayloads: true });
+
+  startSnapshotPublish(config, board);
 
   return saveMarketNewsItems(config, board.headlineFlow ?? []);
 }
