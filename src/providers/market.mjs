@@ -40,6 +40,7 @@ const yahooQuotes = [
   { id: "dow-future", instrumentType: "future", label: "다우 선물", market: "US", note: "E-mini 다우 30 · 나스닥과 갈리면 로테이션 신호", symbol: "YM=F" },
   // Extended hours on purpose — see the note above.
   { id: "phlx-sox", instrumentType: "index", label: "반도체 ETF", market: "US", note: "SOX 원지수에는 선물이 없어 SOXX · 미국 시간외까지 반영", prePost: true, symbol: "SOXX" },
+  { id: "nikkei-future", instrumentType: "future", label: "닛케이225 선물", market: "GLOBAL", note: "CME 닛케이225 · 도쿄 현물은 마감 후 멈추므로 선물", symbol: "NIY=F" },
   { id: "gold", instrumentType: "commodity", label: "금 선물", market: "GLOBAL", note: "COMEX 금 · 거의 24시간 거래", symbol: "GC=F" },
   { id: "wti", instrumentType: "commodity", label: "WTI 선물", market: "GLOBAL", note: "NYMEX WTI 원유 · 거의 24시간 거래", symbol: "CL=F" }
 ];

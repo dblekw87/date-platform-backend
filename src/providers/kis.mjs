@@ -513,8 +513,57 @@ async function loadIndexQuote(config, token, indexConfig) {
   };
 }
 
+/**
+ * 국내 지수선물 — 현물 옆에 나란히 두려는 것입니다.
+ *
+ * 코스닥은 현물지수만 있고 선물이 없었습니다. 선물은 현물과 벌어질 수 있고, 그
+ * 간격(베이시스)이 프로그램 매매의 방향을 정합니다.
+ *
+ * 코드는 연결선물(최근월물)입니다. 2026-08-20에 찾아낸 것:
+ *   101000 KOSPI200 · 105000 미니 KOSPI200 · 106000 코스닥150 · 104000 변동성
+ *
+ * 응답에 장중 시각 필드가 없고 만기일만 옵니다. KRX 선물은 15:45에 닫히므로 그 뒤로
+ * 종가가 유지되는데, 현물 카드와 같은 성질이라 따로 표기하지 않습니다.
+ */
+const futuresQuotes = [
+  { id: "kosdaq150-future", kisCode: "106000", label: "코스닥150 선물", note: "KIS 연결선물 · 코스닥 현물과의 간격이 프로그램 방향", symbol: "F-KQ150" },
+  { id: "kospi200-future", kisCode: "101000", label: "KOSPI200 선물", note: "KIS 연결선물 · 현물과의 베이시스 확인용", symbol: "F-K200" }
+];
+
+async function loadFuturesQuote(config, token, item) {
+  const data = await fetchJson(kisUrl(config, "/uapi/domestic-futureoption/v1/quotations/inquire-price", {
+    FID_COND_MRKT_DIV_CODE: "F",
+    FID_INPUT_ISCD: item.kisCode
+  }), {
+    timeoutMs: 4000,
+    headers: kisHeaders(config, token, "FHMIF10000000")
+  });
+  const price = parseNumeric(data?.output1?.futs_prpr);
+
+  if (!price) return null;
+
+  const changeRate = parseNumeric(data?.output1?.futs_prdy_ctrt);
+
+  return {
+    changeRate: `${changeRate > 0 ? "+" : ""}${changeRate.toFixed(2)}%`,
+    id: item.id,
+    instrumentType: "future",
+    label: item.label,
+    market: "KR",
+    note: item.note,
+    source: "kis",
+    symbol: item.symbol,
+    timestamp: new Date().toISOString(),
+    tone: changeRate > 0 ? "up" : changeRate < 0 ? "down" : "flat",
+    value: price.toLocaleString("ko-KR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+  };
+}
+
 async function loadIndexSnapshots(config, token) {
-  const results = await Promise.allSettled(indexQuotes.map((item) => loadIndexQuote(config, token, item)));
+  const results = await Promise.allSettled([
+    ...indexQuotes.map((item) => loadIndexQuote(config, token, item)),
+    ...futuresQuotes.map((item) => loadFuturesQuote(config, token, item))
+  ]);
 
   return results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
 }
