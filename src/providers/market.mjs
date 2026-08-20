@@ -37,7 +37,7 @@ const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 const yahooQuotes = [
   { id: "sp500-future", instrumentType: "future", label: "S&P 500 선물", market: "US", note: "E-mini S&P 500 · 거의 24시간 거래", symbol: "ES=F" },
   { id: "nasdaq-future", instrumentType: "future", label: "NASDAQ 100 선물", market: "US", note: "E-mini NASDAQ 100 · 거의 24시간 거래", symbol: "NQ=F" },
-  { id: "dow-future", instrumentType: "future", label: "다우 선물", market: "US", note: "E-mini 다우 30 · 나스닥과 갈리면 로테이션 신호", symbol: "YM=F" },
+  { id: "dow-future", instrumentType: "future", label: "DOW 선물", market: "US", note: "E-mini DOW 30 · NASDAQ과 갈리면 로테이션 신호", symbol: "YM=F" },
   // Extended hours on purpose — see the note above.
   { id: "phlx-sox", instrumentType: "index", label: "반도체 ETF", market: "US", note: "SOX 원지수에는 선물이 없어 SOXX · 미국 시간외까지 반영", prePost: true, symbol: "SOXX" },
   { id: "nikkei-future", instrumentType: "future", label: "NIKKEI225 선물", market: "GLOBAL", note: "CME NIKKEI225 · 도쿄 현물은 마감 후 멈추므로 선물", symbol: "NIY=F" },
