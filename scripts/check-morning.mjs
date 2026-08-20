@@ -63,6 +63,25 @@ if (what === "us") {
     shortVolumeSessions: volume.n,
     usMinutes: row.us_minutes
   }));
+} else if (what === "us-sources") {
+  // Per-source counts for a session summary. It lives here rather than inside
+  // the watch script because a node -e nested in a bash function lost its
+  // argument to quoting and reported "probe failed" against a healthy
+  // collector — an alert that cried wolf is worse than no alert.
+  const hours = Number(process.argv[3] ?? 1);
+  const result = await query(config, `
+    SELECT source, count(*)::int AS rows, count(DISTINCT symbol)::int AS symbols,
+           to_char(min(observed_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS first_at,
+           to_char(max(observed_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS last_at
+    FROM market_price_samples
+    WHERE market = 'US' AND observed_at > now() - ($1 || ' hours')::interval
+    GROUP BY source
+    ORDER BY 2 DESC
+  `, [hours]);
+
+  console.log(result.rows
+    .map((row) => `${row.source.replace("yahoo:us:", "")} ${row.rows}행/${row.symbols}종목 ${row.first_at}~${row.last_at}`)
+    .join(" · ") || "없음");
 }
 
 process.exit(0);
