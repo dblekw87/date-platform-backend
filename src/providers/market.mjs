@@ -5,9 +5,10 @@ import { classifyTheme } from "./themes.mjs";
 import { loadUsEtfLeaders } from "./us-etf.mjs";
 
 /**
- * Public market data: US index/commodity ETFs via Finnhub, plus BTC, USD/KRW,
- * the US 10-year yield, and the US leaders board. Every source is optional — a
- * failure drops that one row rather than the whole snapshot.
+ * Public market data: index and commodity futures, BTC, USD/KRW, the US 10-year
+ * yield, and the US leaders board — all from keyless public endpoints. Every
+ * source is optional; a failure drops that one row rather than the whole
+ * snapshot.
  */
 
 const cacheTtlMs = 15_000;
@@ -16,12 +17,31 @@ const screenerUrl = "https://query1.finance.yahoo.com/v1/finance/screener/predef
 // The screener rejects a default client identifier.
 const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
-const finnhubQuotes = [
-  { id: "sp500-future", label: "S&P 500 ETF", market: "US", instrumentType: "index", symbol: "SPY", note: "S&P 500 선물 대체 확인용 ETF" },
-  { id: "nasdaq-future", label: "NASDAQ 100 ETF", market: "US", instrumentType: "index", symbol: "QQQ", note: "NASDAQ 선물 대체 확인용 ETF" },
-  { id: "phlx-sox", label: "반도체 ETF", market: "US", instrumentType: "index", symbol: "SOXX", note: "SOX 원지수 대체 확인용 반도체 ETF" },
-  { id: "gold", label: "금 ETF", market: "GLOBAL", instrumentType: "commodity", symbol: "GLD", note: "금선물 대체 확인용 ETF" },
-  { id: "wti", label: "WTI ETF", market: "GLOBAL", instrumentType: "commodity", symbol: "USO", note: "WTI 선물 대체 확인용 ETF" }
+/**
+ * 매크로 카드의 시세 — 대체 ETF가 아니라 실제 선물입니다.
+ *
+ * 원래는 Finnhub 무료 티어로 SPY·QQQ·SOXX·GLD·USO를 읽었습니다. 그 ETF들은 미국
+ * 정규장에만 거래되므로 국내장이 열리는 시간에는 값이 얼어붙습니다 — 2026-08-20
+ * 21:41에 화면을 보면 다섯 장 전부 05:00에 멈춰 있었고, 개장 전 기준점으로 보라는
+ * 카드가 전날 종가를 보여주고 있었습니다.
+ *
+ * 지수 선물은 거의 24시간 거래됩니다. 같은 시각에 재보니 NQ=F·ES=F·YM=F·CL=F·GC=F가
+ * 전부 10분 전 값이었습니다. 키도 필요 없습니다.
+ *
+ * 반도체만 선물이 없습니다. `^SOX` 원지수는 미국 현물장에만 산출돼 같은 시각 948분
+ * 전이었고 ETF보다 오히려 낡습니다. 대신 SOXX를 **시간외 포함**으로 읽으면 1분 전이
+ * 됩니다(끄면 1,029분 전). 그래도 국내 장중은 미국이 완전히 닫힌 시간이라, 그때는
+ * 직전 시간외 종가입니다 — note에 그렇게 적습니다.
+ */
+
+const yahooQuotes = [
+  { id: "sp500-future", instrumentType: "future", label: "S&P 500 선물", market: "US", note: "E-mini S&P 500 · 거의 24시간 거래", symbol: "ES=F" },
+  { id: "nasdaq-future", instrumentType: "future", label: "NASDAQ 100 선물", market: "US", note: "E-mini NASDAQ 100 · 거의 24시간 거래", symbol: "NQ=F" },
+  { id: "dow-future", instrumentType: "future", label: "다우 선물", market: "US", note: "E-mini 다우 30 · 나스닥과 갈리면 로테이션 신호", symbol: "YM=F" },
+  // Extended hours on purpose — see the note above.
+  { id: "phlx-sox", instrumentType: "index", label: "반도체 ETF", market: "US", note: "SOX 원지수에는 선물이 없어 SOXX · 미국 시간외까지 반영", prePost: true, symbol: "SOXX" },
+  { id: "gold", instrumentType: "commodity", label: "금 선물", market: "GLOBAL", note: "COMEX 금 · 거의 24시간 거래", symbol: "GC=F" },
+  { id: "wti", instrumentType: "commodity", label: "WTI 선물", market: "GLOBAL", note: "NYMEX WTI 원유 · 거의 24시간 거래", symbol: "CL=F" }
 ];
 
 function toneFromChange(change) {
@@ -45,29 +65,53 @@ function formatChangeRate(value) {
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
-async function loadFinnhubQuote(quoteConfig, apiKey) {
-  const url = new URL("https://finnhub.io/api/v1/quote");
+async function loadYahooQuote(quoteConfig) {
+  const url = new URL(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(quoteConfig.symbol)}`);
 
-  url.searchParams.set("symbol", quoteConfig.symbol);
-  url.searchParams.set("token", apiKey);
+  url.searchParams.set("range", "2d");
+  url.searchParams.set("interval", "5m");
 
-  const quote = await fetchJson(url.toString(), { timeoutMs: 2500 });
+  if (quoteConfig.prePost) url.searchParams.set("includePrePost", "true");
 
-  if (!quote?.c) return null;
+  const data = await fetchJson(url.toString(), {
+    timeoutMs: 4000,
+    headers: { "User-Agent": browserUserAgent }
+  });
+  const result = data?.chart?.result?.[0];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  const stamps = result?.timestamp ?? [];
+  let last = -1;
+
+  for (let index = closes.length - 1; index >= 0; index -= 1) {
+    if (typeof closes[index] === "number") {
+      last = index;
+      break;
+    }
+  }
+
+  // meta.regularMarketPrice is the last *regular session* trade, which outside
+  // the bell is yesterday's — the same trap the pre-market sampler hit. The last
+  // printed bar is the price that exists now.
+  const price = last >= 0 ? closes[last] : result?.meta?.regularMarketPrice;
+  const previousClose = result?.meta?.chartPreviousClose ?? result?.meta?.previousClose;
+
+  if (!price) return null;
+
+  const changeRate = previousClose ? ((price / previousClose) - 1) * 100 : undefined;
 
   return {
+    change: previousClose ? formatValue(price - previousClose) : undefined,
+    changeRate: formatChangeRate(changeRate),
     id: quoteConfig.id,
+    instrumentType: quoteConfig.instrumentType,
     label: quoteConfig.label,
     market: quoteConfig.market,
-    instrumentType: quoteConfig.instrumentType,
-    symbol: quoteConfig.symbol,
-    value: formatValue(quote.c),
-    change: typeof quote.d === "number" ? formatValue(quote.d) : undefined,
-    changeRate: formatChangeRate(quote.dp),
-    tone: toneFromChange(quote.dp),
     note: quoteConfig.note,
-    timestamp: quote.t ? new Date(quote.t * 1000).toISOString() : new Date().toISOString(),
-    source: "market"
+    source: "market",
+    symbol: quoteConfig.symbol,
+    timestamp: last >= 0 && stamps[last] ? new Date(stamps[last] * 1000).toISOString() : new Date().toISOString(),
+    tone: toneFromChange(changeRate),
+    value: formatValue(price)
   };
 }
 
@@ -164,7 +208,33 @@ function treasuryField(entry, field) {
   return entry.match(new RegExp(`<d:${field}[^>]*>([^<]+)</d:${field}>`))?.[1];
 }
 
+/**
+ * 10년물 금리 — 재무부 일별 파일이 아니라 ^TNX.
+ *
+ * 수익률 곡선 파일은 하루에 한 번 갱신됩니다. 2026-08-20 22:10에 재보니 971분 전
+ * 값이었고, 미국장이 열려 금리가 움직이는 내내 화면은 어제를 보여줍니다. ^TNX는
+ * 같은 시각 15분 전이었습니다. 파일은 폴백으로 남깁니다 — 그쪽이 공식 고시입니다.
+ */
 async function loadUs10y() {
+  try {
+    const quote = await loadYahooQuote({
+      id: "us10y",
+      instrumentType: "rate",
+      label: "10Y 금리",
+      market: "US",
+      note: "미 10년물 국채 금리 · 미국장 시간 실시간",
+      symbol: "^TNX"
+    });
+
+    if (quote) return { ...quote, symbol: "US10Y", value: `${quote.value}%` };
+  } catch (error) {
+    console.warn("us 10y live lookup failed", error instanceof Error ? error.message : error);
+  }
+
+  return loadUs10yFromTreasury();
+}
+
+async function loadUs10yFromTreasury() {
   const year = new Date().getUTCFullYear();
   const xml = await fetchText(
     `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value=${year}`,
@@ -194,7 +264,7 @@ async function loadUs10y() {
     value: `${latest.value.toFixed(2)}%`,
     change: typeof change === "number" ? `${change > 0 ? "+" : ""}${change.toFixed(2)}%p` : undefined,
     tone: toneFromChange(change),
-    note: "U.S. Treasury Daily Yield Curve",
+    note: "U.S. Treasury Daily Yield Curve · 일 1회 고시",
     timestamp: latest.date.replace("T00:00:00", "T21:00:00+00:00"),
     source: "market"
   };
@@ -360,12 +430,10 @@ function buildMarketBriefs(macroSnapshot) {
 
 async function loadMacroSnapshot(config) {
   return readThroughCache("market:macro", cacheTtlMs, async () => {
-    const apiKey = config.market.finnhubApiKey;
-    const loaders = [loadBitcoin(), loadUsdKrw(), loadUs10y()];
-
-    if (apiKey) {
-      loaders.push(...finnhubQuotes.map((quote) => loadFinnhubQuote(quote, apiKey)));
-    }
+    // No key needed any more: the futures come from the same host as every
+    // other quote here, and Finnhub's free tier only ever returned the last
+    // regular-session close anyway.
+    const loaders = [loadBitcoin(), loadUsdKrw(), loadUs10y(), ...yahooQuotes.map(loadYahooQuote)];
 
     const results = await Promise.allSettled(loaders);
 

@@ -518,25 +518,53 @@ async function sampleUsExtended(config) {
 }
 
 const snapshotIntervalMs = 10 * 60_000;
+// A board this young is worth republishing as it is. Wider than that and the
+// prices in it are older than the ten minutes the snapshot promises.
+const boardReuseMs = 3 * 60_000;
 let lastSnapshotAt = 0;
+let lastBoard = null;
+let lastBoardAt = 0;
+let snapshotRunning = false;
+
+/** Keeps the news sample's board so the publisher can reuse it. */
+function rememberBoard(board) {
+  lastBoard = board;
+  lastBoardAt = Date.now();
+}
 
 /**
- * The board the news sample just built, pushed out for the deployed site.
+ * Every ten minutes, whatever else the collector is doing.
  *
- * Reuses that board rather than building its own: a second build would ask
- * every provider again for the same minute. Never awaited by the tick — a git
- * push over a home connection is not something a sampling loop should wait on.
+ * It used to publish from inside the news sample, which meant it inherited the
+ * news cadence — ten minutes in session but forty-five outside it, so the
+ * deployed site went three quarters of an hour between updates while the US
+ * market was open.
+ *
+ * The news board is reused when it is fresh, because a second build would ask
+ * every provider again for the same minute. Outside the session there is no
+ * fresh one, so this builds its own. Guarded and never awaited: a build plus a
+ * git push over a home connection is not something a sampling loop should wait
+ * on, and two overlapping pushes would fight over the same branch.
  */
-function startSnapshotPublish(config, board) {
-  if (Date.now() - lastSnapshotAt < snapshotIntervalMs) return;
+function startSnapshotPublish(config) {
+  if (snapshotRunning || Date.now() - lastSnapshotAt < snapshotIntervalMs) return;
 
+  snapshotRunning = true;
   lastSnapshotAt = Date.now();
 
-  publishBoardSnapshot(board, { config })
-    .then((result) => {
-      if (result.published) console.log(`collector: board snapshot published · ${result.generatedAt}`);
-    })
-    .catch((error) => console.warn("collector: snapshot publish failed", error instanceof Error ? error.message : error));
+  (async () => {
+    const board = Date.now() - lastBoardAt < boardReuseMs && lastBoard
+      ? lastBoard
+      : await getMarketBoard(config);
+    const result = await publishBoardSnapshot(board, { config });
+
+    if (result.published) console.log(`collector: board snapshot published · ${result.generatedAt}`);
+    else if (result.reason !== "변경 없음") console.warn(`collector: snapshot held · ${result.reason}`);
+  })()
+    .catch((error) => console.warn("collector: snapshot publish failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      snapshotRunning = false;
+    });
 }
 
 async function sampleNews(config) {
@@ -671,6 +699,10 @@ export function startMarketCollector(config) {
         }
       }
     }
+
+    // Independent of every sampling window: the deployed site should never be
+    // more than ten minutes behind, whichever market happens to be open.
+    startSnapshotPublish(config);
 
     if (!stopped) timeoutId = setTimeout(tick, delay);
   }
