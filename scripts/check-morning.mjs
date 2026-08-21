@@ -8,6 +8,7 @@
  * 구분하지 못한 적이 있어, 다른 스크립트와 같은 설정으로 물어보게 만들었습니다.
  */
 
+import { getAccessToken } from "../src/providers/kis.mjs";
 import { readConfig } from "../src/config.mjs";
 import { query } from "../src/db/client.mjs";
 
@@ -94,6 +95,35 @@ if (what === "us") {
     lastAt: row.last_at,
     rows: row.rows,
     symbols: row.symbols
+  }));
+} else if (what === "investor-estimate") {
+  // 기관·외국인의 장중 추정치가 실제로 오는지. 2026-08-21 05:2x(휴장)에는 rt_cd=0에
+  // output2가 0행이었는데, 그것이 "장중에만 채워진다"는 뜻인지 "원래 비어 있다"는
+  // 뜻인지는 장이 열려봐야 갈립니다.
+  const symbol = process.argv[3] ?? "005930";
+  const token = await getAccessToken(config);
+  const url = new URL("/uapi/domestic-stock/v1/quotations/investor-trend-estimate", config.kis.baseUrl);
+
+  url.searchParams.set("MKSC_SHRN_ISCD", symbol);
+
+  const response = await fetch(url, {
+    headers: {
+      appkey: config.kis.appKey ?? "",
+      appsecret: config.kis.appSecret ?? "",
+      authorization: `Bearer ${token}`,
+      custtype: "P",
+      tr_id: "HHPTJ04160200"
+    }
+  });
+  const data = await response.json().catch(() => ({}));
+  const rows = data?.output2 ?? [];
+
+  console.log(JSON.stringify({
+    fields: rows[0] ? Object.keys(rows[0]).slice(0, 12) : [],
+    message: String(data?.msg1 ?? "").trim().slice(0, 30),
+    rows: rows.length,
+    rtCd: data?.rt_cd ?? null,
+    sample: rows[0] ? JSON.stringify(rows[0]).slice(0, 200) : null
   }));
 }
 

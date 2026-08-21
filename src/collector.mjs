@@ -523,7 +523,13 @@ const programIntervalMs = 5 * 60_000;
 // request per symbol means the whole watchlist is out of reach. Forty is about
 // eight seconds of calls, comfortably inside a five minute tick.
 const programSymbolLimit = 40;
+// Two passes that bring back nothing newer than the last. One could be a slow
+// print; two means KRX has stopped publishing for the day.
+const programStaleLimit = 2;
 let programRunning = false;
+let programDay = null;
+let programLatest = "";
+let programStale = 0;
 
 /**
  * 프로그램매매 — 그날의 주도주만.
@@ -531,16 +537,34 @@ let programRunning = false;
  * 장중에 읽을 수 있는 수급은 이것뿐입니다. 개인·외국인·기관은 장이 끝나고 정산된
  * 뒤에야 나오므로, "지금 누가 들어오고 있나"에 답하는 유일한 계열입니다.
  *
+ * KRX는 정규장 마감보다 먼저 발표를 멈춥니다. 2026-08-21에는 15:18:05가 마지막
+ * 시각이었는데, 그 뒤로도 응답은 계속 오고 내용만 그대로였습니다 — 빈 응답이
+ * 아니라 **같은 시계열의 재전송**이라, 마감까지 40종목을 네 번 더 물어보며
+ * 160번의 요청을 같은 데이터에 쓰고 있었습니다.
+ *
+ * 그래서 시각이 더 나아가지 않으면 그날은 접습니다. 15:18을 상수로 박지 않는 것은
+ * 그것이 하루치 관측이고, 임시 휴장이나 조기 마감처럼 날마다 달라질 수 있기
+ * 때문입니다.
+ *
  * 훑기 패스와 같은 이유로 await 하지 않습니다: 마흔 번의 요청이 5분 틱을 붙잡고
  * 있으면 그동안 가격 표본이 빕니다.
  */
 function startProgramSample(config) {
   if (programRunning) return;
 
+  const day = sessionDate("KR");
+
+  if (day !== programDay) {
+    programDay = day;
+    programLatest = "";
+    programStale = 0;
+  }
+
+  if (programStale >= programStaleLimit) return;
+
   programRunning = true;
 
   (async () => {
-    const day = sessionDate("KR");
     const payload = await loadKisMarketBoard(config);
     const symbols = (payload?.krLeadingStocks ?? [])
       .filter((stock) => stock.venue !== "NXT")
@@ -554,9 +578,24 @@ function startProgramSample(config) {
 
     if (rows.length === 0) return;
 
+    const latest = rows.reduce((newest, row) => (row.observedTime > newest ? row.observedTime : newest), "");
+
+    if (latest <= programLatest) {
+      programStale += 1;
+
+      if (programStale >= programStaleLimit) {
+        console.log(`collector: program trade closed for ${day} at ${programLatest}`);
+      }
+
+      return;
+    }
+
+    programLatest = latest;
+    programStale = 0;
+
     const saved = await saveProgramTrade(config, { rows, sessionDate: day });
 
-    if (saved > 0) console.log(`collector: program trade ${answered}/${symbols.length} symbols · ${saved} rows`);
+    if (saved > 0) console.log(`collector: program trade ${answered}/${symbols.length} symbols · ${saved} rows · ${latest}`);
   })()
     .catch((error) => console.warn("collector: program trade failed", error instanceof Error ? error.message : error))
     .finally(() => {
