@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
+import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
@@ -692,6 +693,49 @@ function startProgramSample(config) {
     });
 }
 
+// 하루에 다섯 구간뿐이라 5분마다 물을 이유가 없습니다. 10분이면 구간이 바뀌는 시점을
+// 놓치지 않으면서 요청은 절반입니다. 발표 시각표를 알아내면 그 시각에만 걸 수 있는데,
+// 그러려면 first_seen_at이 며칠 쌓여야 합니다.
+const foreignEstimateIntervalMs = 10 * 60_000;
+
+let foreignEstimateRunning = false;
+
+/**
+ * 장중 외국인 추정. 프로그램매매와 같은 종목, 같은 이유로 상위 40종목만 봅니다.
+ *
+ * 정규장에만 겁니다. 다섯 구간이 정규장 안에서 발표되고, 시간외는 NXT라 애초에 이
+ * 집계에 들어가지 않습니다.
+ */
+function startForeignEstimateSample(config) {
+  if (foreignEstimateRunning) return;
+
+  foreignEstimateRunning = true;
+
+  (async () => {
+    const day = sessionDate("KR");
+    const payload = await loadKisMarketBoard(config);
+    const symbols = (payload?.krLeadingStocks ?? [])
+      .filter((stock) => stock.venue !== "NXT")
+      .sort((left, right) => Number(right.turnoverValue ?? 0) - Number(left.turnoverValue ?? 0))
+      .slice(0, programSymbolLimit)
+      .map((stock) => stock.symbol);
+
+    if (symbols.length === 0) return;
+
+    const { answered, rows } = await collectForeignEstimate(config, symbols);
+
+    if (rows.length === 0) return;
+
+    const saved = await saveForeignEstimate(config, { rows, sessionDate: day });
+
+    if (saved > 0) console.log(`collector: foreign estimate ${answered}/${symbols.length} symbols · ${saved} rows`);
+  })()
+    .catch((error) => console.warn("collector: foreign estimate failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      foreignEstimateRunning = false;
+    });
+}
+
 
 const snapshotIntervalMs = 10 * 60_000;
 // A board this young is worth republishing as it is. Wider than that and the
@@ -764,6 +808,7 @@ export function startMarketCollector(config) {
   let stopped = false;
   let timeoutId;
   let lastDisclosureAt = 0;
+  let lastForeignEstimateAt = 0;
   let lastNewsAt = 0;
   let lastSeenAt = 0;
   let lastProgramAt = 0;
@@ -816,6 +861,12 @@ export function startMarketCollector(config) {
         if (!afterHours && Date.now() - lastProgramAt >= programIntervalMs) {
           lastProgramAt = Date.now();
           startProgramSample(config);
+        }
+
+        // 프로그램매매가 "어떻게"라면 이쪽은 "누가"입니다. 같은 정규장 조건.
+        if (!afterHours && Date.now() - lastForeignEstimateAt >= foreignEstimateIntervalMs) {
+          lastForeignEstimateAt = Date.now();
+          startForeignEstimateSample(config);
         }
       } catch (error) {
         // A failed tick is a gap in one series, not a reason to stop recording

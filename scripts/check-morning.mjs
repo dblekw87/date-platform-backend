@@ -116,6 +116,22 @@ if (what === "us") {
     symbols: row.symbols,
     timed: row.timed
   }));
+} else if (what === "foreign") {
+  // 구간이 몇 개까지 왔는지가 곧 장이 얼마나 진행됐는지입니다. 하루 다섯 구간이
+  // 다 차면 그날은 끝난 것이고, 오후인데 두 개면 뭔가 막힌 것입니다.
+  const row = await one(`
+    SELECT count(*)::int AS rows, count(DISTINCT symbol)::int AS symbols,
+           coalesce(max(bucket), 0)::int AS buckets,
+           to_char(max(first_seen_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS last_at
+    FROM kr_foreign_estimate
+    WHERE session_date = (now() AT TIME ZONE 'Asia/Seoul')::date`);
+
+  console.log(JSON.stringify({
+    buckets: row.buckets,
+    lastAt: row.last_at,
+    rows: row.rows,
+    symbols: row.symbols
+  }));
 } else if (what === "investor-estimate") {
   // 기관·외국인의 장중 추정치가 실제로 오는지. 2026-08-21 05:2x(휴장)에는 rt_cd=0에
   // output2가 0행이었는데, 그것이 "장중에만 채워진다"는 뜻인지 "원래 비어 있다"는

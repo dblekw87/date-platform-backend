@@ -19,6 +19,7 @@
 | 뉴스 | 상시(장중 10분·장 외 45분), 원문 payload 포함 | `market_news_items` |
 | 국내 공시 | 07:00~20:00 5분 간격, 20:10 전체 훑기 | `market_disclosures` |
 | 프로그램 매매 | 정규장 5분 간격, 상위 40종목 | `kr_program_trade` |
+| 장중 외국인 추정 | 정규장 10분 간격, 상위 40종목 | `kr_foreign_estimate` |
 | 투자자별 매매동향 | 매일 16:10 | `kr_investor_flow` |
 | 시장 지정(관리종목·투자경고) | 시세 조회에 묻어옴 | `kr_symbol_flags` |
 | 미국 공매도 잔고 · 일별 거래량 | 격주 / 매일 | `us_short_interest`, `us_short_volume` |
