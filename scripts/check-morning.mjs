@@ -96,6 +96,26 @@ if (what === "us") {
     rows: row.rows,
     symbols: row.symbols
   }));
+} else if (what === "disclosures") {
+  // 몇 건 받았는지보다 몇 건에 진짜 시각이 붙었는지가 중요합니다. first-seen이 늘고
+  // 있으면 DART 당일공시 화면 구조가 바뀌었다는 뜻이고, 그때부터 저장되는 시각은
+  // 접수 시각이 아니라 우리가 본 시각입니다.
+  const row = await one(`
+    SELECT count(*)::int AS rows,
+           count(*) FILTER (WHERE filed_at_source = 'dart')::int AS timed,
+           count(DISTINCT symbol) FILTER (WHERE symbol IS NOT NULL)::int AS symbols,
+           to_char(min(filed_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS first_at,
+           to_char(max(filed_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS last_at
+    FROM market_disclosures
+    WHERE market = 'KR' AND session_date = (now() AT TIME ZONE 'Asia/Seoul')::date`);
+
+  console.log(JSON.stringify({
+    firstAt: row.first_at,
+    lastAt: row.last_at,
+    rows: row.rows,
+    symbols: row.symbols,
+    timed: row.timed
+  }));
 } else if (what === "investor-estimate") {
   // 기관·외국인의 장중 추정치가 실제로 오는지. 2026-08-21 05:2x(휴장)에는 rt_cd=0에
   // output2가 0행이었는데, 그것이 "장중에만 채워진다"는 뜻인지 "원래 비어 있다"는

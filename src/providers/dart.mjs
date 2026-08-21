@@ -17,7 +17,7 @@ function yyyymmdd(date) {
   ].join("");
 }
 
-function classifyDisclosure(reportName) {
+export function classifyDisclosure(reportName) {
   if (/합병|분할|영업양수|영업양도|타법인주식및출자증권취득|타법인 주식/.test(reportName)) {
     return { urgency: "M&A", tags: ["인수합병"], action: "거래 구조와 자금 조달 방식 확인" };
   }

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
+import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
@@ -595,6 +596,48 @@ let programStale = 0;
  * 훑기 패스와 같은 이유로 await 하지 않습니다: 마흔 번의 요청이 5분 틱을 붙잡고
  * 있으면 그동안 가격 표본이 빕니다.
  */
+// 5분이면 충분합니다. 저장되는 시각은 DART가 찍은 접수 시각이라 폴링 간격과 무관하고,
+// 이 간격이 정하는 것은 보드에 얼마나 빨리 뜨느냐뿐입니다.
+const disclosureIntervalMs = 5 * 60_000;
+// DART가 조용한 시간대에는 묻지 않습니다. 2026-08-21 실측 접수 시각이 07:30~18:42라
+// 앞뒤로 여유를 둔 창입니다.
+const disclosureCloseMinute = 20 * 60;
+const disclosureOpenMinute = 7 * 60;
+// 하루가 끝나면 전체를 한 번 더 훑습니다. 상시 수집은 첫 장만 보므로 접수가 몰린
+// 구간에서 놓친 것이 있을 수 있고, 당일공시 화면에 늦게 붙는 시각도 이때 채워집니다.
+const disclosureSweepMinute = 20 * 60 + 10;
+
+let disclosureRunning = false;
+let disclosureSweepDay = null;
+
+/**
+ * 국내 공시. 장중 사건이 몇 시에 벌어졌는지를 남기는 유일한 기록입니다.
+ *
+ * 뉴스 옆에 두는 이유도 같습니다 — 장이 닫힌 뒤에도 접수가 계속됩니다. 2026-08-21
+ * 삼성전자 주주환원 공시 세 건이 전부 15:30 이후였고, 그중 17:09짜리가 그날 주가를
+ * 설명하는 것이었습니다. 정규장만 보고 있었으면 셋 다 놓쳤습니다.
+ *
+ * 훑기 패스와 같은 이유로 await 하지 않습니다.
+ */
+function startDisclosureSample(config, { full = false } = {}) {
+  if (disclosureRunning) return;
+
+  disclosureRunning = true;
+
+  collectKrDisclosures(config, {
+    log: (message) => console.log("collector: " + message),
+    sessionDate: sessionDate("KR"),
+    stopWhenKnown: !full,
+    timePages: full ? 8 : 1
+  })
+    .catch((error) => {
+      // 공시는 지나가면 사라지는 것이 아니라 DART에 남아 있으므로, 한 번 실패는 다음
+      // 폴링이나 저녁 전체 훑기가 메웁니다.
+      console.warn("collector: disclosure sample failed", error instanceof Error ? error.message : error);
+    })
+    .finally(() => { disclosureRunning = false; });
+}
+
 function startProgramSample(config) {
   if (programRunning) return;
 
@@ -720,6 +763,7 @@ export function startMarketCollector(config) {
 
   let stopped = false;
   let timeoutId;
+  let lastDisclosureAt = 0;
   let lastNewsAt = 0;
   let lastSeenAt = 0;
   let lastProgramAt = 0;
@@ -795,6 +839,22 @@ export function startMarketCollector(config) {
         if (saved > 0) console.log(`collector: ${saved} news items`);
       } catch (error) {
         console.warn("collector: news sample failed", error instanceof Error ? error.message : error);
+      }
+    }
+
+    // 공시는 시장이 열려 있는지와 무관하게 접수됩니다. 장 시간 블록 안에 두면
+    // 15:40 이후 접수분이 통째로 빠지는데, 하필 그쪽이 하루를 설명하는 건들입니다.
+    {
+      const { minute, weekday } = seoulMinute(now);
+      const weekend = weekday === "Sat" || weekday === "Sun";
+      const open = minute >= disclosureOpenMinute && minute < disclosureCloseMinute;
+
+      if (!weekend && minute >= disclosureSweepMinute && disclosureSweepDay !== sessionDate("KR")) {
+        disclosureSweepDay = sessionDate("KR");
+        startDisclosureSample(config, { full: true });
+      } else if (!weekend && open && Date.now() - lastDisclosureAt >= disclosureIntervalMs) {
+        lastDisclosureAt = Date.now();
+        startDisclosureSample(config);
       }
     }
 
