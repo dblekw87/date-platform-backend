@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
+import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
@@ -518,6 +519,51 @@ async function sampleUsExtended(config) {
   });
 }
 
+// 16:10, not 15:40. KIS leaves today's row blank until the session settles, and
+// a pass run at the handover stores nothing while looking like it worked.
+const investorFlowMinute = 16 * 60 + 10;
+let investorFlowDay = null;
+let investorFlowRunning = false;
+
+/**
+ * 투자자별 매매동향 — 하루 한 번, 정산된 뒤에.
+ *
+ * 개인·외국인·기관 순매수는 프로그램매매가 답하지 못하는 "누가"를 말합니다. 손으로
+ * 한 번 돌려 8/19치를 넣어둔 뒤 자동화가 없어서 이틀치가 비었습니다.
+ *
+ * 종목당 요청 하나이고 그날 본 전 종목을 훑으므로 1분 가까이 걸립니다. 저녁 표본
+ * 틱을 붙잡지 않도록 await 하지 않습니다.
+ */
+function startInvestorFlow(config, minute) {
+  const day = sessionDate("KR");
+
+  if (investorFlowRunning || investorFlowDay === day || minute < investorFlowMinute) return;
+
+  investorFlowDay = day;
+  investorFlowRunning = true;
+
+  (async () => {
+    const symbols = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+
+    if (symbols.length === 0) return;
+
+    const { answered, saved } = await collectInvestorFlow(config, symbols, {
+      log: (message) => console.log(`collector: ${message}`)
+    });
+
+    if (saved === 0) console.warn(`collector: investor flow stored nothing for ${day} (${answered} answered)`);
+  })()
+    .catch((error) => {
+      // Let tomorrow try again rather than losing the day to one bad evening.
+      investorFlowDay = null;
+      console.warn("collector: investor flow failed", error instanceof Error ? error.message : error);
+    })
+    .finally(() => {
+      investorFlowRunning = false;
+    });
+}
+
+
 const programIntervalMs = 5 * 60_000;
 // Program flow is only worth asking about where money is concentrated, and one
 // request per symbol means the whole watchlist is out of reach. Forty is about
@@ -707,6 +753,8 @@ export function startMarketCollector(config) {
           reportedDay = sessionDate("KR");
           await writeThemeReport(config, reportedDay);
         }
+
+        startInvestorFlow(config, minute);
 
         const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);
 
