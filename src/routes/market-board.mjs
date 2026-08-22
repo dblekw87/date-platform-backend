@@ -15,7 +15,7 @@ import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
-import { loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
+import { latestKrSessionDate, loadKrSessionUniverse, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
@@ -586,6 +586,39 @@ async function attachSymbolFlags(config, leaders) {
  * never saw.
  */
 /**
+ * One continuous tape out of two books.
+ *
+ * The ranking the board reads describes whichever venue is open, so the whole
+ * population is swapped at 15:40 for the 174 names NXT traded that evening.
+ * Every stock that moved during the day and went quiet after it simply
+ * vanishes: on 2026-08-21 the 상승률 tab opened at 코미코 +24.31% while 토스,
+ * at the same minute, still led with 파라택시스이더리움 +29.96%, 이노메트리
+ * +29.88% and 원풍물산 +29.85% — all limit-up in the regular session and none
+ * of them traded that evening. 삼성전자 fell off 거래대금 the same way.
+ *
+ * A reader does not experience two books. They experience one day. So the
+ * population is everything we saw today and each row carries the figures from
+ * wherever it last traded, with the venue named.
+ *
+ * The live ranking still wins where it has a row, because it is seconds old
+ * against the record's minutes.
+ */
+async function attachSessionUniverse(config, stocks) {
+  const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
+  const universe = await loadKrSessionUniverse(config, day).catch((error) => {
+    console.warn("session universe unavailable", error instanceof Error ? error.message : error);
+
+    return [];
+  });
+
+  if (universe.length === 0) return stocks;
+
+  const live = new Set(stocks.map((stock) => stock.symbol));
+
+  return [...stocks, ...universe.filter((stock) => !live.has(stock.symbol))];
+}
+
+/**
  * Both sessions' closing rates on every domestic row.
  *
  * The live figure describes whichever book is open, so past 20:02 the board
@@ -598,7 +631,8 @@ async function attachSymbolFlags(config, leaders) {
 async function attachSessionRates(config, stocks) {
   if (stocks.length === 0) return stocks;
 
-  const rates = await loadSessionChangeRates(config, sessionDate("KR")).catch((error) => {
+  const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
+  const rates = await loadSessionChangeRates(config, day).catch((error) => {
     console.warn("session change rates unavailable", error instanceof Error ? error.message : error);
 
     return new Map();
@@ -729,7 +763,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
   // that happens to be open.
   const withBurst = {
     ...burst,
-    krLeadingStocks: await attachSessionRates(config, burst.krLeadingStocks ?? [])
+    krLeadingStocks: await attachSessionRates(config, await attachSessionUniverse(config, burst.krLeadingStocks ?? []))
   };
   // Day leaders are derived last so they can read the recent-window turnover the
   // burst step attaches — without it a leader that spiked at 09:10 and went
@@ -802,10 +836,14 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // book is open, so after 15:40 the panel headed 국내 강세 테마 was quietly
     // describing the NXT evening and the regular session had no panel at all.
     // Both come out of the record so each is true to the hours it names.
-    krSessionThemeStocks: {
-      after: await loadThemeStocks(config, sessionDate("KR"), { window: "after" }).catch(() => []),
-      regular: await loadThemeStocks(config, sessionDate("KR"), { window: "regular" }).catch(() => [])
-    }
+    krSessionThemeStocks: await (async () => {
+      const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
+
+      return {
+        after: await loadThemeStocks(config, day, { window: "after" }).catch(() => []),
+        regular: await loadThemeStocks(config, day, { window: "regular" }).catch(() => [])
+      };
+    })()
   };
 
   const dated = await withSymbolEvents(config, board);

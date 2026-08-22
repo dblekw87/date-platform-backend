@@ -1,4 +1,5 @@
 import { formatTradingAmount } from "./format.mjs";
+import { classifyTheme } from "./themes.mjs";
 import { isPreferredShare, minimumCandidateTurnover } from "./pairing.mjs";
 import { query } from "../db/client.mjs";
 
@@ -219,4 +220,106 @@ export async function loadSessionChangeRates(config, sessionDate) {
   });
 
   return bySymbol;
+}
+
+/**
+ * 오늘 우리가 본 모든 국내 종목의 마지막 체결 — 어느 책이 열려 있든.
+ *
+ * 화면의 목록은 지금 열려 있는 랭킹 하나에서 나옵니다. 그래서 15:40이 지나면
+ * 모집단이 NXT 애프터마켓 174종목으로 갈아치워지고, 저녁에 거래가 없던 종목은
+ * 통째로 사라집니다 -- 2026-08-21 상한가 종목인 파라택시스이더리움(+29.96%),
+ * 이노메트리(+29.88%), 원풍물산(+29.85%)이 상승률 탭에서 빠지고 1위가 코미코
+ * (+24.31%)로 시작했습니다. 토스는 같은 시각 그 종목들을 정규장 종가 그대로
+ * 들고 있습니다. 사라진 게 아니라 그 책에서 거래가 없었을 뿐이니까요.
+ *
+ * 그래서 모집단은 "지금 열린 책"이 아니라 "오늘 본 전부"여야 하고, 각 종목의
+ * 값은 그 종목이 마지막으로 체결된 곳의 값이어야 합니다.
+ *
+ * :pair는 뺍니다. 짝꿍 후보 패스는 순위가 아니라 특정 종목을 지목해 물어본
+ * 것이라, 그 종목이 그날 시장에서 눈에 띄었다는 뜻이 아닙니다.
+ *
+ * 페이로드가 무한정 커지지 않도록 세 지표별 상위만 남깁니다. 탭마다 30개를
+ * 보여주므로 지표별 60개면 어느 탭을 눌러도 정확한 상위 30개가 있습니다.
+ */
+const universePerMetric = 60;
+
+export async function loadKrSessionUniverse(config, sessionDate) {
+  if (!config.databaseUrl) return [];
+
+  const result = await query(config, `
+    WITH last_seen AS (
+      SELECT DISTINCT ON (symbol) symbol, name, theme, change_rate, turnover,
+             volume, market_cap, source, observed_at
+        FROM market_price_samples
+       WHERE session_date = $1 AND market = 'KR'
+         AND source LIKE 'kis:%' AND source NOT LIKE '%:pair'
+         AND change_rate IS NOT NULL
+       ORDER BY symbol, observed_at DESC
+    ),
+    -- 랭킹에 한 번도 못 든 종목은 여기서만 옵니다. 오가닉티코스메틱은 8/21에
+    -- +29.90%로 마감했는데 거래대금이 6억이라 KIS 어느 순위에도 없었고, 그래서
+    -- 위 CTE에 행이 하나도 없습니다. 하루 한 번 받아둔 전 종목 종가가 메웁니다.
+    daily AS (
+      SELECT u.symbol, u.name, NULL::text AS theme, u.change_rate, u.turnover,
+             u.volume, u.market_cap, 'kr:daily'::text AS source,
+             u.observed_at
+        FROM kr_daily_universe u
+       WHERE u.session_date = $1
+         AND NOT EXISTS (SELECT 1 FROM last_seen l WHERE l.symbol = u.symbol)
+    ),
+    merged AS (
+      SELECT * FROM last_seen
+      UNION ALL
+      SELECT * FROM daily
+    ),
+    ranked AS (
+      SELECT *,
+             row_number() OVER (ORDER BY turnover DESC NULLS LAST) AS turnover_rank,
+             row_number() OVER (ORDER BY change_rate DESC NULLS LAST) AS change_rank,
+             row_number() OVER (ORDER BY volume DESC NULLS LAST) AS volume_rank
+        FROM merged
+    )
+    SELECT * FROM ranked
+     WHERE turnover_rank <= $2 OR change_rank <= $2 OR volume_rank <= $2
+  `, [sessionDate, universePerMetric]);
+
+  return result.rows.map((row) => ({
+    changeRateValue: Number(row.change_rate),
+    id: `kr-${row.symbol}`,
+    market: "KR",
+    marketCapValue: row.market_cap === null ? undefined : Number(row.market_cap),
+    marketLabel: row.source.includes("nxt") ? "NXT" : "KRX",
+    name: row.name,
+    // 마지막 체결이 어느 책이었는지. 정규장 종가로 남아 있는 종목과 저녁까지
+    // 거래된 종목이 한 목록에 섞이므로, 행마다 출처를 밝혀야 읽힙니다.
+    source: "kis",
+    symbol: row.symbol,
+    // 전 종목 표에는 테마가 없습니다. 랭킹 경로가 쓰는 것과 같은 분류기를 태워야
+    // 두 출처의 행이 한 목록에서 같은 어휘로 읽힙니다.
+    theme: row.theme ?? classifyTheme(row.symbol, row.name),
+    turnoverValue: row.turnover === null ? 0 : Number(row.turnover),
+    venue: row.source.includes("nxt") ? "NXT" : "KRX",
+    volumeValue: row.volume === null ? undefined : Number(row.volume)
+  }));
+}
+
+/**
+ * 표본이 실제로 있는 가장 최근 장 날짜.
+ *
+ * `sessionDate("KR")`은 달력이 말하는 오늘입니다. 토요일 새벽이나 월요일 개장 전에
+ * 그 날짜로 기록을 읽으면 아무것도 안 나오고, 화면은 조용히 비거나 -- 더 나쁘게 --
+ * 낡은 랭킹 응답으로 되돌아갑니다. 2026-08-23(일)에 강세 테마 패널이 `미분류`
+ * 26종목으로 채워진 게 그것이었습니다. 주말에는 금요일 장을 보여주는 것이 맞습니다.
+ */
+export async function latestKrSessionDate(config, fallback) {
+  if (!config.databaseUrl) return fallback;
+
+  const result = await query(
+    config,
+    `SELECT max(session_date)::text AS session_date
+       FROM market_price_samples
+      WHERE market = 'KR' AND source LIKE 'kis:%'`
+  );
+
+  return result.rows[0]?.session_date ?? fallback;
 }
