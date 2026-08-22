@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/server.mjs",
+    "check": "node scripts/check-syntax.mjs",
     "collector:check": "node scripts/check-collector.mjs",
     "db:check": "node scripts/db-check.mjs",
     "db:migrate": "node scripts/migrate.mjs",

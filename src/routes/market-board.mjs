@@ -773,6 +773,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
       after: await loadThemeStocks(config, sessionDate("KR"), { window: "after" }).catch(() => []),
       regular: await loadThemeStocks(config, sessionDate("KR"), { window: "regular" }).catch(() => [])
     }
+  };
 
   const dated = await withSymbolEvents(config, board);
 
