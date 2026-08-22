@@ -3,6 +3,7 @@ import { getLatestMarketBoardSnapshot, loadSymbolFlags, pruneMarketBoardSnapshot
 import { hasDartCredentials, loadLeaderDisclosures } from "../providers/dart.mjs";
 import { loadKrDisclosureBoard } from "../providers/kr-disclosures.mjs";
 import { loadCloseBetCandidates } from "../providers/close-bet.mjs";
+import { loadLimitPairCandidates } from "../providers/limit-pair.mjs";
 import { loadHaltedStocks } from "../providers/kr-universe.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
@@ -97,6 +98,7 @@ function baseMarketBoardData(providerStatuses) {
     usSurgeCandidates: [],
     usPremarketMovers: [],
     krCloseBetCandidates: [],
+    krLimitPairs: [],
     krHaltedStocks: [],
     krSessionThemeStocks: { after: [], regular: [] },
     smallCapScanner: []
@@ -133,6 +135,7 @@ function mergeMarketBoardData(base, payload) {
     usEtfLeaders: payload.usEtfLeaders ?? base.usEtfLeaders,
     krLeadingStocks: payload.krLeadingStocks ?? base.krLeadingStocks,
     krCloseBetCandidates: payload.krCloseBetCandidates ?? base.krCloseBetCandidates,
+    krLimitPairs: payload.krLimitPairs ?? base.krLimitPairs,
     krHaltedStocks: payload.krHaltedStocks ?? base.krHaltedStocks,
     krSessionThemeStocks: payload.krSessionThemeStocks ?? base.krSessionThemeStocks,
     smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
@@ -854,6 +857,13 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     krHaltedStocks: await loadHaltedStocks(config).catch(() => []),
     // 종가배팅 후보. 조건도 성적표도 kr_daily_bars에서 나오므로 provider가
     // 응답하지 않아도 비어 있을 뿐 화면이 깨지지 않습니다.
+    // 짝꿍매매 후보 -- 같은 테마 1등주가 상한가에 잠겼을 때의 2등주. 장중 분봉에서
+    // 계산하므로 보드 빌드마다 갱신됩니다.
+    krLimitPairs: await loadLimitPairCandidates(config).catch((error) => {
+      console.warn("limit pair candidates unavailable", error instanceof Error ? error.message : error);
+
+      return [];
+    }),
     krCloseBetCandidates: await loadCloseBetCandidates(config).catch((error) => {
       console.warn("close bet candidates unavailable", error instanceof Error ? error.message : error);
 

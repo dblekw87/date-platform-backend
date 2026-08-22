@@ -36,7 +36,8 @@
     "us:short-interest": "node scripts/backfill-us-short-interest.mjs",
     "us:short-volume": "node scripts/backfill-us-short-volume.mjs",
     "kr:close-bet": "node scripts/calibrate-close-bet.mjs",
-    "kr:daily-bars": "node scripts/backfill-kr-daily-bars.mjs"
+    "kr:daily-bars": "node scripts/backfill-kr-daily-bars.mjs",
+    "kr:limit-pair": "node scripts/calibrate-limit-pair.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"
