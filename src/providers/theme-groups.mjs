@@ -243,7 +243,7 @@ export async function loadSessionChangeRates(config, sessionDate) {
  */
 const universePerMetric = 60;
 
-export async function loadKrSessionUniverse(config, sessionDate) {
+export async function loadKrSessionUniverse(config, sessionDate, { etf = false } = {}) {
   if (!config.databaseUrl) return [];
 
   const result = await query(config, `
@@ -302,30 +302,51 @@ export async function loadKrSessionUniverse(config, sessionDate) {
      WHERE turnover_rank <= $2 OR change_rank <= $2 OR volume_rank <= $2
   `, [sessionDate, universePerMetric]);
 
-  // 랭킹 경로가 이미 적용하는 제외를 여기서도 겁니다. 전 종목 표에는 ETF와
-  // 우선주가 그대로 들어 있어서, 그냥 합치면 거래대금 상위가 KODEX 200과
-  // 삼성전자우로 채워집니다 -- 지수 펀드는 테마가 없고, 그 거래대금을 어느 테마에
-  // 더하면 "누가 KODEX 200을 샀으니 반도체가 움직인다"는 말이 됩니다.
   return result.rows
-    .filter((row) => !isEtfLike(row.name) && !isNonOperatingEquity(row.name))
-    .map((row) => ({
-    changeRateValue: Number(row.change_rate),
-    id: `kr-${row.symbol}`,
-    market: "KR",
-    marketCapValue: row.market_cap === null ? undefined : Number(row.market_cap),
-    marketLabel: row.source.includes("nxt") ? "NXT" : "KRX",
-    name: row.name,
-    // 마지막 체결이 어느 책이었는지. 정규장 종가로 남아 있는 종목과 저녁까지
-    // 거래된 종목이 한 목록에 섞이므로, 행마다 출처를 밝혀야 읽힙니다.
-    source: "kis",
-    symbol: row.symbol,
-    // 전 종목 표에는 테마가 없습니다. 랭킹 경로가 쓰는 것과 같은 분류기를 태워야
-    // 두 출처의 행이 한 목록에서 같은 어휘로 읽힙니다.
-    theme: row.theme ?? classifyTheme(row.symbol, row.name),
-    turnoverValue: row.turnover === null ? 0 : Number(row.turnover),
-    venue: row.source.includes("nxt") ? "NXT" : "KRX",
-    volumeValue: row.volume === null ? undefined : Number(row.volume)
-  }));
+    // ETF는 주도주가 아니라 자기 탭으로 갑니다. 지수 펀드에는 테마가 없고, 그
+    // 거래대금을 어느 테마에 더하면 "누가 KODEX 200을 샀으니 반도체가 움직인다"는
+    // 말이 됩니다. 우선주는 어느 쪽도 아니라 양쪽에서 빠집니다.
+    .filter((row) => etf
+      ? isEtfLike(row.name)
+      : !isEtfLike(row.name) && !isNonOperatingEquity(row.name))
+    .map((row) => {
+      const venue = row.source.includes("nxt") ? "NXT" : "KRX";
+      // 전 종목 표에는 테마가 없습니다. 랭킹 경로가 쓰는 것과 같은 분류기를
+      // 태워야 두 출처의 행이 한 목록에서 같은 어휘로 읽힙니다.
+      const theme = row.theme ?? classifyTheme(row.symbol, row.name);
+      const turnoverValue = row.turnover === null ? 0 : Number(row.turnover);
+      const changeRateValue = Number(row.change_rate);
+      const turnover = formatTradingAmount(turnoverValue, "KRW");
+      const volume = row.volume === null ? null : Number(row.volume);
+
+      // 화면이 읽는 문장들. 랭킹 경로의 toLeadingStock과 같은 모양이어야 합니다 --
+      // leaderTheme은 reason의 첫 토막을 테마로 읽으므로, 이 문자열이 없으면
+      // 화면이 `reason.split`에서 그대로 터집니다.
+      return {
+        burst: volume === null
+          ? "장중 표본 없음"
+          : `당일 거래량 ${volume.toLocaleString("ko-KR")}주`,
+        caution: "뉴스·공시 원문과 장중 거래대금 유지 여부 확인",
+        changeRateValue,
+        id: `kr-${row.symbol}`,
+        intraday: `${venue} 마지막 체결 · ${changeRateValue > 0 ? "+" : ""}${changeRateValue.toFixed(2)}%`,
+        market: "KR",
+        marketCapValue: row.market_cap === null ? undefined : Number(row.market_cap),
+        marketLabel: venue,
+        name: row.name ?? row.symbol,
+        reason: `${theme} · 당일 거래대금 ${turnover} · ${venue} 마지막 체결`,
+        source: "kis",
+        symbol: row.symbol,
+        theme,
+        timestamp: new Date(row.observed_at).toISOString(),
+        turnover,
+        turnoverValue,
+        // 마지막 체결이 어느 책이었는지. 정규장 종가로 남아 있는 종목과 저녁까지
+        // 거래된 종목이 한 목록에 섞이므로, 행마다 출처를 밝혀야 읽힙니다.
+        venue,
+        volumeValue: volume === null ? undefined : volume
+      };
+    });
 }
 
 /**

@@ -844,6 +844,18 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // turnover to be ranked by and so appears in none of them - which is why
     // the board could not show one at all until now.
     krHaltedStocks: await loadHaltedStocks(config).catch(() => []),
+    // The ETF list has the same hole the leaders had: it comes off the live
+    // ranking, and NXT's evening book carries no funds, so after 15:40 the tab
+    // was empty. Read from the record like everything else.
+    krEtfLeaders: await (async () => {
+      const live = burst.krEtfLeaders ?? [];
+
+      if (live.length > 0) return live;
+
+      const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
+
+      return loadKrSessionUniverse(config, day, { etf: true }).catch(() => []);
+    })(),
     // 강세 테마, one list per session. The live leader board follows whichever
     // book is open, so after 15:40 the panel headed 국내 강세 테마 was quietly
     // describing the NXT evening and the regular session had no panel at all.
