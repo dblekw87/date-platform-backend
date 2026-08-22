@@ -6,8 +6,9 @@ import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
+import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
-import { classifyTheme } from "./providers/themes.mjs";
+import { classifyTheme, setNaverThemes } from "./providers/themes.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
@@ -597,6 +598,13 @@ function startUniverseSample(config, minute) {
     console.log(`collector: ${saved} universe rows · ${rows.filter((row) => row.tradeHalted).length} halted · ${day}`);
 
     if (saved === 0) console.warn(`collector: universe stored nothing for ${day}`);
+
+    // 테마 라벨은 "오늘 오른 테마 중 가장 오래된 것"이라 오늘의 등락률이 필요합니다.
+    // 그 등락률이 방금 저장된 이 표에서 오므로, 여기가 다시 읽을 자리입니다.
+    // 시작할 때 한 번만 읽으면 장이 열리기 전 상태로 하루를 보냅니다.
+    const themes = setNaverThemes(await loadSymbolThemes(config));
+
+    console.log(`collector: theme dictionary refreshed · ${themes} symbols`);
   })()
     .catch((error) => {
       // Let tomorrow try again rather than losing the day to one bad evening.
