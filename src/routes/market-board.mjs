@@ -15,7 +15,7 @@ import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
-import { loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
+import { loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
@@ -585,6 +585,32 @@ async function attachSymbolFlags(config, leaders) {
  * sampled so far. The recorded themes are appended behind it for the themes it
  * never saw.
  */
+/**
+ * Both sessions' closing rates on every domestic row.
+ *
+ * The live figure describes whichever book is open, so past 20:02 the board
+ * reverts to the KRX close and shows 쿠콘 at +23.17% while 토스, quoting the
+ * 19:59 book, shows +19.03%. Neither is wrong; they are different sessions. So
+ * the row carries both with their hours named rather than picking one, and the
+ * difference between them is itself worth reading — a name that held its limit
+ * into the evening and one that gave it back do not open the same way.
+ */
+async function attachSessionRates(config, stocks) {
+  if (stocks.length === 0) return stocks;
+
+  const rates = await loadSessionChangeRates(config, sessionDate("KR")).catch((error) => {
+    console.warn("session change rates unavailable", error instanceof Error ? error.message : error);
+
+    return new Map();
+  });
+
+  return stocks.map((stock) => {
+    const entry = rates.get(stock.symbol);
+
+    return entry ? { ...stock, sessionChangeRates: entry } : stock;
+  });
+}
+
 async function buildKrPairPanels(config, livePairs) {
   const day = sessionDate("KR");
   const minute = seoulMinuteNow();
@@ -697,7 +723,14 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
   const withThemes = themeBriefs.length > 0
     ? { ...merged, marketBrief: mergeById(merged.marketBrief, themeBriefs) }
     : merged;
-  const withBurst = await attachTurnoverBurst(await attachLeaderNews(config, withThemes));
+  const burst = await attachTurnoverBurst(await attachLeaderNews(config, withThemes));
+  // Both sessions' closing rates, so a row can say what it did in the regular
+  // session and what it did in the evening rather than only naming the book
+  // that happens to be open.
+  const withBurst = {
+    ...burst,
+    krLeadingStocks: await attachSessionRates(config, burst.krLeadingStocks ?? [])
+  };
   // Day leaders are derived last so they can read the recent-window turnover the
   // burst step attaches — without it a leader that spiked at 09:10 and went
   // quiet would outrank one the money is arriving at right now.

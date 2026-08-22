@@ -169,3 +169,54 @@ export async function loadThemeStocks(config, sessionDate, { window = "regular" 
     volumeValue: row.volume === null ? undefined : Number(row.volume)
   }));
 }
+
+/**
+ * 종목별 세션 종가 등락률 — 정규장과 NXT 애프터마켓을 따로.
+ *
+ * 화면의 상승률은 지금 열려 있는 책 하나만 말합니다. 그래서 20:02가 지나면 KRX
+ * 종가로 돌아가 쿠콘이 +23.17%로 남는데, 같은 시각 토스는 애프터마켓까지 반영한
+ * +19.03%를 보여줍니다. 둘 다 맞는 숫자이고 가리키는 시점만 다릅니다 — 그러니
+ * 하나를 고르는 대신 둘 다 이름표를 달고 나란히 서야 합니다.
+ *
+ * 두 값의 차이 자체가 정보입니다. 정규장에서 상한가에 붙었다가 저녁에 풀린 종목과
+ * 저녁까지 붙어 있는 종목은 다음 날 아침이 다릅니다.
+ */
+export async function loadSessionChangeRates(config, sessionDate) {
+  if (!config.databaseUrl) return new Map();
+
+  const result = await query(config, `
+    SELECT symbol, session_window, change_rate
+      FROM (
+        -- window is reserved in SQL, so the column cannot be called that.
+        SELECT DISTINCT ON (symbol, session_window) symbol, session_window, change_rate
+          FROM (
+            SELECT symbol, change_rate, observed_at,
+                   CASE WHEN source = 'kis:nxt:after' THEN 'after' ELSE 'regular' END AS session_window
+              FROM market_price_samples
+             WHERE session_date = $1 AND market = 'KR' AND change_rate IS NOT NULL
+               AND (
+                 -- 15:40, not 15:30. The closing auction settles at 15:30 and
+                 -- the settled figure lands in the samples just after it: 쿠콘
+                 -- reads 22.71% at 15:30 and 23.17% at 15:39, and 23.17% is the
+                 -- close. The evening does not start until 15:40, so nothing
+                 -- from the other book can leak in.
+                 (source LIKE 'kis:krx%'
+                   AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN '09:00' AND '15:40')
+                 OR (source = 'kis:nxt:after'
+                   AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN '15:40' AND '20:02')
+               )
+          ) windowed
+         ORDER BY symbol, session_window, observed_at DESC
+      ) latest
+  `, [sessionDate]);
+  const bySymbol = new Map();
+
+  result.rows.forEach((row) => {
+    const entry = bySymbol.get(row.symbol) ?? {};
+
+    entry[row.session_window] = Number(row.change_rate);
+    bySymbol.set(row.symbol, entry);
+  });
+
+  return bySymbol;
+}
