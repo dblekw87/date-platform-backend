@@ -661,7 +661,9 @@ async function attachSessionRates(config, stocks) {
 }
 
 async function buildKrPairPanels(config, livePairs) {
-  const day = sessionDate("KR");
+  // 달력상 오늘이 아니라 표본이 있는 마지막 장입니다. 주말이나 개장 전에 오늘을
+  // 읽으면 두 패널이 통째로 비고, 강세 테마가 같은 이유로 비었던 적이 있습니다.
+  const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
   const minute = seoulMinuteNow();
   const inRegularSession = minute >= 9 * 60 && minute <= 15 * 60 + 30;
   const read = (window, exclude) => loadThemeGroups(config, day, { exclude, window })
