@@ -149,26 +149,65 @@ function sizeOf(marketCap) {
 }
 
 /**
- * 오늘 멈춰 있는 종목들, 큰 것부터.
+ * 정지 사유를 공시 제목에서 꺼냅니다.
+ *
+ * 거래소 안내 공시는 사유를 괄호에 답니다 -- "주권매매거래정지 (주식의 병합, 분할
+ * 등 전자등록 변경, 말소)", "주권매매거래정지해제 (상장폐지에 따른 정리매매 개시)".
+ * 괄호가 없으면 보고서 이름 자체가 답입니다.
+ */
+function haltReasonFrom(title) {
+  const reportName = String(title ?? "").split("·").pop()?.trim() ?? "";
+  const inBrackets = reportName.match(/\(([^)]{4,})\)\s*$/);
+
+  return (inBrackets?.[1] ?? reportName.replace(/\s+/g, " ")).trim() || null;
+}
+
+/**
+ * 오늘 멈춰 있는 종목들, 큰 것부터 -- 사유를 알면 사유와 함께.
+ *
+ * 해제일은 어디에도 없습니다. 확인한 것: 네이버 전종목 API는 정지 여부만 주고,
+ * 종목 상세에는 정지·해제 문자열이 아예 없으며, 거래소 KIND의 매매거래정지 목록은
+ * 실제 브라우저로 열어야 하는 데다 열어 봐도 컬럼이 시장·종목·사유뿐이라 날짜가
+ * 없고, DART 원문 API는 이 시장안내 공시에 CSS만 든 1.5KB 껍데기를 돌려줍니다.
+ *
+ * 애초에 대부분의 정지에는 해제일이 존재하지 않습니다 -- 조회공시요구는 회사가
+ * 답하면 풀리고 상장적격성 실질심사는 결과가 나와야 풀립니다. 날짜가 정해진 것은
+ * 주식병합·액면분할처럼 일정이 잡힌 정지뿐입니다.
+ *
+ * 대신 사유는 공시에 있습니다. 지금은 정지 138종목 중 1종목만 걸립니다 -- 공시를
+ * 하루치만 모았고 나머지는 그 전에 멈췄기 때문입니다. 수집은 이미 돌고 있으므로
+ * 앞으로 걸리는 정지는 이 조인으로 저절로 채워집니다. 조인을 지금 만들어 두는
+ * 이유가 그것입니다: 기다리는 것이 나중에 또 작업이 되지 않도록.
  *
  * 가장 최근에 받아둔 날을 기준으로 답합니다. 주말이나 개장 전에 "정지 종목 없음"이
- * 아니라 직전 거래일의 상태를 보여주는 편이 맞습니다 — 정지는 하루 만에 풀리는
+ * 아니라 직전 거래일의 상태를 보여주는 편이 맞습니다 -- 정지는 하루 만에 풀리는
  * 일이 드뭅니다.
  */
 export async function loadHaltedStocks(config, { limit = 60 } = {}) {
   const result = await query(config, `
-    SELECT session_date::text AS session_date, symbol, name, market, close_price,
-           change_rate, market_cap, turnover
-      FROM kr_daily_universe
-     WHERE trade_halted
-       AND session_date = (SELECT max(session_date) FROM kr_daily_universe)
-     ORDER BY market_cap DESC NULLS LAST
+    SELECT u.session_date::text AS session_date, u.symbol, u.name, u.market,
+           u.close_price, u.change_rate, u.market_cap, u.turnover,
+           d.title AS halt_title, d.filed_at AS halted_at
+      FROM kr_daily_universe u
+      LEFT JOIN LATERAL (
+        SELECT title, filed_at
+          FROM market_disclosures
+         WHERE market = 'KR' AND symbol = u.symbol
+           AND title ~ '(매매거래정지|정리매매|상장폐지)'
+         ORDER BY filed_at DESC
+         LIMIT 1
+      ) d ON true
+     WHERE u.trade_halted
+       AND u.session_date = (SELECT max(session_date) FROM kr_daily_universe)
+     ORDER BY u.market_cap DESC NULLS LAST
      LIMIT $1
   `, [limit]);
 
   return result.rows.map((row) => ({
     changeRateValue: row.change_rate === null ? null : Number(row.change_rate),
     closePrice: row.close_price === null ? null : Number(row.close_price),
+    haltReason: row.halt_title ? haltReasonFrom(row.halt_title) : null,
+    haltedAt: row.halted_at ? new Date(row.halted_at).toISOString() : null,
     id: `halt-${row.symbol}`,
     issuerType: sizeOf(Number(row.market_cap)),
     market: row.market,
