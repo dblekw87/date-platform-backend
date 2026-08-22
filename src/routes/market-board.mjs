@@ -455,7 +455,7 @@ function mergeHeadlines(baseItems, extraItems) {
  * and themes tagged onto headlines, plus a targeted news search per leader.
  * A failure here leaves the untagged headlines in place.
  */
-async function attachLeaderNews(board) {
+async function attachLeaderNews(config, board) {
   const leaders = [...board.krLeadingStocks, ...board.usLeadingStocks];
 
   if (leaders.length === 0) return board;
@@ -465,7 +465,7 @@ async function attachLeaderNews(board) {
     // per-leader headlines — the ones actually about these companies — with no
     // symbols at all, so anything reading relatedSymbols saw only the general
     // feed that happened to mention a name in passing.
-    const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(leaders), 6000));
+    const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(config, leaders), 6000));
 
     return { ...board, headlineFlow: attachLeaderNewsTags(merged, leaders) };
   } catch (error) {
@@ -697,7 +697,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
   const withThemes = themeBriefs.length > 0
     ? { ...merged, marketBrief: mergeById(merged.marketBrief, themeBriefs) }
     : merged;
-  const withBurst = await attachTurnoverBurst(await attachLeaderNews(withThemes));
+  const withBurst = await attachTurnoverBurst(await attachLeaderNews(config, withThemes));
   // Day leaders are derived last so they can read the recent-window turnover the
   // burst step attaches — without it a leader that spiked at 09:10 and went
   // quiet would outrank one the money is arriving at right now.

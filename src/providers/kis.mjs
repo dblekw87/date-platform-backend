@@ -151,12 +151,26 @@ function leadershipScore(item) {
     + Math.min(Math.max(volumeIncrease, 0), 500) / 25;
 }
 
+/**
+ * Whether a ranking row is usable at all — not whether it is leading anything.
+ *
+ * This used to also require the stock to have moved at least 1%, which quietly
+ * deleted the top of the market from every list built on this pool. 삼성전자
+ * closed the 2026-08-21 evening at -0.36% on 4,284억 — the largest turnover in
+ * the market and first on 토스's 거래대금 board — and was not in ours at all,
+ * along with SK스퀘어 at -0.26%, NAVER at +0.91% and 현대차 at -0.35%. A
+ * turnover ranking that omits the busiest stock is not a turnover ranking.
+ *
+ * Movement is a test of leadership and belongs where leadership is claimed:
+ * rankDayLeaders already takes only stocks that rose, and the theme grouping
+ * scores on how far a theme moved. Both keep working with the whole pool
+ * beneath them; the tabs that rank money and volume finally see all of it.
+ */
 function isUsableLeaderCandidate(item) {
   const symbol = item.mksc_shrn_iscd?.trim();
   const name = item.hts_kor_isnm?.trim();
   const turnover = parseNumeric(item.acml_tr_pbmn || item.avrg_tr_pbmn);
   const price = parseNumeric(item.stck_prpr);
-  const changeRate = parseNumeric(item.prdy_ctrt);
   const volume = parseNumeric(item.acml_vol);
   const volumeIncrease = parseNumeric(item.vol_inrt);
 
@@ -165,7 +179,6 @@ function isUsableLeaderCandidate(item) {
     name &&
     turnover > 0 &&
     price > 0 &&
-    Math.abs(changeRate) >= 1 &&
     (volume > 0 || volumeIncrease > 0)
   );
 }

@@ -608,7 +608,7 @@ export function attachLeaderNewsTags(headlines, leaders) {
   });
 }
 
-export async function loadLeaderNewsHeadlines(leaders) {
+export async function loadLeaderNewsHeadlines(config, leaders) {
   // Taken per market, not off the front of the combined list. The domestic
   // leaders arrive first and there are sixty of them, so slicing the whole list
   // spent every query on KR and left US company news out of the feed entirely.
