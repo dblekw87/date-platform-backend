@@ -2,6 +2,7 @@ import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, loadSymbolFlags, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadLeaderDisclosures } from "../providers/dart.mjs";
 import { loadKrDisclosureBoard } from "../providers/kr-disclosures.mjs";
+import { loadCloseBetCandidates } from "../providers/close-bet.mjs";
 import { loadHaltedStocks } from "../providers/kr-universe.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
@@ -95,6 +96,7 @@ function baseMarketBoardData(providerStatuses) {
     krPairTrades: [],
     usSurgeCandidates: [],
     usPremarketMovers: [],
+    krCloseBetCandidates: [],
     krHaltedStocks: [],
     krSessionThemeStocks: { after: [], regular: [] },
     smallCapScanner: []
@@ -130,6 +132,7 @@ function mergeMarketBoardData(base, payload) {
     krEtfLeaders: payload.krEtfLeaders ?? base.krEtfLeaders,
     usEtfLeaders: payload.usEtfLeaders ?? base.usEtfLeaders,
     krLeadingStocks: payload.krLeadingStocks ?? base.krLeadingStocks,
+    krCloseBetCandidates: payload.krCloseBetCandidates ?? base.krCloseBetCandidates,
     krHaltedStocks: payload.krHaltedStocks ?? base.krHaltedStocks,
     krSessionThemeStocks: payload.krSessionThemeStocks ?? base.krSessionThemeStocks,
     smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
@@ -844,6 +847,13 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // turnover to be ranked by and so appears in none of them - which is why
     // the board could not show one at all until now.
     krHaltedStocks: await loadHaltedStocks(config).catch(() => []),
+    // 종가배팅 후보. 조건도 성적표도 kr_daily_bars에서 나오므로 provider가
+    // 응답하지 않아도 비어 있을 뿐 화면이 깨지지 않습니다.
+    krCloseBetCandidates: await loadCloseBetCandidates(config).catch((error) => {
+      console.warn("close bet candidates unavailable", error instanceof Error ? error.message : error);
+
+      return [];
+    }),
     // The ETF list has the same hole the leaders had: it comes off the live
     // ranking, and NXT's evening book carries no funds, so after 15:40 the tab
     // was empty. Read from the record like everything else.

@@ -5,6 +5,7 @@ import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
+import { collectKrDailyBars } from "./providers/kr-daily-bars.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
@@ -598,6 +599,15 @@ function startUniverseSample(config, minute) {
     console.log(`collector: ${saved} universe rows · ${rows.filter((row) => row.tradeHalted).length} halted · ${day}`);
 
     if (saved === 0) console.warn(`collector: universe stored nothing for ${day}`);
+
+    // 종가배팅 후보는 일봉에서 나오므로 오늘 봉이 들어온 뒤에 다시 재야 합니다.
+    // 등급별 성적표까지 같이 갱신되어, 표본이 하루치씩 늘어납니다.
+    await collectKrDailyBars(config, rows.map((row) => row.symbol), {
+      from: day,
+      log: (message) => console.log(`collector: ${message}`),
+      to: day
+    }).then(({ saved }) => console.log(`collector: ${saved} daily bars · ${day}`))
+      .catch((error) => console.warn("collector: daily bars failed", error instanceof Error ? error.message : error));
 
     // 테마 라벨은 "오늘 오른 테마 중 가장 오래된 것"이라 오늘의 등락률이 필요합니다.
     // 그 등락률이 방금 저장된 이 표에서 오므로, 여기가 다시 읽을 자리입니다.
