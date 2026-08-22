@@ -9,13 +9,13 @@ import { resolveIndustryThemes } from "../providers/industry.mjs";
 import { resolveUsIndustryThemes } from "../providers/us-industry.mjs";
 import { loadKisMarketBoard } from "../providers/kis.mjs";
 import { loadKrxCalendar } from "../providers/krx.mjs";
-import { seoulMinuteNow, sessionDate } from "../providers/market-session.mjs";
+import { krAfterHoursOpenMinute, seoulMinuteNow, sessionDate } from "../providers/market-session.mjs";
 import { rankDayLeaders } from "../providers/leadership.mjs";
 import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
-import { latestKrSessionDate, loadKrSessionUniverse, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
+import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
@@ -614,8 +614,20 @@ async function attachSessionUniverse(config, stocks) {
   if (universe.length === 0) return stocks;
 
   const live = new Set(stocks.map((stock) => stock.symbol));
+  // Past the KRX close the ranking's money column is NXT's own accumulation,
+  // which is not the day's turnover — 삼성전자 reads 10.9조 against a 7.68조
+  // day. The price stays as it last traded; only the money goes back.
+  const krxComplete = day < sessionDate("KR") || seoulMinuteNow() >= krAfterHoursOpenMinute;
+  const money = krxComplete
+    ? await loadKrxDayMoney(config, day).catch(() => new Map())
+    : new Map();
+  const withDayMoney = (stock) => {
+    const figures = money.get(stock.symbol);
 
-  return [...stocks, ...universe.filter((stock) => !live.has(stock.symbol))];
+    return figures?.turnoverValue === undefined ? stock : { ...stock, ...figures };
+  };
+
+  return [...stocks.map(withDayMoney), ...universe.filter((stock) => !live.has(stock.symbol))];
 }
 
 /**

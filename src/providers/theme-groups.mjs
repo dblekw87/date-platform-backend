@@ -1,5 +1,5 @@
 import { formatTradingAmount } from "./format.mjs";
-import { classifyTheme } from "./themes.mjs";
+import { classifyTheme, isEtfLike, isNonOperatingEquity } from "./themes.mjs";
 import { isPreferredShare, minimumCandidateTurnover } from "./pairing.mjs";
 import { query } from "../db/client.mjs";
 
@@ -247,14 +247,33 @@ export async function loadKrSessionUniverse(config, sessionDate) {
   if (!config.databaseUrl) return [];
 
   const result = await query(config, `
-    WITH last_seen AS (
-      SELECT DISTINCT ON (symbol) symbol, name, theme, change_rate, turnover,
-             volume, market_cap, source, observed_at
+    -- 가격은 마지막으로 체결된 곳에서 옵니다. 그게 연속성입니다.
+    WITH last_traded AS (
+      SELECT DISTINCT ON (symbol) symbol, name, theme, change_rate,
+             market_cap, source, observed_at
         FROM market_price_samples
        WHERE session_date = $1 AND market = 'KR'
          AND source LIKE 'kis:%' AND source NOT LIKE '%:pair'
          AND change_rate IS NOT NULL
        ORDER BY symbol, observed_at DESC
+    ),
+    -- 돈은 KRX 누적에서만 옵니다. 측정: 2026-08-21 상위 18종목 전부에서
+    -- KRX 누적 / 네이버 공식 일별 거래대금 = 1.000. NXT 누적은 같은 비교에서
+    -- 0.31~1.41로 흩어지고 삼성전자는 하루 총액을 넘깁니다(1.41) -- 그 책의
+    -- 자체 집계라 하루 거래대금으로 쓸 수 없습니다. 등락률은 이어 붙여도
+    -- 거래대금은 이어 붙이면 안 되는 이유입니다.
+    krx_money AS (
+      SELECT DISTINCT ON (symbol) symbol, turnover, volume
+        FROM market_price_samples
+       WHERE session_date = $1 AND market = 'KR' AND source LIKE 'kis:krx%'
+       ORDER BY symbol, observed_at DESC
+    ),
+    last_seen AS (
+      SELECT t.symbol, t.name, t.theme, t.change_rate,
+             coalesce(m.turnover, 0) AS turnover, m.volume,
+             t.market_cap, t.source, t.observed_at
+        FROM last_traded t
+        LEFT JOIN krx_money m ON m.symbol = t.symbol
     ),
     -- 랭킹에 한 번도 못 든 종목은 여기서만 옵니다. 오가닉티코스메틱은 8/21에
     -- +29.90%로 마감했는데 거래대금이 6억이라 KIS 어느 순위에도 없었고, 그래서
@@ -283,7 +302,13 @@ export async function loadKrSessionUniverse(config, sessionDate) {
      WHERE turnover_rank <= $2 OR change_rank <= $2 OR volume_rank <= $2
   `, [sessionDate, universePerMetric]);
 
-  return result.rows.map((row) => ({
+  // 랭킹 경로가 이미 적용하는 제외를 여기서도 겁니다. 전 종목 표에는 ETF와
+  // 우선주가 그대로 들어 있어서, 그냥 합치면 거래대금 상위가 KODEX 200과
+  // 삼성전자우로 채워집니다 -- 지수 펀드는 테마가 없고, 그 거래대금을 어느 테마에
+  // 더하면 "누가 KODEX 200을 샀으니 반도체가 움직인다"는 말이 됩니다.
+  return result.rows
+    .filter((row) => !isEtfLike(row.name) && !isNonOperatingEquity(row.name))
+    .map((row) => ({
     changeRateValue: Number(row.change_rate),
     id: `kr-${row.symbol}`,
     market: "KR",
@@ -322,4 +347,34 @@ export async function latestKrSessionDate(config, fallback) {
   );
 
   return result.rows[0]?.session_date ?? fallback;
+}
+
+/**
+ * 하루가 끝난 뒤의 거래대금·거래량은 KRX 누적입니다.
+ *
+ * 15:40이 지나면 랭킹 응답이 NXT의 자체 집계로 바뀌는데, 그 값은 하루 거래대금이
+ * 아닙니다. 2026-08-21 상위 18종목에서 KRX 누적은 네이버 공식 일별 거래대금과
+ * 1.000으로 일치했지만 NXT 누적은 0.31~1.41로 흩어졌고 삼성전자는 하루 총액의
+ * 1.41배(10.9조 대 7.68조)를 냈습니다. 그대로 두면 거래대금 1위의 숫자가 틀립니다.
+ *
+ * 가격은 반대입니다 -- 마지막 체결이 곧 지금 값이므로 NXT 것이 맞습니다. 그래서
+ * 돈만 되돌리고 등락률은 건드리지 않습니다.
+ *
+ * 정규장이 아직 진행 중일 때는 적용하지 않습니다. 그때는 랭킹이 이미 KRX를 보고
+ * 있고 기록보다 몇 초 빠릅니다.
+ */
+export async function loadKrxDayMoney(config, sessionDate) {
+  if (!config.databaseUrl) return new Map();
+
+  const result = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol, turnover, volume
+      FROM market_price_samples
+     WHERE session_date = $1 AND market = 'KR' AND source LIKE 'kis:krx%'
+     ORDER BY symbol, observed_at DESC
+  `, [sessionDate]);
+
+  return new Map(result.rows.map((row) => [row.symbol, {
+    turnoverValue: row.turnover === null ? undefined : Number(row.turnover),
+    volumeValue: row.volume === null ? undefined : Number(row.volume)
+  }]));
 }
