@@ -113,16 +113,18 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [], windo
         symbol: leader.symbol,
         turnover: formatTradingAmount(Number(leader.turnover ?? 0), "KRW")
       },
-      // Same reading as the pair board: how far the least-moved member still is
-      // from the one the money is in.
+      // Same reading as the pair board, and the same demotion: a fact worth
+      // showing, not the size of an opportunity.
       leadGap: Number((Number(leader.change_rate) - Number(followers[0].change_rate)).toFixed(2)),
       market: "KR",
       theme
     });
   }
 
+  // Strongest member first, matching buildPairBoard. The gap was measured
+  // against 186,726 pairs and orders nothing.
   return groups
-    .sort((left, right) => right.leadGap - left.leadGap)
+    .sort((left, right) => (right.candidates[0]?.changeRateValue ?? 0) - (left.candidates[0]?.changeRateValue ?? 0))
     .slice(0, maximumThemes);
 }
 

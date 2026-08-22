@@ -675,13 +675,16 @@ async function buildKrPairPanels(config, livePairs) {
     read("regular", pairs.map((pair) => pair.theme)),
     read("after")
   ]);
-  // A gap that has gone negative is a follower that overtook the leader, which
-  // is the setup gone rather than a setup to read. It used to be kept and shown
-  // last; a panel that names a session is a claim that the pair held in it, so
-  // it is dropped instead.
-  const holding = (list) => list.filter((pair) => pair.leadGap > 0);
-
-  return { after: holding(after), regular: holding([...pairs, ...recorded]) };
+  /*
+   * Everything the theme moved with, negative gap included.
+   *
+   * A negative gap was dropped here as "the setup gone" — the follower had
+   * overtaken the leader, so there was nothing left to wait for. Measured over
+   * 186,726 pairs, that bucket is the best one in the panel: +1.161%p of excess
+   * overnight gap against +0.460%p for the rest. The rule was throwing away its
+   * strongest rows on the theory that a stock which has moved cannot move again.
+   */
+  return { after, regular: [...pairs, ...recorded] };
 }
 
 /**

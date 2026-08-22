@@ -206,16 +206,34 @@ export function buildPairBoard(leaders) {
       },
       market: leader.market,
       theme: leader.theme,
-      // What the trade is waiting on. The leader has moved; this is how far the
-      // best follower still is from it, which is the gap the trade lives in.
+      // How far the strongest member is from the leader. Kept because it is a
+      // fact worth reading, no longer treated as the size of an opportunity —
+      // see the sort below.
       leadGap: Number((leader.changeRateValue - leader.pairCandidates[0].changeRateValue).toFixed(2))
     });
   });
 
-  // Widest gap first, because the gap is the room left in the trade. A negative
-  // one says the follower already ran harder than the leader did, which is the
-  // same theme read too late — worth showing, worth showing last.
-  return [...byTheme.values()].sort((left, right) => right.leadGap - left.leadGap);
+  /*
+   * Strongest theme first, by how far its members actually moved.
+   *
+   * This sorted by the widest gap, on the reading that the gap is the room left
+   * in the trade. Measured across 186,726 pairs over 396 sessions, the gap
+   * predicts nothing: buckets of 0-3, 3-7, 7-15 and 15+%p produced -0.009,
+   * +0.002, +0.015 and -0.042%p of excess overnight gap, in no order at all.
+   * And the bucket this used to push to the bottom — the member that already
+   * ran past its leader — is the only one carrying a number, at +1.161%p.
+   *
+   * A lagging member is not a coiled spring. It is the member that is not
+   * moving, and it is also worse than simply buying the leader (+0.046%p of
+   * next-day excess against the leader's +0.158%p).
+   *
+   * What the measurement does support is the theme: a rising member of a theme
+   * whose leader ran gaps +0.460%p overnight against +0.073%p for any stock
+   * that merely rose that day. So the theme is the signal, and the order inside
+   * the list should follow strength rather than distance from the leader.
+   */
+  return [...byTheme.values()].sort((left, right) =>
+    (right.candidates[0]?.changeRateValue ?? 0) - (left.candidates[0]?.changeRateValue ?? 0));
 }
 
 /**
