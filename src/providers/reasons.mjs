@@ -54,12 +54,66 @@ const ownershipCacheTtlMs = 6 * 60 * 60_000;
  * "한화엔진\n주3)", "앱클론(상장)" — and a name carrying a line break matches
  * nothing and reads worse. Names that open with a bracket keep their original
  * text, because cutting at the first one leaves nothing at all.
+ *
+ * The company mark has to go too, and it is not one character everywhere.
+ * "삼성전자(주)" was already cut at the bracket, but "에스케이하이닉스㈜" survived
+ * whole and so matched no headline ever written — 471 of the 2,271 names large
+ * enough to be a reason carry ㈜ or 주식회사 and were unreachable.
  */
 function cleanName(value) {
   const text = String(value ?? "").trim();
   const head = text.split(/[\n(（]/)[0].trim();
+  const bare = head.replace(/[㈜㈔]/g, "").replace(/주식회사/g, "").trim();
 
-  return head || text;
+  return bare || head || text;
+}
+
+/**
+ * How DART spells the Latin letters, so a legal name can be read back.
+ *
+ * The registry writes SK하이닉스 as 에스케이하이닉스 and LG전자 as 엘지전자,
+ * while every headline uses the Latin form. Ordered by the letter, which is the
+ * only order this table can be read in.
+ */
+const hangulLetters = {
+  "에이": "A", "비": "B", "씨": "C", "디": "D", "이": "E", "에프": "F",
+  "지": "G", "에이치": "H", "아이": "I", "제이": "J", "케이": "K", "엘": "L",
+  "엠": "M", "엔": "N", "오": "O", "피": "P", "큐": "Q", "알": "R",
+  "에스": "S", "티": "T", "유": "U", "브이": "V", "더블유": "W", "엑스": "X",
+  "와이": "Y", "제트": "Z"
+};
+
+// Longest first, so 에이치 reads as H rather than as 에이 followed by 치.
+const hangulLetterSyllables = Object.keys(hangulLetters).sort((left, right) => right.length - left.length);
+
+/**
+ * A name plus every way its opening run could be read as Latin letters.
+ *
+ * Reading greedily is wrong — it turns 에스케이지오센트릭 into SKGO센트릭 and
+ * 엘지디스플레이 into LGD스플레이, because 지오 and 디 are ordinary syllables as
+ * well as letters. Nothing in the name says which, so every reading is offered
+ * and the headline decides: a wrong one like SKGO센트릭 appears in no sentence
+ * anyone has written. Measured over four days of feeds the aliases reached 113
+ * names against 56 before, and all four that arrived through a Latin alias —
+ * SK하이닉스, LG전자, LS일렉트릭, LG이노텍 — were right.
+ */
+function nameAliases(name) {
+  const out = new Set([name]);
+  let latin = "";
+  let rest = name;
+
+  while (rest) {
+    const syllable = hangulLetterSyllables.find((candidate) => rest.startsWith(candidate));
+
+    if (!syllable) break;
+
+    latin += hangulLetters[syllable];
+    rest = rest.slice(syllable.length);
+
+    if (latin.length >= 2 && rest) out.add(`${latin}${rest}`);
+  }
+
+  return [...out].filter((alias) => alias.length >= minimumEntityNameLength);
 }
 
 /**
@@ -85,15 +139,55 @@ async function loadStakes(config, businessYear) {
     result.rows.forEach((row) => {
       if (!byHolder.has(row.holder_symbol)) byHolder.set(row.holder_symbol, []);
 
+      const investeeName = cleanName(row.investee_name);
+
       byHolder.get(row.holder_symbol).push({
         bookValue: Number(row.book_value),
-        investeeName: cleanName(row.investee_name),
+        investeeAliases: nameAliases(investeeName),
+        investeeName,
         stakePct: row.stake_pct === null ? null : Number(row.stake_pct),
         valuationChange: row.valuation_change === null ? null : Number(row.valuation_change)
       });
     });
 
     return byHolder;
+  });
+}
+
+/**
+ * What every listed domestic name is worth, by symbol and by name.
+ *
+ * A stake is read against the company holding it, so both ends need a size. The
+ * holder is looked up by symbol; the investee only has the name the registry
+ * filed, which is why it is keyed both ways.
+ *
+ * The collector has been writing market_cap beside every sample since it began
+ * reading lstn_stcn off the ranking response, so this costs one query and no
+ * requests at all.
+ */
+async function loadMarketCaps(config) {
+  return readThroughCache("kr-market-caps", ownershipCacheTtlMs, async () => {
+    const result = await query(
+      config,
+      `SELECT DISTINCT ON (symbol) symbol, name, market_cap
+         FROM market_price_samples
+        WHERE market = 'KR' AND market_cap IS NOT NULL
+        ORDER BY symbol, observed_at DESC`
+    );
+    const byName = new Map();
+    const bySymbol = new Map();
+
+    result.rows.forEach((row) => {
+      const cap = Number(row.market_cap);
+
+      if (!Number.isFinite(cap) || cap <= 0) return;
+
+      bySymbol.set(row.symbol, cap);
+
+      if (row.name) byName.set(row.name, cap);
+    });
+
+    return { byName, bySymbol };
   });
 }
 
@@ -177,8 +271,7 @@ async function loadEntityNames(config, businessYear) {
       [businessYear]
     );
 
-    return [...new Set(result.rows.map((row) => cleanName(row.investee_name)))]
-      .filter((name) => name.length >= minimumEntityNameLength);
+    return [...new Set(result.rows.flatMap((row) => nameAliases(cleanName(row.investee_name))))];
   });
 }
 
@@ -195,11 +288,42 @@ async function loadEntityNames(config, businessYear) {
  * So the headline is what creates the candidate, not what lifts it. Anthropic
  * is SK텔레콤's reason on the day Anthropic is written about and on no other
  * day, which is exactly what the screen said.
+ *
+ * What the headline cannot decide is how much the stake matters, and absolute
+ * size answers that wrongly. 삼성전자's 삼성SDI holding is 1.6조 — larger than
+ * anything SK스퀘어 owns on the books — and it ranked ahead of the 자사주 소각
+ * that actually moved the stock, because a mega cap's subsidiaries are in the
+ * news every day. Against the holder's own market cap the two separate cleanly:
+ * SK스퀘어's 하이닉스 stake is 175% of SK스퀘어, 우리기술투자's 두나무 stake is
+ * 159%, 삼성생명's 삼성전자 stake is 214%, and every other stake measured over
+ * the collected sessions came in under 6%.
+ *
+ * Book value is the wrong number for a listed investee — SK스퀘어 carries
+ * 하이닉스 at the 3.4조 it paid, against 258조 of market value — so the stake is
+ * marked to market whenever the investee can be found among listed names, and
+ * falls back to the books for private ones like 두나무.
+ *
+ * The ratio scores and never gates. Anthropic is 3.4% of SK텔레콤 and would not
+ * survive a threshold, which is the case the whole path was built for.
  */
-function ownershipReasons(leader, stakes, headlineText) {
+function stakeValue(stake, caps) {
+  const investeeCap = stake.investeeAliases.map((alias) => caps.byName.get(alias)).find(Boolean);
+
+  return investeeCap && stake.stakePct !== null
+    ? (stake.stakePct / 100) * investeeCap
+    : stake.bookValue;
+}
+
+function ownershipReasons(leader, stakes, headlineText, caps) {
+  const holderCap = caps.bySymbol.get(leader.symbol);
+
   return (stakes.get(leader.symbol) ?? [])
-    .filter((stake) => stake.investeeName.length >= minimumEntityNameLength
-      && headlineText.includes(stake.investeeName))
+    // The name the news used, not the one the registry filed under. A reader
+    // told SK스퀘어 rose on 에스케이하이닉스 would not recognise the company.
+    .map((stake) => ({ ...stake, namedAs: stake.investeeAliases.find((alias) => headlineText.includes(alias)) }))
+    .filter((stake) => stake.namedAs)
+    .map((stake) => ({ ...stake, weight: holderCap ? stakeValue(stake, caps) / holderCap : 0 }))
+    .sort((left, right) => right.weight - left.weight)
     .slice(0, 2)
     .map((stake) => {
       const evidence = [`지분 ${stake.stakePct === null ? "비공개" : `${stake.stakePct}%`} · 장부가 ${formatTradingAmount(stake.bookValue, "KRW")}`];
@@ -210,19 +334,21 @@ function ownershipReasons(leader, stakes, headlineText) {
         evidence.push(`전년 대비 ${stake.valuationChange > 0 ? "+" : "−"}${formatTradingAmount(Math.abs(stake.valuationChange), "KRW")} · 사업보고서 기준`);
       }
 
-      evidence.push(`오늘 뉴스가 ${stake.investeeName}를 언급했습니다`);
+      if (stake.weight >= 0.1) {
+        evidence.push(`${leader.name} 시총의 ${Math.round(stake.weight * 100)}%에 해당합니다`);
+      }
 
-      // Size ranks the stakes a headline did name; it never promotes one it did
-      // not. Scoring on book value alone put 하나금융지주, which nobody wrote
-      // about, above a live 요금제 개편 headline purely for being large.
-      const size = Math.min(1, stake.bookValue / 1_000_000_000_000);
+      evidence.push(`오늘 뉴스가 ${stake.namedAs}를 언급했습니다`);
 
+      // A stake worth as much as the company holding it is the company; one
+      // worth a rounding error of it is a fact about the balance sheet. An
+      // unknown holder cap scores as the latter rather than guessing.
       return {
-        confidence: Math.round(55 + size * 30),
+        confidence: Math.round(45 + Math.min(1, stake.weight) * 40),
         evidence,
         kind: "고유",
         path: "보유 지분",
-        title: `${stake.investeeName} 지분 가치`
+        title: `${stake.namedAs} 지분 가치`
       };
     });
 }
@@ -382,7 +508,18 @@ const supplyFilingPattern = /^(?:증권|지분|자금조달)$/;
  * same week. A periodic report is the strongest kind of evidence about a
  * business and no evidence at all about a day.
  */
-const routineFilingPattern = /반기보고서|분기보고서|사업보고서|감사보고서|결산|지급수단별|소유상황보고서|기업지배구조|영업보고서|정정신고|주주총회소집|동일인등출자|상품ㆍ용역거래|계열회사와의/;
+const routineFilingPattern = /반기보고서|분기보고서|사업보고서|감사보고서|결산|지급수단별|소유상황보고서|기업지배구조|영업보고서|정정신고|주주총회소집|동일인등출자|상품ㆍ용역거래|계열회사와의|일괄신고|효력발생안내|대규모기업집단현황|기업설명회|최대주주등소유주식변동|주주명부폐쇄|특정증권등거래계획|증권발행실적/;
+
+/**
+ * The exchange asking, which is the move showing up in the filings rather than
+ * a cause of it.
+ *
+ * 조회공시요구 is sent *because* a stock moved on a rumour, so taking it as the
+ * reason says the stock rose because it rose — and it outranked the 자사주 소각
+ * that explains SK하이닉스. The company's answer is a different document and
+ * can be a reason, so only the demand is dropped.
+ */
+const inquiryFilingPattern = /조회공시요구(?!.*답변)/;
 
 /**
  * Filings that are material and are the opposite of a reason to have risen.
@@ -412,6 +549,7 @@ function disclosureReasons(leader, disclosures) {
     .filter((disclosure) => disclosure.symbol === leader.symbol)
     .filter((disclosure) => !supplyFilingPattern.test(String(disclosure.urgency ?? "")))
     .filter((disclosure) => !routineFilingPattern.test(String(disclosure.title ?? "")))
+    .filter((disclosure) => !inquiryFilingPattern.test(String(disclosure.title ?? "")))
     .filter((disclosure) => !adverseFilingPattern.test(String(disclosure.title ?? "")))
     .slice(0, 1)
     .map((disclosure) => ({
@@ -541,19 +679,50 @@ const marketProfiles = {
  * Everything that reads the database is optional: a database that is down costs
  * the 지분 path and the subject dictionary, and leaves the rest standing.
  */
+/**
+ * One reason per thing that happened, however many outlets wrote it up.
+ *
+ * A buyback is covered by every desk in the market within the hour, and each
+ * write-up classified separately — SK하이닉스 spent all three of its slots on
+ * 주주환원 three times over, which reads as three reasons and is one. The
+ * strongest survives and carries the count, so the room the others were taking
+ * goes to a different reason if the stock has one.
+ */
+function mergeSameReason(reasons) {
+  const byReason = new Map();
+
+  reasons.forEach((reason) => {
+    const key = `${reason.path}|${reason.title}`;
+    const seen = byReason.get(key);
+
+    if (!seen) {
+      byReason.set(key, { ...reason, sources: 1 });
+
+      return;
+    }
+
+    seen.sources += 1;
+  });
+
+  return [...byReason.values()].map(({ sources, ...reason }) => sources > 1
+    ? { ...reason, evidence: [...(reason.evidence ?? []), `같은 내용의 기사 ${sources}건`] }
+    : reason);
+}
+
 export async function attachLeaderReasons(config, leaders, { disclosures = [], headlines = [], macroSnapshot = [], market = "KR" } = {}) {
   if (leaders.length === 0) return leaders;
 
   const profile = marketProfiles[market] ?? marketProfiles.KR;
   const domestic = market === "KR";
   const businessYear = new Date().getFullYear() - 1;
+  let caps = { byName: new Map(), bySymbol: new Map() };
   let stakes = new Map();
   let entityNames = [];
 
   try {
-    [stakes, entityNames] = domestic
-      ? await Promise.all([loadStakes(config, businessYear), loadEntityNames(config, businessYear)])
-      : [new Map(), await loadUsEntityNames(config)];
+    [stakes, entityNames, caps] = domestic
+      ? await Promise.all([loadStakes(config, businessYear), loadEntityNames(config, businessYear), loadMarketCaps(config)])
+      : [new Map(), await loadUsEntityNames(config), caps];
   } catch (error) {
     console.warn(`${market} reason dictionaries unavailable`, error instanceof Error ? error.message : error);
   }
@@ -575,17 +744,18 @@ export async function attachLeaderReasons(config, leaders, { disclosures = [], h
     const otherNames = knownNames.filter((name) =>
       !ownName?.includes(name) && !name.includes(ownName ?? " "));
     const reasons = [
-      ...(domestic ? ownershipReasons(leader, stakes, headlineText) : []),
+      ...(domestic ? ownershipReasons(leader, stakes, headlineText, caps) : []),
       ...stockNewsReasons(leader, ownHeadlines, otherNames, profile.findAt),
       ...(domestic ? themeNewsReasons(leader, ownHeadlines) : []),
       ...disclosureReasons(leader, disclosures),
       ...regimeReasons(leader, indexChange, profile.indexLabel, ownName || leader.name)
     ]
       .filter((reason) => reason.confidence >= minimumConfidence)
-      .sort((left, right) => right.confidence - left.confidence)
+      .sort((left, right) => right.confidence - left.confidence);
+    const merged = mergeSameReason(reasons)
       .slice(0, maximumReasons)
       .map((reason, index) => ({ ...reason, id: `reason-${leader.symbol}-${index}` }));
 
-    return { ...leader, caution: cautionFor(leader, reasons), reasons };
+    return { ...leader, caution: cautionFor(leader, merged), reasons: merged };
   });
 }
