@@ -462,7 +462,10 @@ async function loadEarningsCalendar(config) {
 }
 
 function leaderSearchName(leader) {
-  return leader.name.replace(/\s+(Inc\.?|Corporation|Corp\.?|Ltd\.?|PLC|Co\.?)$/i, "").trim();
+  // The comma is part of the suffix. "Moderna, Inc." was becoming "Moderna,"
+  // and then never matching a headline, because headlines write "Moderna and
+  // Merck", not "Moderna,". Every US name in this shape was affected.
+  return leader.name.replace(/[,\s]+(Inc\.?|Corporation|Corp\.?|Ltd\.?|PLC|Co\.?)$/i, "").replace(/[,\s]+$/, "").trim();
 }
 
 function leaderCompanySearchName(leader) {
@@ -489,10 +492,18 @@ function uniqueBy(items, keyOf) {
   });
 }
 
-function textIncludesSymbol(text, symbol) {
-  if (/^\d+$/.test(symbol)) return text.includes(symbol);
+// Word boundaries, because the things being looked for are short enough to
+// live inside ordinary words: the ticker MRNA inside "mRNA", a one-word name
+// like Gap inside "the gap between". Tickers are matched case-sensitively for
+// the same reason - lowercased, MRNA is the molecule, and a Tempus AI story
+// about an mRNA melanoma trial was being tagged as Moderna and shown on
+// Moderna's row. Names stay case-insensitive; headlines are inconsistent
+// about those. Korean has no boundaries to find, so it is matched whole.
+function textIncludesTerm(text, term, { matchCase = false } = {}) {
+  if (/^\d+$/.test(term)) return text.includes(term);
+  if (!/[A-Za-z]/.test(term)) return text.includes(term);
 
-  return new RegExp(`(^|[^A-Za-z0-9])${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9]|$)`, "i").test(text);
+  return new RegExp(`(^|[^A-Za-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9]|$)`, matchCase ? "" : "i").test(text);
 }
 
 export function attachLeaderNewsTags(headlines, leaders) {
@@ -508,7 +519,6 @@ export function attachLeaderNewsTags(headlines, leaders) {
 
   return headlines.map((headline) => {
     const text = `${headline.source} ${headline.label} ${headline.text} ${headline.originalText ?? ""}`;
-    const lowerText = text.toLowerCase();
     // The theme match reads the story itself — not who published it, and not
     // the label this pipeline assigned upstream. Both produced false matches by
     // substring: a Reuters report on Houthi missiles in Yemen carries the label
@@ -520,9 +530,9 @@ export function attachLeaderNewsTags(headlines, leaders) {
     const relatedSymbols = uniqueBy(
       candidates
         .filter((leader) => headline.region === leader.market
-          && ((leader.name && lowerText.includes(leader.name.toLowerCase()))
-            || (leader.companyName && lowerText.includes(leader.companyName.toLowerCase()))
-            || textIncludesSymbol(text, leader.symbol)))
+          && ((leader.name && textIncludesTerm(text, leader.name))
+            || (leader.companyName && textIncludesTerm(text, leader.companyName))
+            || textIncludesTerm(text, leader.symbol, { matchCase: true })))
         .map((leader) => leader.symbol),
       (symbol) => symbol
     ).slice(0, 4);
