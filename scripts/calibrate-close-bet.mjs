@@ -32,7 +32,7 @@ const { rows } = await query(config, `
      GROUP BY session_date
     HAVING count(*) >= 50
   )
-  SELECT c.session_date::text AS d,
+  SELECT c.session_date::text AS d, c.size_label,
          (c.day_move) AS day_move,
          (c.next_open / c.close - 1) * 100 AS gap,
          (c.next_open / c.close - 1) * 100 - n.night_gap AS excess
@@ -47,8 +47,8 @@ const from = rows.reduce((a, r) => (r.d < a ? r.d : a), "9999-99-99");
 const to = rows.reduce((a, r) => (r.d > a ? r.d : a), "0000-00-00");
 let written = 0;
 
-for (const { minDayMove, tier } of closeBetTiers) {
-  const list = rows.filter((r) => Number(r.day_move) >= minDayMove);
+for (const { tier } of closeBetTiers) {
+  const list = rows.filter((r) => r.size_label === tier);
 
   if (list.length < 100) {
     console.log(`  ${tier} · ${list.length}건 · 표본 부족, 쓰지 않습니다`);
@@ -76,10 +76,10 @@ for (const { minDayMove, tier } of closeBetTiers) {
       nights = EXCLUDED.nights,
       samples = EXCLUDED.samples,
       updated_at = now()
-  `, [tier, minDayMove, list.length, nights, beatRate.toFixed(4), excessMean.toFixed(4), gapUpRate.toFixed(4), from, to]);
+  `, [tier, 0, list.length, nights, beatRate.toFixed(4), excessMean.toFixed(4), gapUpRate.toFixed(4), from, to]);
 
   written += 1;
-  console.log(`  ${tier} (당일 ${minDayMove}%↑) · ${list.length}건 · ${nights}밤 · 밤평균 상회 ${Math.round(beatRate * 100)}% · 갭상승 ${Math.round(gapUpRate * 100)}% · 초과 ${excessMean >= 0 ? "+" : ""}${excessMean.toFixed(3)}%p`);
+  console.log(`  ${tier} · ${list.length}건 · ${nights}밤 · 밤평균 상회 ${Math.round(beatRate * 100)}% · 갭상승 ${Math.round(gapUpRate * 100)}% · 초과 ${excessMean >= 0 ? "+" : ""}${excessMean.toFixed(3)}%p`);
 }
 
 console.log(`\n${written}개 등급 기록 · ${from} ~ ${to} · ${Math.round((Date.now() - started) / 1000)}초`);

@@ -26,23 +26,60 @@ const lookback = 60;
 // 하루 거래대금 10억 미만은 갭이 호가 한 칸에도 튀어서 후보가 될 수 없습니다.
 const minimumTurnover = 1_000_000_000;
 
-const minimumDayMove = 10;
-const minimumVolumeRatio = 2;
 const maximumUpperShadow = 0.3;
 
 /**
- * 등급 문턱. 위로 갈수록 후보가 줄고 초과가 커집니다 -- 측정값은
- * kr_close_bet_calibration에 있고, 여기에는 경계만 둡니다.
+ * 문턱은 규모마다 다릅니다.
+ *
+ * 하나로 두면 초대형주가 구조적으로 빠집니다. 당일 10% · 거래량 2배로는 삼성전자와
+ * SK하이닉스가 1.6년간 한 번도 안 걸립니다 -- 2026-07-31에 하이닉스가 +29.95%
+ * 상한가를 갔는데도 그렇습니다. 폭락 뒤 반등이라 60일 고점을 못 넘었고, 거래량은
+ * 1.6배였습니다. 대형주는 원래 거래량이 두 배가 되는 일이 드뭅니다.
+ *
+ * 규모별로 재보니 문턱이 다르고 엣지도 다릅니다(활성화양봉·윗꼬리 고정, 익일 시가
+ * 매도, 그날 밤 평균 대비 초과분).
+ *
+ *   대형 1조↑     당일 5%↑ · 거래량 1.5배↑   하루 4.0건   +0.653%p
+ *   중형 3천억~1조  당일 5%↑ · 거래량 1.5배↑   하루 4.0건   +0.653%p 수준
+ *   소형 3천억↓    당일 10%↑ · 거래량 2배↑    하루 6.0건   +2.826%p
+ *
+ * 대형주 엣지는 소형주의 1/4이지만 0이 아닙니다. 원전 호재로 두산에너빌리티가
+ * 오르는 날을 잡자는 것이 이 화면의 목적이고, 그 종목은 소형주 문턱으로는 1.6년에
+ * 2일만 걸립니다.
  */
-export const closeBetTiers = [
-  { minDayMove: 20, tier: "강" },
-  { minDayMove: 15, tier: "중" },
-  { minDayMove: minimumDayMove, tier: "약" }
+const sizeThresholds = [
+  { label: "대형", minCap: 1_000_000_000_000, minDayMove: 5, minVolumeRatio: 1.5 },
+  { label: "중형", minCap: 300_000_000_000, minDayMove: 5, minVolumeRatio: 1.5 },
+  { label: "소형", minCap: 0, minDayMove: 10, minVolumeRatio: 2 }
 ];
 
-function tierFor(dayMove) {
-  return closeBetTiers.find((entry) => dayMove >= entry.minDayMove)?.tier ?? "약";
-}
+// 시총을 모르는 종목은 소형 문턱을 씁니다 -- 수집 대상 밖이라는 뜻이고, 그 자체가
+// 작다는 신호입니다.
+const sizeLabelCase = sizeThresholds
+  .map((size) => `WHEN coalesce(cap, 0) >= ${size.minCap} THEN '${size.label}'`)
+  .join(" ");
+
+const sizeCase = (column) => sizeThresholds
+  .map((size) => `WHEN coalesce(cap, 0) >= ${size.minCap} THEN ${size[column]}`)
+  .join(" ");
+
+const minimumDayMove = 5;
+const minimumVolumeRatio = 1.5;
+
+/**
+ * 등급은 규모입니다.
+ *
+ * 상승률로 나눴었는데, 규모마다 문턱이 다르면 그 축이 성립하지 않습니다 -- 대형주
+ * 5%와 소형주 15%는 같은 등급표에 놓을 수 없습니다. 규모별로 문턱도 성적도 따로
+ * 재고 있으므로 등급도 규모를 따릅니다.
+ *
+ * 전 기간 실측(익일 시가 매도, 그날 밤 평균 대비 초과분):
+ *
+ *   소형  2,286건 · 하루 6.3건 · 상회 62% · +3.037%p
+ *   중형  1,407건 · 하루 4.4건 · 상회 54% · +0.985%p
+ *   대형  1,502건 · 하루 4.9건 · 상회 51% · +0.862%p
+ */
+export const closeBetTiers = sizeThresholds.map((size) => ({ tier: size.label }));
 
 /**
  * 조건을 만족한 하루치를 뽑는 SQL.
@@ -67,13 +104,23 @@ export const closeBetCandidateSql = `
       FROM kr_daily_bars
      WINDOW w AS (PARTITION BY symbol ORDER BY session_date)
   )
+  , sized AS (
+    SELECT b.*, u.market_cap AS cap
+      FROM bars b
+      LEFT JOIN LATERAL (
+        SELECT market_cap FROM kr_daily_universe
+         WHERE symbol = b.symbol AND market_cap > 0
+         ORDER BY session_date DESC LIMIT 1
+      ) u ON true
+  )
   SELECT symbol, session_date, open, high, low, close, volume, turnover, prior_high,
-         next_open,
+         next_open, cap,
          (close / prev_close - 1) * 100 AS day_move,
          (high - close) / nullif(high - low, 0) AS upper_shadow,
          volume / nullif(avg_volume, 0) AS volume_ratio,
-         (close / nullif(prior_high, 0) - 1) * 100 AS break_margin
-    FROM bars
+         (close / nullif(prior_high, 0) - 1) * 100 AS break_margin,
+         CASE ${sizeLabelCase} END AS size_label
+    FROM sized
    WHERE prev_close > 0 AND close > 0 AND high > low AND history >= 20
      AND prior_high IS NOT NULL AND prior_high_yesterday IS NOT NULL
      AND close * volume >= ${minimumTurnover}
@@ -81,8 +128,8 @@ export const closeBetCandidateSql = `
      AND close > prior_high
      AND prev_close <= prior_high_yesterday
      AND (high - close) / nullif(high - low, 0) < ${maximumUpperShadow}
-     AND (close / prev_close - 1) * 100 >= ${minimumDayMove}
-     AND volume / nullif(avg_volume, 0) >= ${minimumVolumeRatio}
+     AND (close / prev_close - 1) * 100 >= (CASE ${sizeCase("minDayMove")} END)
+     AND volume / nullif(avg_volume, 0) >= (CASE ${sizeCase("minVolumeRatio")} END)
 `;
 
 async function loadCalibration(config) {
@@ -153,6 +200,9 @@ const liveCandidateSql = `
   )
   SELECT t.symbol, t.name, t.observed_at, t.turnover, t.volume, t.market_cap,
          t.change_rate AS day_move,
+         -- 확정 경로와 같은 규모 문턱을 씁니다. 장중과 마감 후에 다른 종목이 뜨면
+         -- 그 목록으로는 아무것도 판단할 수 없습니다.
+         CASE ${sizeLabelCase.replace(/coalesce\(cap, 0\)/g, "coalesce(t.market_cap, 0)")} END AS size_label,
          c.prev_close * (1 + t.change_rate / 100) AS close,
          c.prior_high,
          (c.prev_close * (1 + t.change_rate / 100) / nullif(c.prior_high, 0) - 1) * 100 AS break_margin,
@@ -161,9 +211,9 @@ const liveCandidateSql = `
     FROM today t
     JOIN context c ON c.symbol = t.symbol
    WHERE c.prev_close > 0 AND c.prior_high IS NOT NULL AND c.avg_volume > 0
-     AND t.change_rate >= ${minimumDayMove}
+     AND t.change_rate >= (CASE ${sizeCase("minDayMove").replace(/coalesce\(cap, 0\)/g, "coalesce(t.market_cap, 0)")} END)
      AND t.turnover >= ${minimumTurnover}
-     AND t.volume / nullif(c.avg_volume, 0) >= ${minimumVolumeRatio}
+     AND t.volume / nullif(c.avg_volume, 0) >= (CASE ${sizeCase("minVolumeRatio").replace(/coalesce\(cap, 0\)/g, "coalesce(t.market_cap, 0)")} END)
      -- 돌파 직후. 어제 종가가 이미 고점 위였다면 이어가는 자리입니다.
      AND c.prev_close * (1 + t.change_rate / 100) > c.prior_high
      AND c.prev_close <= c.prior_high_yesterday
@@ -213,7 +263,7 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
     .filter((row) => !row.trade_halted)
     .map((row) => {
       const dayMove = Number(row.day_move);
-      const tier = tierFor(dayMove);
+      const tier = row.size_label ?? "소형";
       const measured = calibration.get(tier);
 
       return {
