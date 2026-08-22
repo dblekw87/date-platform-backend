@@ -88,7 +88,20 @@ function Wait-Port {
 }
 
 function Test-DockerDaemon {
-  docker ps 2>&1 | Out-Null
+  # try/catch rather than a bare probe: Windows PowerShell 5.1 raises a native
+  # command's stderr as an ErrorRecord, and the $ErrorActionPreference = "Stop"
+  # at the top of this script turns that into a terminating error. A daemon that
+  # is down writes to stderr, so the probe killed the script on exactly the
+  # cold-boot path it exists to detect - and silently, since nothing after
+  # "--- start-collector ---" ever ran. Measured 2026-08-22: three scheduled
+  # runs died there after a reboot, and the "starting Docker Desktop" branch
+  # below had never once executed in four days of logs. Redirecting with 2>$null
+  # is not enough; it still throws.
+  try {
+    docker ps 2>$null | Out-Null
+  } catch {
+    return $false
+  }
 
   return $LASTEXITCODE -eq 0
 }
