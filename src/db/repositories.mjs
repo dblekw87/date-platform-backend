@@ -700,3 +700,53 @@ export async function loadRecordedNames(config, { market = "KR" } = {}) {
 
   return new Map(result.rows.map((row) => [row.symbol, row.name]));
 }
+
+/**
+ * Strips the display formatting off a macro figure.
+ *
+ * The snapshot carries "2,540.11" and "-1.40%" because that is what the screen
+ * needs. Storing those strings would mean re-parsing them on every read, and a
+ * thousand separator is a decimal point in half the world.
+ */
+function macroNumber(value) {
+  if (value === null || value === undefined) return null;
+
+  return numericOrNull(String(value).replace(/[,%\s]/g, ""));
+}
+
+/**
+ * One moment of the background the stocks moved against.
+ *
+ * The board has always read these — indices, BTC, gold, WTI, USD/KRW, the US
+ * 10-year — and never kept one. Writing them here costs no request: it is the
+ * same snapshot the board just built.
+ */
+export async function saveMacroSamples(config, { observedAt, snapshot }) {
+  if (!config.databaseUrl || snapshot.length === 0) return 0;
+
+  const columns = 9;
+  const values = snapshot.flatMap((item) => [
+    item.id,
+    item.label ?? item.id,
+    item.market ?? "GLOBAL",
+    item.instrumentType ?? "index",
+    item.symbol ?? item.id,
+    macroNumber(item.value),
+    macroNumber(item.changeRate),
+    observedAt,
+    item.source ?? "market"
+  ]);
+  const rows = snapshot
+    .map((_, index) => `(${Array.from({ length: columns }, (__, offset) => `$${index * columns + offset + 1}`).join(", ")})`)
+    .join(", ");
+  const result = await query(config, `
+    INSERT INTO macro_samples (
+      snapshot_id, label, market, instrument_type, symbol,
+      value, change_rate, observed_at, source
+    )
+    VALUES ${rows}
+    ON CONFLICT (snapshot_id, observed_at) DO NOTHING
+  `, values);
+
+  return result.rowCount;
+}

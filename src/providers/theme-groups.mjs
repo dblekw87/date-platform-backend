@@ -124,3 +124,48 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [], windo
     .sort((left, right) => right.leadGap - left.leadGap)
     .slice(0, maximumThemes);
 }
+
+/**
+ * The stocks of one session, shaped the way the leader board shapes them.
+ *
+ * 강세 테마 was built from whatever book happens to be open, so after 15:40 the
+ * panel headed "국내 강세 테마" was quietly describing the NXT evening, and the
+ * regular session it appeared to be about had no panel at all. Reading each
+ * window out of the record gives both a list that is true to the hours it
+ * names, the same way the 짝꿍 panels already work.
+ *
+ * Grouping stays on the browser side: `rankedThemeGroups` is what decides a
+ * theme needs two rising names, and having one rule in one place is worth more
+ * than saving the rows.
+ */
+export async function loadThemeStocks(config, sessionDate, { window = "regular" } = {}) {
+  if (!config.databaseUrl) return [];
+
+  const bounds = windows[window] ?? windows.regular;
+  const result = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol,
+           coalesce(nullif(name, symbol), symbol) AS name,
+           theme, change_rate, turnover, volume, market_cap
+      FROM market_price_samples
+     WHERE session_date = $1 AND market = 'KR'
+       AND source LIKE $2
+       AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN $3::time AND $4::time
+       AND theme IS NOT NULL AND theme NOT IN ('미분류', 'ETF')
+       AND change_rate IS NOT NULL
+     ORDER BY symbol, observed_at DESC
+  `, [sessionDate, bounds.source, bounds.from, bounds.to]);
+
+  return result.rows.map((row) => ({
+    changeRateValue: Number(row.change_rate),
+    id: `${window}-${row.symbol}`,
+    market: "KR",
+    marketCapValue: row.market_cap === null ? undefined : Number(row.market_cap),
+    marketLabel: window === "after" ? "NXT" : "KRX",
+    name: row.name,
+    symbol: row.symbol,
+    theme: row.theme,
+    turnoverValue: row.turnover === null ? 0 : Number(row.turnover),
+    venue: window === "after" ? "NXT" : "KRX",
+    volumeValue: row.volume === null ? undefined : Number(row.volume)
+  }));
+}

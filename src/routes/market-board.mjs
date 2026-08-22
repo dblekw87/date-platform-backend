@@ -2,6 +2,7 @@ import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, loadSymbolFlags, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
 import { hasDartCredentials, loadLeaderDisclosures } from "../providers/dart.mjs";
 import { loadKrDisclosureBoard } from "../providers/kr-disclosures.mjs";
+import { loadHaltedStocks } from "../providers/kr-universe.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
@@ -14,7 +15,7 @@ import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
-import { loadThemeGroups } from "../providers/theme-groups.mjs";
+import { loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
@@ -94,6 +95,8 @@ function baseMarketBoardData(providerStatuses) {
     krPairTrades: [],
     usSurgeCandidates: [],
     usPremarketMovers: [],
+    krHaltedStocks: [],
+    krSessionThemeStocks: { after: [], regular: [] },
     smallCapScanner: []
   };
 }
@@ -127,6 +130,8 @@ function mergeMarketBoardData(base, payload) {
     krEtfLeaders: payload.krEtfLeaders ?? base.krEtfLeaders,
     usEtfLeaders: payload.usEtfLeaders ?? base.usEtfLeaders,
     krLeadingStocks: payload.krLeadingStocks ?? base.krLeadingStocks,
+    krHaltedStocks: payload.krHaltedStocks ?? base.krHaltedStocks,
+    krSessionThemeStocks: payload.krSessionThemeStocks ?? base.krSessionThemeStocks,
     smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
     usSurgeCandidates: payload.usSurgeCandidates ?? base.usSurgeCandidates,
     usPremarketMovers: payload.usPremarketMovers ?? base.usPremarketMovers
@@ -754,8 +759,20 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // Not from any adapter: these read the history we collected ourselves, and
     // then what that history's candidates are doing outside the bell.
     usSurgeCandidates: await loadUsSurgeCandidateBoard(config),
-    usPremarketMovers: (await loadUsPremarketMovers(config)).movers
-  };
+    usPremarketMovers: (await loadUsPremarketMovers(config)).movers,
+    // Stocks the exchange has stopped, largest first. Read from the daily
+    // universe pass rather than a ranking, because a halted stock has no
+    // turnover to be ranked by and so appears in none of them - which is why
+    // the board could not show one at all until now.
+    krHaltedStocks: await loadHaltedStocks(config).catch(() => []),
+    // 강세 테마, one list per session. The live leader board follows whichever
+    // book is open, so after 15:40 the panel headed 국내 강세 테마 was quietly
+    // describing the NXT evening and the regular session had no panel at all.
+    // Both come out of the record so each is true to the hours it names.
+    krSessionThemeStocks: {
+      after: await loadThemeStocks(config, sessionDate("KR"), { window: "after" }).catch(() => []),
+      regular: await loadThemeStocks(config, sessionDate("KR"), { window: "regular" }).catch(() => [])
+    }
 
   const dated = await withSymbolEvents(config, board);
 

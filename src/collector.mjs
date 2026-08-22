@@ -4,7 +4,8 @@ import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
-import { loadRecordedNames, loadSessionSymbols, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
+import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
+import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme } from "./providers/themes.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
@@ -566,6 +567,47 @@ function startInvestorFlow(config, minute) {
 }
 
 
+// 15:50. 종가가 확정된 직후이고, 투자자별 매매동향(16:10)과 겹치지 않습니다.
+const universeMinute = 15 * 60 + 50;
+let universeDay = null;
+let universeRunning = false;
+
+/**
+ * 전 종목 하루치 — 순위 밖에서 무슨 일이 있었는지.
+ *
+ * 1분 표본은 랭킹 상위 30개와 짝꿍 후보만 봅니다. 2026-08-21에 오가닉티코스메틱이
+ * +29.90%로 마감했는데 거래대금이 6억이라 어느 랭킹에도 못 들어왔고, 우리 기록에는
+ * 그 종목이 존재하지 않았습니다. 하루 한 번 4,300종목을 통째로 받아 두면 적어도
+ * 사후 복원은 됩니다.
+ *
+ * 100종목씩 44요청, 약 11초. 저녁 틱을 붙잡지 않도록 await 하지 않습니다.
+ */
+function startUniverseSample(config, minute) {
+  const day = sessionDate("KR");
+
+  if (universeRunning || universeDay === day || minute < universeMinute) return;
+
+  universeDay = day;
+  universeRunning = true;
+
+  (async () => {
+    const rows = await loadKrUniverse();
+    const saved = await saveKrUniverse(config, { rows, sessionDate: day });
+
+    console.log(`collector: ${saved} universe rows · ${rows.filter((row) => row.tradeHalted).length} halted · ${day}`);
+
+    if (saved === 0) console.warn(`collector: universe stored nothing for ${day}`);
+  })()
+    .catch((error) => {
+      // Let tomorrow try again rather than losing the day to one bad evening.
+      universeDay = null;
+      console.warn("collector: universe sample failed", error instanceof Error ? error.message : error);
+    })
+    .finally(() => {
+      universeRunning = false;
+    });
+}
+
 const programIntervalMs = 5 * 60_000;
 // Program flow is only worth asking about where money is concentrated, and one
 // request per symbol means the whole watchlist is out of reach. Forty is about
@@ -795,6 +837,18 @@ async function sampleNews(config) {
 
   startSnapshotPublish(config, board);
 
+  // The same build already holds the indices, BTC, gold, WTI, the won and the
+  // 10-year. They were drawn and thrown away on every tick since the board
+  // existed, so a stock's half-million samples had no background to be read
+  // against - and "why did bitcoin rise" had to be asked of CoinGecko again.
+  const macro = board.macroSnapshot ?? [];
+
+  if (macro.length > 0) {
+    await saveMacroSamples(config, { observedAt: new Date().toISOString(), snapshot: macro })
+      .then((saved) => { if (saved > 0) console.log(`collector: ${saved} macro samples`); })
+      .catch((error) => console.warn("collector: macro sample failed", error instanceof Error ? error.message : error));
+  }
+
   return saveMarketNewsItems(config, board.headlineFlow ?? []);
 }
 
@@ -844,6 +898,7 @@ export function startMarketCollector(config) {
         }
 
         startInvestorFlow(config, minute);
+        startUniverseSample(config, minute);
 
         const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);
 
