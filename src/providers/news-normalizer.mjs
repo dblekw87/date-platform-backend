@@ -55,8 +55,17 @@ function timeFromPublishedAt(publishedAt) {
   }).format(date);
 }
 
+/**
+ * What the article is about — read from the article and from nothing else.
+ *
+ * `item.category` and `item.label` are the search that found the story, not a
+ * fact about it. A Naver query for "2차전지 주식" came back holding "1238회 로또
+ * 1등 23명…당첨금 각 11억9726만원", which arrived labelled 2차전지 and then sat
+ * on 이노메트리's row as its theme news. Whatever brings a story in cannot also
+ * be the evidence for what it is.
+ */
 function labelFromRaw(item) {
-  const text = `${item.category ?? ""} ${item.label ?? ""} ${item.title ?? ""} ${item.headline ?? ""}`.toLowerCase();
+  const text = `${item.title ?? ""} ${item.headline ?? ""}`.toLowerCase();
 
   if (/rate|yield|fed|fomc|cpi|ppi|금리|환율|달러|물가/.test(text)) return "매크로";
   if (/earnings|guidance|실적|가이던스|컨센서스/.test(text)) return "실적";
@@ -91,11 +100,10 @@ function labelFromRaw(item) {
   // same column as the Korean taxonomy.
   if (/policy|정책|규제|tariff|관세/.test(text)) return "정책";
 
-  const fallback = item.label?.trim() || item.category?.trim();
-
-  if (fallback && /주식$|stock news|earnings guidance|earnings revenue|guidance revenue/i.test(fallback)) return "종목 뉴스";
-  if (fallback && !/^(general|business|stock market|stocks|news|headline|headlines)$/i.test(fallback)) return fallback;
-
+  // No rule matched, so nothing about this story is known. The feed's own query
+  // used to be returned here, which is where "2차전지" on a lottery result and
+  // "small cap stocks" and "inflation data" beside the Korean taxonomy came
+  // from. Saying 헤드라인 is the honest answer and reads as one.
   return "헤드라인";
 }
 

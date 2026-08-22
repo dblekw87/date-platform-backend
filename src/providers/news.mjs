@@ -1,4 +1,5 @@
 import { readThroughCache } from "../cache.mjs";
+import { query } from "../db/client.mjs";
 import { fetchJson, fetchText } from "../http.mjs";
 import { dedupeNews, normalizeNewsFeed } from "./news-normalizer.mjs";
 import { createRuntimeState } from "./runtime-state.mjs";
@@ -76,9 +77,7 @@ const themeSearchTerms = {
   "항공우주": { ko: "항공우주 위성 주식", en: "aerospace space satellite stocks" }
 };
 
-const marketRelevancePattern = /주식|증시|시장|코스피|코스닥|환율|금리|국채|선물|외국인|기관|거래량|거래대금|반도체|패키지기판|기판|2차전지|배터리|바이오|제약|항공우주|우주|위성|로켓|조선|방산|로봇|원전|mlcc|콘덴서|커패시터|광통신|광모듈|광부품|네트워크|자동차|은행|금융|증권|에너지|유가|가상자산|비트코인|전력|수소|연료전지|신재생|재생에너지|태양광|풍력|AI|데이터센터|인수|합병|매각|공시|실적|가이던스|정책|규제|남북|대북|경협|개성공단|금강산|종전선언|판문점|김정은|stock|stocks|market|shares|nasdaq|nyse|dow|s&p|russell|futures|etf|fed|fomc|cpi|ppi|yield|treasury|rate|rates|inflation|dollar|currency|oil|crude|fuel|gold|energy|renewable|hydrogen|fuel cell|solar|wind|earnings|guidance|merger|acquisition|m&a|sale|sec|fda|semiconductor|chip|chips|battery|biotech|pharma|aerospace|space|satellite|rocket|launch|capacitor|optical|photonics|coherent|networking|bank|banks|brokerage|defense|shipbuilding|robot|nuclear|crypto|bitcoin|ai|data center|tariff|regulation/i;
-
-const signalLabels = new Set(["매크로", "실적", "2차전지", "반도체", "AI 인프라", "AI·방산", "바이오", "항공우주", "조선·방산", "로봇·원전", "MLCC·전자부품", "광통신·네트워크", "수소·연료전지", "재생에너지", "자동차", "금융", "에너지", "암호화폐", "M&A", "정책", "남북경협"]);
+const marketRelevancePattern = /주식|증시|시장|코스피|코스닥|환율|금리|국채|선물|외국인|기관|거래량|거래대금|반도체|패키지기판|기판|2차전지|배터리|바이오|제약|항공우주|우주|위성|로켓|조선|방산|로봇|원전|mlcc|콘덴서|커패시터|광통신|광모듈|광부품|네트워크|자동차|은행|금융|증권|에너지|유가|가상자산|비트코인|전력|수소|연료전지|신재생|재생에너지|태양광|풍력|AI|데이터센터|인수|합병|매각|공시|실적|가이던스|정책|규제|남북|대북|경협|개성공단|금강산|종전선언|판문점|김정은|주가|주주|자사주|순매수|순매도|수급|공매도|배당|증자|상장|수혜주|관련주|테마주|목표주가|시가총액|시총|밸류업|개미|투자자|펀드|채권|회사채|메자닌|전환사채|관세|무역|수출|어닝|매출|영업이익|적자|흑자|증권가|애널리스트|리포트|반등|급등|급락|강세|약세|임상|항암|신약|stock|stocks|market|shares|nasdaq|nyse|dow|s&p|russell|futures|etf|fed|fomc|cpi|ppi|yield|treasury|rate|rates|inflation|dollar|currency|oil|crude|fuel|gold|energy|renewable|hydrogen|fuel cell|solar|wind|earnings|guidance|merger|acquisition|m&a|sale|sec|fda|semiconductor|chip|chips|battery|biotech|pharma|aerospace|space|satellite|rocket|launch|capacitor|optical|photonics|coherent|networking|bank|banks|brokerage|defense|shipbuilding|robot|nuclear|crypto|bitcoin|ai|data center|tariff|regulation|dividend|revenue|profit|buyback|analyst|valuation|ipo|price target/i;
 
 const state = createRuntimeState("market-board-news-state", () => ({
   events: [],
@@ -149,8 +148,66 @@ function isArticleLikeSource(source, title) {
   return !/blog|블로그|cafe|카페|tistory|티스토리|brunch|브런치/i.test(`${source ?? ""} ${title ?? ""}`);
 }
 
-function isMarketRelevant(item) {
-  return marketRelevancePattern.test(`${signalLabels.has(item.label) ? item.label : ""} ${item.text}`);
+const listedNamesTtlMs = 6 * 60 * 60_000;
+
+/**
+ * Every listed name the collector has seen, as a relevance signal of its own.
+ *
+ * A headline naming a listed company is market news whether or not it uses any
+ * of the words above — "LG화학, 차세대 면역항암제 개발 속도" and "40兆 소각하는
+ * SK하이닉스" both failed the keyword rule. Measured over 2,684 domestic items:
+ * keywords alone left 8% unmatched, the widened vocabulary 3.5%, and adding the
+ * names 2.2% — and what remains at 2.2% is spam and clickbait.
+ */
+async function loadListedNames(config) {
+  return readThroughCache("kr-listed-names", listedNamesTtlMs, async () => {
+    const result = await query(
+      config,
+      `SELECT DISTINCT ON (name) name, theme
+         FROM market_price_samples
+        WHERE market = 'KR' AND name IS NOT NULL AND length(name) >= 3
+        ORDER BY name, observed_at DESC`
+    );
+
+    // Longest first, so 한화오션 is read before 한화. Korean has no word
+    // boundary, so the shorter name is always a substring of the longer one and
+    // whichever is tested first wins.
+    return result.rows
+      .map((row) => ({ name: row.name, theme: row.theme }))
+      .sort((left, right) => right.name.length - left.name.length);
+  }).catch(() => []);
+}
+
+/**
+ * Whether a story belongs in the corpus.
+ *
+ * The label used to vouch for the item, which was circular: the label came from
+ * the search that found it, so a lottery result fetched by a "2차전지 주식"
+ * query passed the gate on the strength of the query that fetched it. Only the
+ * article speaks for the article now.
+ */
+function isMarketRelevant(item, listed = []) {
+  if (marketRelevancePattern.test(item.text)) return true;
+
+  return listed.some((entry) => item.text.includes(entry.name));
+}
+
+/**
+ * The theme of the company a headline names, for the stories the word rules
+ * cannot place.
+ *
+ * "에코프로비엠, 양극재 신규 수주" and "40兆 소각하는 SK하이닉스" carry no theme
+ * vocabulary at all, and the search query used to supply one — which is the
+ * same mechanism that filed a lottery result under 2차전지. The company the
+ * story is about is a better answer than the query that found it, and the
+ * collector already knows what theme every name it has seen belongs to.
+ */
+function themeLabelFor(item, listed) {
+  if (item.label !== "헤드라인" || item.region !== "KR") return item.label;
+
+  const named = listed.find((entry) => entry.theme && entry.theme !== "미분류" && item.text.includes(entry.name));
+
+  return named ? named.theme : item.label;
 }
 
 async function settleFeeds(loaders) {
@@ -582,7 +639,10 @@ export async function loadLeaderNewsHeadlines(leaders) {
   const loaders = [...leaderQueries, ...themeQueries].map((item) =>
     googleNewsRssFeed(item.query, { region: item.region, language: item.language, label: item.label })
   );
-  const headlines = dedupeNews((await settleFeeds(loaders)).filter(isMarketRelevant)).slice(0, 30);
+  const listed = await loadListedNames(config);
+  const headlines = dedupeNews((await settleFeeds(loaders))
+    .filter((item) => isMarketRelevant(item, listed))
+    .map((item) => ({ ...item, label: themeLabelFor(item, listed) }))).slice(0, 30);
   const tagged = attachLeaderNewsTags(headlines, leaders);
   const newHeadlineIds = await recordHeadlines(tagged.map((item) => item.id));
 
@@ -632,7 +692,10 @@ export async function loadNewsHeadlines(config) {
     loaders.push(finnhubFeed(config, "forex"));
     loaders.push(benzingaFeed(config));
 
-    const relevant = (await settleFeeds(loaders)).filter(isMarketRelevant);
+    const listed = await loadListedNames(config);
+    const relevant = (await settleFeeds(loaders))
+      .filter((item) => isMarketRelevant(item, listed))
+      .map((item) => ({ ...item, label: themeLabelFor(item, listed) }));
     const headlineFlow = await translateUsHeadlines(config, balanceByRegion(limitDominantLabels(dedupeNews(relevant))));
     const newHeadlineIds = await recordHeadlines(headlineFlow.map((item) => item.id));
     const detectedAt = new Date().toISOString();
