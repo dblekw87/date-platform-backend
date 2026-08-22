@@ -1,4 +1,4 @@
-import { classifyDisclosure } from "./dart.mjs";
+import { classifyDisclosure, loadDartDisclosures } from "./dart.mjs";
 import { fetchJson, fetchText } from "../http.mjs";
 import { query } from "../db/client.mjs";
 
@@ -225,4 +225,92 @@ export async function collectKrDisclosures(config, {
   if (log) log(`kr disclosures · ${saved}/${fetched} new · ${timed} timed · ${sessionDate}`);
 
   return { fetched, saved, timed };
+}
+
+/**
+ * 시가총액으로 나눈 발행사 규모.
+ *
+ * 화면의 `소형주` 칩이 국내에서 한 건도 못 잡고 있었습니다. 저장할 때
+ * issuer_type을 그냥 'unknown'으로 박아 넣었기 때문입니다. 실제로는 하루 공시
+ * 780건 중 117건이 시총 3천억 미만 회사가 낸 것이고, 시총을 아예 모르는 208건은
+ * 수집 대상(거래 상위 568종목) 밖이라 그 자체가 소형주라는 신호입니다.
+ *
+ * 유가증권 상장사는 모른다고 답합니다 -- 거래가 뜸한 대형주도 있어서, 코스닥·코넥스와
+ * 달리 시장 구분만으로는 규모를 말할 수 없습니다.
+ */
+const largeCapFloor = 1_000_000_000_000;
+const midCapFloor = 300_000_000_000;
+
+function issuerTypeFor(marketCap, marketClass) {
+  if (Number.isFinite(marketCap) && marketCap > 0) {
+    if (marketCap >= largeCapFloor) return "large-cap";
+
+    return marketCap >= midCapFloor ? "mid-cap" : "small-cap";
+  }
+
+  return marketClass === "K" || marketClass === "N" ? "small-cap" : "unknown";
+}
+
+// 화면에 담기는 양. 하루 780건을 다 내려보내도 읽는 사람이 없습니다.
+const boardDisclosureLimit = 120;
+
+/**
+ * 보드가 그리는 국내 공시 -- DART가 아니라 우리가 저장한 표에서 읽습니다.
+ *
+ * 보드는 매번 DART에 다시 물어 최신 30건만 받고 있었습니다. 시장 전체에서 30건이면
+ * 오전에 이미 그날 것이 아니고, 무엇보다 필터 칩을 누르면 걸리는 게 거의 없습니다.
+ * 저장된 표에는 같은 날 780건이 접수 시각과 분류를 달고 들어와 있으므로, 칩이
+ * 실제로 무언가를 걸러낼 수 있는 모집단은 이미 여기 있습니다.
+ */
+export async function loadStoredKrDisclosures(config, { limit = boardDisclosureLimit, sessionDate } = {}) {
+  const result = await query(config, `
+    SELECT d.accession_number, d.action, d.company_name, d.event_type, d.filed_at,
+           d.form_type, d.id, d.market_class, d.original_url, d.report_name,
+           d.symbol, d.tags, d.title, d.urgency, c.market_cap
+      FROM market_disclosures d
+      LEFT JOIN LATERAL (
+        SELECT market_cap
+          FROM market_price_samples s
+         WHERE s.market = 'KR' AND s.symbol = d.symbol AND s.market_cap IS NOT NULL
+         ORDER BY s.observed_at DESC
+         LIMIT 1
+      ) c ON true
+     WHERE d.market = 'KR'
+       AND ($1::date IS NULL OR d.session_date = $1::date)
+     ORDER BY d.filed_at DESC
+     LIMIT $2
+  `, [sessionDate ?? null, limit]);
+
+  return result.rows.map((row) => ({
+    accessionNumber: row.accession_number,
+    action: row.action,
+    companyName: row.company_name,
+    eventType: row.event_type,
+    filedAt: row.filed_at,
+    formType: row.form_type,
+    id: row.id,
+    issuerType: issuerTypeFor(Number(row.market_cap), row.market_class),
+    market: "KR",
+    originalUrl: row.original_url,
+    source: "DART",
+    symbol: row.symbol,
+    tags: row.tags ?? [],
+    title: row.title,
+    urgency: row.urgency
+  }));
+}
+
+/**
+ * The board's domestic filing box.
+ *
+ * Prefers what the collector stored, which is the whole day with receipt times
+ * and a size for each filer, and falls back to asking DART directly so a fresh
+ * database or a morning before the first sweep still draws something.
+ */
+export async function loadKrDisclosureBoard(config) {
+  const stored = await loadStoredKrDisclosures(config).catch(() => []);
+
+  if (stored.length > 0) return { krDisclosures: stored };
+
+  return loadDartDisclosures(config);
 }

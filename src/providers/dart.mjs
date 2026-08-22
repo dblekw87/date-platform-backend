@@ -17,24 +17,69 @@ function yyyymmdd(date) {
   ].join("");
 }
 
+/**
+ * What a filing is about, in the words a reader would sort them by.
+ *
+ * Five rules answered 공시 for 86% of a day's 780 filings, which is the board's
+ * filter chips showing an empty box whichever one you press. The rules below
+ * were written against those 200 distinct report names rather than from memory,
+ * so the buckets are the ones DART actually fills.
+ *
+ * Order matters: 자기주식취득 is a 주주환원 and not 자금조달 even though it moves
+ * money, and 조회공시요구 is 해명 and not 지배구조 even when it asks about the
+ * largest shareholder. The specific test always comes first.
+ *
+ * The tag is the contract with the screen — the chips are built from whatever
+ * tags the day's filings carry, so a bucket added here appears there with no
+ * further work, and a bucket nobody filed into never renders an empty list.
+ */
 export function classifyDisclosure(reportName) {
-  if (/합병|분할|영업양수|영업양도|타법인주식및출자증권취득|타법인 주식/.test(reportName)) {
-    return { urgency: "M&A", tags: ["인수합병"], action: "거래 구조와 자금 조달 방식 확인" };
+  // Housekeeping, and the largest group by far: shelf prospectuses, ELS
+  // takedowns, fund effectiveness notices, group-structure returns. Filed
+  // constantly, about the paperwork rather than the company.
+  if (/일괄신고|효력발생안내|대규모기업집단현황|기업설명회|주주총회소집|주주명부폐쇄|의결권대리행사|증권발행실적|지급수단별|기업지배구조보고서|거래계획(보고서|철회)/.test(reportName)) {
+    return { action: "정기·안내 공시입니다", tags: ["정기·안내"], urgency: "안내" };
+  }
+  if (/반기보고서|분기보고서|사업보고서|감사보고서|결산/.test(reportName)) {
+    return { action: "재무제표와 주석 확인", tags: ["정기·안내"], urgency: "정기보고" };
+  }
+  if (/매매거래정지|상장폐지|관리종목|정리매매|소송등의판결|불성실공시/.test(reportName)) {
+    return { action: "사유와 해제 조건 확인", tags: ["주의"], urgency: "주의" };
+  }
+  if (/풍문또는보도|조회공시요구/.test(reportName)) {
+    return { action: "회사가 무엇을 확인하고 무엇을 부인했는지 확인", tags: ["해명"], urgency: "해명" };
+  }
+  if (/자기주식|주식소각|현금ㆍ현물배당|배당결정/.test(reportName)) {
+    return { action: "규모와 소각 여부, 기간 확인", tags: ["주주환원"], urgency: "주주환원" };
+  }
+  if (/합병|분할|영업양수|영업양도|타법인주식및출자증권(취득|양수)|타법인 주식/.test(reportName)) {
+    return { action: "거래 구조와 자금 조달 방식 확인", tags: ["인수합병"], urgency: "M&A" };
   }
   if (/단일판매|공급계약|수주/.test(reportName)) {
-    return { urgency: "계약", tags: ["공급계약"], action: "계약 금액, 기간, 매출 대비 비중 확인" };
+    return { action: "계약 금액, 기간, 매출 대비 비중 확인", tags: ["계약·수주"], urgency: "계약" };
   }
-  if (/유상증자|전환사채|신주인수권|CB|BW/.test(reportName)) {
-    return { urgency: "자금조달", tags: ["증자·지분"], action: "납입일, 할인율, 전환 조건 확인" };
+  if (/신규시설투자|유형자산(취득|처분)/.test(reportName)) {
+    return { action: "투자 규모와 완료 시점 확인", tags: ["설비투자"], urgency: "투자" };
+  }
+  if (/유상증자|전환사채|신주인수권|증권신고서|CB|BW/.test(reportName)) {
+    return { action: "납입일, 할인율, 전환 조건 확인", tags: ["증자·지분"], urgency: "자금조달" };
+  }
+  // Somebody's holding moved. Not the company acting, but the register
+  // changing, which is the other half of what 지분 means to a reader.
+  if (/대량보유상황|특정증권등소유상황|최대주주등소유주식변동|특수관계인에대한주식|주식담보제공/.test(reportName)) {
+    return { action: "누가 얼마나 늘리고 줄였는지 확인", tags: ["증자·지분"], urgency: "지분변동" };
   }
   if (/최대주주|대표이사|경영권/.test(reportName)) {
-    return { urgency: "지배구조", tags: ["경영권"], action: "변경 전후 지분과 보호예수 확인" };
+    return { action: "변경 전후 지분과 보호예수 확인", tags: ["경영권"], urgency: "지배구조" };
   }
-  if (/잠정실적|매출액|손익구조/.test(reportName)) {
-    return { urgency: "실적", tags: ["실적"], action: "일회성 여부와 전년 대비 변화 확인" };
+  if (/잠정실적|매출액|손익구조|영업실적/.test(reportName)) {
+    return { action: "일회성 여부와 전년 대비 변화 확인", tags: ["실적"], urgency: "실적" };
+  }
+  if (/채무보증|자금차입|금전대여/.test(reportName)) {
+    return { action: "상대방과 규모, 이자 조건 확인", tags: ["자금거래"], urgency: "자금거래" };
   }
 
-  return { urgency: "공시", tags: ["DART"], action: "공시 원문과 제출 시각 확인" };
+  return { action: "공시 원문과 제출 시각 확인", tags: ["기타"], urgency: "공시" };
 }
 
 function toDisclosureItem(item) {

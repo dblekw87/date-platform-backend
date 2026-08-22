@@ -17,6 +17,22 @@ export const krPreMarketCloseMinute = 8 * 60 + 50;
 export const krAfterHoursOpenMinute = 15 * 60 + 40;
 export const krAfterHoursCloseMinute = 20 * 60;
 
+/**
+ * Two minutes past the bell, so the closing print gets recorded.
+ *
+ * The evening cadence is five minutes and the window ended at 20:00 exactly, so
+ * the last sample of the day landed at 19:56 and the close itself never did —
+ * every evening since collection began stops four minutes short. Measured
+ * 2026-08-21 against 토스, which quotes the 19:59 book: 쿠콘 read 19.72% here at
+ * 19:56 and 19.03% there, 코미코 25.23% against 24.31%. The gap is the tail of
+ * the session, not a different rate.
+ *
+ * Two minutes admits exactly one extra tick. Wider would keep re-recording a
+ * shut book as though it were moving, which is the mistake this file exists to
+ * prevent.
+ */
+export const krAfterHoursSettleMinute = krAfterHoursCloseMinute + 2;
+
 const sessions = {
   KR: { timeZone: "Asia/Seoul", openMinute: 9 * 60, closeMinute: 15 * 60 + 30 },
   US: { timeZone: "America/New_York", openMinute: 9 * 60 + 30, closeMinute: 16 * 60 }
@@ -104,10 +120,11 @@ export function krTradingVenue(now = new Date()) {
 
   if (minute < sessions.KR.openMinute) return "NX";
 
-  // Only inside the after-hours window. Past 20:00 both books are shut and the
-  // KRX close is the canonical last price, so the venue goes back to J rather
-  // than serving NXT's final print all night.
-  return minute >= krAfterHoursOpenMinute && minute < krAfterHoursCloseMinute ? "NX" : "J";
+  // Only inside the after-hours window, plus the settle minutes that let the
+  // closing print be read. Past that both books are shut and the KRX close is
+  // the canonical last price, so the venue goes back to J rather than serving
+  // NXT's final print all night.
+  return minute >= krAfterHoursOpenMinute && minute < krAfterHoursSettleMinute ? "NX" : "J";
 }
 
 /**

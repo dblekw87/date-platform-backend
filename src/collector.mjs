@@ -11,7 +11,7 @@ import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { isRegularSession, krAfterHoursCloseMinute, krAfterHoursOpenMinute, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
+import { isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
@@ -81,7 +81,7 @@ function isCollecting(now = new Date()) {
   // though it were moving.
   if (minute >= krPreMarketCloseMinute && minute < openBellMinute) return false;
 
-  return minute >= openMinute && minute < krAfterHoursCloseMinute;
+  return minute >= openMinute && minute < krAfterHoursSettleMinute;
 }
 
 /**
@@ -94,7 +94,7 @@ function isCollecting(now = new Date()) {
  * minutes, so the evening is real and it is only visible on one venue.
  */
 function isAfterHours(minute) {
-  return minute >= krAfterHoursOpenMinute && minute < krAfterHoursCloseMinute;
+  return minute >= krAfterHoursOpenMinute && minute < krAfterHoursSettleMinute;
 }
 
 /**

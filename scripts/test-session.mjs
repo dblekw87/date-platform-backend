@@ -49,8 +49,14 @@ check("15:29 is still KRX", krTradingVenue(seoul(day, 15, 29)), "J");
 check("15:39 is still KRX", krTradingVenue(seoul(day, 15, 39)), "J");
 check("15:40 hands over to NXT", krTradingVenue(seoul(day, 15, 40)), "NX");
 check("19:00 is NXT", krTradingVenue(seoul(day, 19, 0)), "NX");
-// Past 20:00 both books are shut and the KRX close is the canonical last price.
-check("20:00 goes back to KRX", krTradingVenue(seoul(day, 20, 0)), "J");
+// The bell rings at 20:00 and the book stays readable for two minutes past it,
+// so the closing print gets recorded. Without them the five-minute evening
+// cadence put the last sample of the day at 19:56 and the close was never
+// written down at all.
+check("20:00 is still NXT, for the closing print", krTradingVenue(seoul(day, 20, 0)), "NX");
+check("20:01 is the last minute of it", krTradingVenue(seoul(day, 20, 1)), "NX");
+// Past the settle window both books are shut and the KRX close is canonical.
+check("20:02 goes back to KRX", krTradingVenue(seoul(day, 20, 2)), "J");
 check("23:30 stays on KRX", krTradingVenue(seoul(day, 23, 30)), "J");
 
 console.log("\nregular session");

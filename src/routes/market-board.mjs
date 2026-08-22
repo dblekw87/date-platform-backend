@@ -1,6 +1,7 @@
 import { hasKisCredentials, hasTossCredentials } from "../config.mjs";
 import { getLatestMarketBoardSnapshot, loadSymbolFlags, pruneMarketBoardSnapshots, saveMarketBoardSnapshot } from "../db/repositories.mjs";
-import { hasDartCredentials, loadDartDisclosures, loadLeaderDisclosures } from "../providers/dart.mjs";
+import { hasDartCredentials, loadLeaderDisclosures } from "../providers/dart.mjs";
+import { loadKrDisclosureBoard } from "../providers/kr-disclosures.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
@@ -280,7 +281,7 @@ const providerAdapters = [
     label: "DART Open API",
     missingMessage: "DART_API_KEY 없음 · provider 비활성",
     hasCredentials: hasDartCredentials,
-    load: loadDartDisclosures,
+    load: loadKrDisclosureBoard,
     timeoutMs: 7000
   },
   {
