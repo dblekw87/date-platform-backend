@@ -101,7 +101,18 @@ export function limitPairSql({ oneDay = false } = {}) {
       FROM today t
       JOIN members m ON m.symbol = t.symbol
   )
-  SELECT l.session_date, l.theme_name,
+  -- 매매 하나에 행 하나입니다.
+  --
+  -- 짝은 테마마다 따로 나오는데 두 종목이 테마를 여러 개 공유하는 일이 흔합니다 --
+  -- 하림지주→마니커는 육계·사료·여름·구제역·스포츠행사로 하루에 다섯 번 나왔습니다.
+  -- 사는 것은 같은 날 같은 2등주 하나인데 성적표에는 다섯 번 들어가서, 표본이 24%
+  -- 부풀고(2,369 → 1,806) 테마를 많이 단 축산·바이오 쪽으로 가중치가 쏠렸습니다.
+  --
+  -- 남기는 것은 간격이 가장 좁은 짝입니다. 화면이 이미 그 행을 골라 보여주고
+  -- 있으므로(간격 오름차순, 2등주 기준 중복 제거), 성적을 재는 행과 화면에 뜨는
+  -- 행이 같아집니다.
+  SELECT DISTINCT ON (l.session_date, s.symbol)
+         l.session_date, l.theme_name,
          l.symbol AS leader_symbol, l.day_move AS leader_move, l.turnover AS leader_turnover,
          s.symbol AS second_symbol, s.day_move AS second_move, s.turnover AS second_turnover,
          s.close AS second_close,
@@ -111,6 +122,7 @@ export function limitPairSql({ oneDay = false } = {}) {
    WHERE l.move_rank = 1
      AND l.day_move >= ${nearLimitMove}
      AND s.day_move >= ${minimumSecondMove}
+   ORDER BY l.session_date, s.symbol, l.day_move - s.day_move, l.day_move DESC, l.symbol
 `;
 }
 

@@ -16,6 +16,25 @@ import { query } from "../db/client.mjs";
 // 등급 하나가 이보다 얇으면 쓰지 않습니다. 표본 스무 건짜리 확률은 확률이 아닙니다.
 const minimumSamples = 100;
 
+/**
+ * 이번에 쓰지 않은 등급 행을 지웁니다.
+ *
+ * UPSERT만 하면 표가 계속 쌓이기만 합니다. 등급 이름을 바꾸면 옛 이름이 남고,
+ * 표본이 100건 밑으로 내려간 등급은 **예전 방식으로 잰 숫자를 그대로 달고**
+ * 화면에 계속 답합니다 -- 중복을 걷어내자 `상한가 근접`이 106 → 87건이 됐는데,
+ * 지우지 않으면 그 106건짜리 성적이 오늘의 근거인 척 남습니다.
+ *
+ * 한 등급도 못 썼으면 지우지 않습니다. 그건 표본이 얇아진 게 아니라 계산이
+ * 실패한 것이고, 실패했다고 멀쩡한 성적표를 비우면 안 됩니다.
+ */
+async function pruneTiers(config, table, written) {
+  if (written.length === 0) return 0;
+
+  const result = await query(config, `DELETE FROM ${table} WHERE tier <> ALL($1::text[])`, [written]);
+
+  return result.rowCount ?? 0;
+}
+
 function summarise(list, pick) {
   const excess = list.map((row) => Number(row.excess));
   const gaps = list.map((row) => Number(row.raw_gap ?? row.gap));
@@ -62,6 +81,7 @@ export async function calibrateCloseBet(config, { log = () => {} } = {}) {
      WHERE c.next_open IS NOT NULL
   `);
   const { from, to } = span(rows);
+  const kept = [];
   let written = 0;
 
   for (const { tier } of closeBetTiers) {
@@ -87,11 +107,16 @@ export async function calibrateCloseBet(config, { log = () => {} } = {}) {
     `, [tier, list.length, stats.nights, stats.beatRate.toFixed(4), stats.excessMean.toFixed(4),
       stats.gapUpRate.toFixed(4), from, to]);
 
+    kept.push(tier);
     written += 1;
     log(`close bet · ${tier} · ${list.length}건 · 상회 ${Math.round(stats.beatRate * 100)}% · 초과 ${stats.excessMean.toFixed(3)}%p`);
   }
 
-  return { tiers: written, total: rows.length };
+  const pruned = await pruneTiers(config, "kr_close_bet_calibration", kept);
+
+  if (pruned > 0) log(`close bet · 쓰지 않는 등급 ${pruned}행 삭제`);
+
+  return { pruned, tiers: written, total: rows.length };
 }
 
 /**
@@ -126,6 +151,7 @@ export async function calibrateLimitPair(config, { log = () => {} } = {}) {
       JOIN nights n ON n.session_date = p.session_date
   `);
   const { from, to } = span(rows);
+  const kept = [];
   let written = 0;
 
   for (const { locked, maxLeadGap, tier } of limitPairTiers) {
@@ -166,9 +192,14 @@ export async function calibrateLimitPair(config, { log = () => {} } = {}) {
     `, [tier, locked ? 29 : 27, maxLeadGap, list.length, stats.nights, stats.beatRate.toFixed(4),
       stats.excessMean.toFixed(4), stats.gapUpRate.toFixed(4), stats.holdMean.toFixed(4), from, to]);
 
+    kept.push(tier);
     written += 1;
     log(`limit pair · ${tier} · ${list.length}건 · 상회 ${Math.round(stats.beatRate * 100)}% · 초과 ${stats.excessMean.toFixed(3)}%p`);
   }
 
-  return { tiers: written, total: rows.length };
+  const pruned = await pruneTiers(config, "kr_limit_pair_calibration", kept);
+
+  if (pruned > 0) log(`limit pair · 쓰지 않는 등급 ${pruned}행 삭제`);
+
+  return { pruned, tiers: written, total: rows.length };
 }

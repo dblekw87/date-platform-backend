@@ -60,11 +60,14 @@ const { rows } = await query(config, `
   ranked AS (
     SELECT m.*, t.theme_name,
            row_number() OVER (PARTITION BY t.theme_name, m.session_date
-                              ORDER BY m.day_move DESC) AS move_rank
+                              ORDER BY m.day_move DESC, m.turnover DESC, m.symbol) AS move_rank
       FROM moves m
       JOIN members t ON t.symbol = m.symbol
   )
-  SELECT l.session_date::text AS d, l.theme_name,
+  -- providers/limit-pair.mjs와 같은 이유로 중복을 걷습니다 -- 테마를 여럿 공유하는
+  -- 짝이 같은 매매를 여러 번 세면 표본이 부풀고 다테마 종목으로 가중치가 쏠립니다.
+  SELECT DISTINCT ON (l.session_date, s.symbol)
+         l.session_date::text AS d, l.theme_name,
          l.symbol AS leader, l.day_move AS leader_move,
          l.gap - n.market_gap AS leader_gap_excess,
          s.symbol AS second, s.day_move AS second_move, s.turnover AS second_turnover,
@@ -77,6 +80,7 @@ const { rows } = await query(config, `
     LEFT JOIN ranked third ON third.theme_name = l.theme_name AND third.session_date = l.session_date AND third.move_rank = 3
     JOIN nights n ON n.session_date = l.session_date
    WHERE l.move_rank = 1
+   ORDER BY l.session_date, s.symbol, l.day_move - s.day_move, l.day_move DESC, l.symbol
 `);
 
 const num = (v) => (v === null ? null : Number(v));
