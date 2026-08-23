@@ -101,6 +101,11 @@ function isAfterHours(minute) {
   return minute >= krAfterHoursOpenMinute && minute < krAfterHoursSettleMinute;
 }
 
+// 프리마켓 청산 구간. 애프터마켓에 들어간 종가배팅은 다음날 08:00 직후에 나오는
+// 매매라, 이 15분이 그 매매의 청산 전부입니다.
+const preMarketFineFrom = 8 * 60;
+const preMarketFineTo = 8 * 60 + 15;
+
 /**
  * How often to sample, by where the session is.
  *
@@ -108,8 +113,17 @@ function isAfterHours(minute) {
  * the window the whole exercise is for: telling which stock is leading while
  * there is still time to trade the one behind it. A five minute tick would put
  * three readings across the entire decision.
+ *
+ * 08:00~08:15도 같은 이유로 1분입니다. 애프터마켓 종가배팅은 프리마켓이 열리고
+ * 1~2분 안에 나오는 매매인데 5분 간격으로는 그 자리를 잴 수가 없습니다 --
+ * 2026-08-21 틱이 08:01 / 08:06 / 08:12였습니다. 진입 쪽(19:30~20:00)은 5분으로
+ * 둡니다. 들어갈 자리를 고르는 데는 몇 분의 여유가 있고 나올 때는 없습니다.
+ *
+ * 프리마켓은 백 종목 남짓이라 이미 1분으로 도는 09:00~09:30(568종목)보다 가벼운
+ * 패스입니다.
  */
 function intervalMsFor(minute) {
+  if (minute >= preMarketFineFrom && minute < preMarketFineTo) return 60_000;
   if (minute < 9 * 60) return 5 * 60_000;
   if (minute < 9 * 60 + 30) return 60_000;
   if (minute < 10 * 60) return 2 * 60_000;
@@ -119,7 +133,10 @@ function intervalMsFor(minute) {
 
 // 15:40 is both the end of the KRX pass and the start of the NXT one, so it is
 // a single boundary. The others are cadence changes inside the morning.
-const cadenceBoundaries = [krPreMarketCloseMinute, openBellMinute, 9 * 60 + 30, 10 * 60, krAfterHoursOpenMinute];
+const cadenceBoundaries = [
+  preMarketFineFrom, preMarketFineTo, krPreMarketCloseMinute, openBellMinute,
+  9 * 60 + 30, 10 * 60, krAfterHoursOpenMinute
+];
 
 /**
  * Never sleep across a change of cadence.

@@ -97,6 +97,12 @@ check("08:59:42 wakes at 09:00, not 09:04", delayMsFrom(8 * 60 + 59, 42), 18_000
 // The pre-market ends at 08:50 and nothing trades until the bell, so a tick at
 // 08:47 must stop at 08:50 rather than sleep into the dead ten minutes.
 check("08:47 stops at 08:50", delayMsFrom(8 * 60 + 47, 0), 3 * 60_000);
+// 애프터마켓 종가배팅이 나오는 자리. 여기가 5분으로 돌아가면 그 매매는 측정할 수
+// 없습니다 -- 청산이 08:00~08:02인데 틱이 08:01 다음 08:06이 됩니다.
+check("08:00:00 samples the exit window every minute", delayMsFrom(8 * 60, 0), 60_000);
+check("08:14:00 is the last fine tick", delayMsFrom(8 * 60 + 14, 0), 60_000);
+check("08:15:00 drops back to five minutes", delayMsFrom(8 * 60 + 15, 0), 5 * 60_000);
+check("07:58:00 stops at 08:00 rather than sleeping through it", delayMsFrom(7 * 60 + 58, 0), 2 * 60_000);
 check("08:30:00 keeps the 5 minute pre-market tick", delayMsFrom(8 * 60 + 30, 0), 5 * 60_000);
 check("09:00:00 is a plain one minute tick", delayMsFrom(9 * 60, 0), 60_000);
 check("09:29:10 stops short at 09:30", delayMsFrom(9 * 60 + 29, 10), 50_000);
