@@ -36,6 +36,7 @@
     "us:short-interest": "node scripts/backfill-us-short-interest.mjs",
     "us:short-volume": "node scripts/backfill-us-short-volume.mjs",
     "us:measure-short-volume": "node scripts/measure-short-volume.mjs",
+    "kr:close-bet-turnover": "node scripts/measure-close-bet-turnover.mjs",
     "kr:close-bet": "node scripts/calibrate-close-bet.mjs",
     "kr:daily-bars": "node scripts/backfill-kr-daily-bars.mjs",
     "kr:limit-pair": "node scripts/calibrate-limit-pair.mjs"
