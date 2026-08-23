@@ -84,7 +84,23 @@ export async function publishBoardSnapshot(board, { config, repoPath = snapshotR
   const amend = head.startsWith("Board snapshot") ? ["--amend"] : [];
 
   await git(["commit", ...amend, "-m", `Board snapshot ${generatedAt}`]);
-  await git(["push", "-q", "--force-with-lease", "origin", "main"]);
+
+  // 거부되면 한 번만 fetch하고 다시 시도합니다.
+  //
+  // `--force-with-lease`는 원격이 우리가 아는 자리에 있을 때만 밀어냅니다. 다른
+  // 기기나 이전 세션이 한 번 강제로 밀고 나면 우리 원격 추적 ref가 낡은 채로
+  // 굳고, 그 뒤로는 **매 틱 같은 이유로 영원히 실패합니다** -- 실제로 하루 넘게
+  // 그러고 있었습니다(로컬 08-23 스냅샷, 원격 08-22 스냅샷).
+  //
+  // 이 저장소는 틱마다 통째로 갈아끼우는 생성물이고 커밋도 하나를 amend할 뿐이라,
+  // 원격에 지켜야 할 이력이 없습니다. 그래도 lease를 버리지 않는 것은 같은 틱
+  // 안에서의 경합은 여전히 막아 주기 때문입니다.
+  try {
+    await git(["push", "-q", "--force-with-lease", "origin", "main"]);
+  } catch {
+    await git(["fetch", "-q", "origin", "main"]);
+    await git(["push", "-q", "--force-with-lease", "origin", "main"]);
+  }
 
   return { generatedAt, published: true };
 }
