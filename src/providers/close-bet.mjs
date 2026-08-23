@@ -288,7 +288,12 @@ const liveCandidateSql = `
            min(change_rate) AS low_rate,
            max(turnover) AS turnover,
            max(volume) AS volume,
-           max(market_cap) AS market_cap,
+           -- 시총과 등락률은 **같은 표본**에서 가져와야 합니다. max(시총)은 그날
+           -- 고가 시점의 값이라 마지막 가격으로 나누면 주식수가 부풀고, 회전율이
+           -- 그만큼 과소평가됩니다 -- 실측으로 평균 4.1% 어긋났고 567종목 중 172개가
+           -- 5%를 넘었습니다. 시총이 없는 표본이 17%라 있는 것 중 가장 최근을 씁니다.
+           (array_agg(market_cap ORDER BY observed_at DESC) FILTER (WHERE market_cap IS NOT NULL))[1] AS market_cap,
+           (array_agg(change_rate ORDER BY observed_at DESC) FILTER (WHERE market_cap IS NOT NULL))[1] AS cap_rate,
            (array_agg(change_rate ORDER BY observed_at DESC))[1] AS change_rate,
            max(observed_at) AS observed_at
       FROM market_price_samples
@@ -304,9 +309,9 @@ const liveCandidateSql = `
          c.prev_close * (1 + t.change_rate / 100) AS close,
          c.prior_high,
          (c.prev_close * (1 + t.change_rate / 100) / nullif(c.prior_high, 0) - 1) * 100 AS break_margin,
-         -- 주식수를 확정 경로처럼 시총 ÷ 종가로 냅니다. 장중 시총은 지금 가격 기준이라
-         -- 지금 가격으로 나눠야 같은 주식수가 나옵니다.
-         t.volume / nullif(t.market_cap / nullif(c.prev_close * (1 + t.change_rate / 100), 0), 0) * 100 AS turnover_ratio,
+         -- 주식수 = 시총 ÷ 그 시총을 찍은 시점의 가격. 주식수는 장중에 안 변하므로
+         -- 이렇게 내면 확정 경로와 같은 값이 나옵니다.
+         t.volume / nullif(t.market_cap / nullif(c.prev_close * (1 + t.cap_rate / 100), 0), 0) * 100 AS turnover_ratio,
          t.volume / nullif(c.avg_volume, 0) AS volume_ratio,
          (t.high_rate - t.change_rate) / nullif(t.high_rate - t.low_rate, 0) AS upper_shadow
     FROM today t
@@ -314,7 +319,7 @@ const liveCandidateSql = `
    WHERE c.prev_close > 0 AND c.prior_high IS NOT NULL AND c.avg_volume > 0
      AND t.change_rate >= (CASE ${sizeCase("minDayMove").replace(/coalesce\(cap, 0\)/g, "coalesce(t.market_cap, 0)")} END)
      AND t.turnover >= ${minimumTurnover}
-     AND t.volume / nullif(t.market_cap / nullif(c.prev_close * (1 + t.change_rate / 100), 0), 0) * 100 >= ${minimumTurnoverRatio}
+     AND t.volume / nullif(t.market_cap / nullif(c.prev_close * (1 + t.cap_rate / 100), 0), 0) * 100 >= ${minimumTurnoverRatio}
      -- 돌파 직후. 어제 종가가 이미 고점 위였다면 이어가는 자리입니다.
      AND c.prev_close * (1 + t.change_rate / 100) > c.prior_high
      AND c.prev_close <= c.prior_high_yesterday
