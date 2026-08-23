@@ -34,9 +34,19 @@ import { query } from "../db/client.mjs";
  * 씁니다.
  */
 
-// 국내 가격제한폭은 ±30%입니다. 종가가 정확히 +30.00%로 찍히지 않는 경우가 있어
-// 29%를 경계로 둡니다 -- 25~29% 구간은 측정에서 값이 없었습니다.
+// 국내 가격제한폭은 ±30%입니다. 잠긴 것은 +29% 위로 보고, 그 아래 27%까지를
+// "근접"으로 함께 냅니다 -- 실제 매매가 상한가와 그 근처를 같이 보기 때문입니다.
+//
+// 경계가 27인 것은 측정입니다(2등주 15%↑ 조건):
+//
+//   1등주 20~25%   571건   -0.240%p   상회 42%
+//   1등주 25~27%   166건   +0.170%p   상회 48%
+//   1등주 27~29%   106건   +0.776%p   상회 58%
+//   1등주 29%↑   2,257건   +2.322%p   상회 56%
+//
+// 25~27%는 사실상 0이고 그 아래는 마이너스입니다. 근접이라도 27%는 넘어야 합니다.
 const limitUpMove = 29;
+const nearLimitMove = 27;
 
 // 2등주가 이만큼은 달리고 있어야 합니다.
 const minimumSecondMove = 15;
@@ -82,21 +92,27 @@ export const limitPairSql = `
     FROM ranked l
     JOIN ranked s ON s.theme_name = l.theme_name AND s.session_date = l.session_date AND s.move_rank = 2
    WHERE l.move_rank = 1
-     AND l.day_move >= ${limitUpMove}
+     AND l.day_move >= ${nearLimitMove}
      AND s.day_move >= ${minimumSecondMove}
 `;
 
 /**
- * 간격으로 나눈 등급. 좁을수록 좋았습니다.
+ * 등급은 두 축입니다 -- 1등주가 잠겼는가, 그리고 둘이 얼마나 붙어 있는가.
+ *
+ * 잠기지 않은 근접(27~29%)은 잠긴 것의 1/3이라 간격으로 더 나누지 않고 하나로
+ * 둡니다. 표본도 106건뿐입니다.
  */
 export const limitPairTiers = [
-  { maxLeadGap: 2, tier: "밀착" },
-  { maxLeadGap: 5, tier: "근접" },
-  { maxLeadGap: null, tier: "여유" }
+  { locked: true, maxLeadGap: 2, tier: "상한가·밀착" },
+  { locked: true, maxLeadGap: 5, tier: "상한가·근접" },
+  { locked: true, maxLeadGap: null, tier: "상한가·여유" },
+  { locked: false, maxLeadGap: null, tier: "상한가 근접" }
 ];
 
-export function limitPairTierFor(leadGap) {
-  return limitPairTiers.find((entry) => entry.maxLeadGap === null || leadGap <= entry.maxLeadGap)?.tier ?? "여유";
+export function limitPairTierFor(leadGap, locked) {
+  if (!locked) return "상한가 근접";
+
+  return limitPairTiers.find((entry) => entry.locked && (entry.maxLeadGap === null || leadGap <= entry.maxLeadGap))?.tier ?? "상한가·여유";
 }
 
 async function loadCalibration(config) {
@@ -161,7 +177,7 @@ const livePairSql = `
     FROM ranked l
     JOIN ranked s ON s.theme_name = l.theme_name AND s.move_rank = 2
    WHERE l.move_rank = 1
-     AND l.day_move >= ${limitUpMove}
+     AND l.day_move >= ${nearLimitMove}
      AND s.day_move >= ${minimumSecondMove}
    ORDER BY l.day_move - s.day_move ASC
 `;
@@ -218,7 +234,8 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
     .slice(0, limit)
     .map((row) => {
       const leadGap = Number(Number(row.lead_gap).toFixed(2));
-      const tier = limitPairTierFor(leadGap);
+      const locked = Number(row.leader_move) >= limitUpMove;
+      const tier = limitPairTierFor(leadGap, locked);
       const measured = calibration.get(tier);
 
       return {
@@ -254,6 +271,8 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
         // 있어서 목록이 몇 분 만에 바뀝니다.
         observedAt: row.observed_at ? new Date(row.observed_at).toISOString() : null,
         provisional: live,
+        // 잠긴 것과 근접한 것은 성적이 세 배 차이라 화면이 구분해야 합니다.
+        locked,
         sessionDate: day,
         theme: row.theme_name,
         tier

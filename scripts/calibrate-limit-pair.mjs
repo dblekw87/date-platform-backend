@@ -40,7 +40,7 @@ const { rows } = await query(config, `
     SELECT session_date, avg(gap) AS market_gap, avg(hold) AS market_hold
       FROM outcomes GROUP BY session_date HAVING count(*) >= 50
   )
-  SELECT p.session_date::text AS d, p.lead_gap,
+  SELECT p.session_date::text AS d, p.lead_gap, p.leader_move,
          o.gap - n.market_gap AS excess,
          o.hold - n.market_hold AS hold_excess,
          o.gap AS raw_gap
@@ -55,12 +55,16 @@ const from = rows.reduce((a, r) => (r.d < a ? r.d : a), "9999-99-99");
 const to = rows.reduce((a, r) => (r.d > a ? r.d : a), "0000-00-00");
 let written = 0;
 
-for (const { maxLeadGap, tier } of limitPairTiers) {
+for (const { locked, maxLeadGap, tier } of limitPairTiers) {
   const lower = limitPairTiers
-    .filter((entry) => entry.maxLeadGap !== null && (maxLeadGap === null || entry.maxLeadGap < maxLeadGap))
+    .filter((entry) => entry.locked && entry.maxLeadGap !== null && (maxLeadGap === null || entry.maxLeadGap < maxLeadGap))
     .reduce((widest, entry) => Math.max(widest, entry.maxLeadGap), 0);
   const list = rows.filter((r) => {
     const gap = Number(r.lead_gap);
+    const isLocked = Number(r.leader_move) >= 29;
+
+    if (isLocked !== locked) return false;
+    if (!locked) return true;
 
     return gap > lower && (maxLeadGap === null || gap <= maxLeadGap);
   });
@@ -83,7 +87,7 @@ for (const { maxLeadGap, tier } of limitPairTiers) {
     INSERT INTO kr_limit_pair_calibration
       (tier, min_leader_move, min_second_move, max_lead_gap, samples, nights,
        beat_rate, excess_mean, gap_up_rate, hold_excess_mean, calibrated_from, calibrated_to)
-    VALUES ($1, 29, 15, $2, $3, $4, $5, $6, $7, $8, $9::date, $10::date)
+    VALUES ($1, $11, 15, $2, $3, $4, $5, $6, $7, $8, $9::date, $10::date)
     ON CONFLICT (tier) DO UPDATE SET
       beat_rate = EXCLUDED.beat_rate,
       calibrated_from = EXCLUDED.calibrated_from,
@@ -96,10 +100,10 @@ for (const { maxLeadGap, tier } of limitPairTiers) {
       samples = EXCLUDED.samples,
       updated_at = now()
   `, [tier, maxLeadGap, list.length, nights, beatRate.toFixed(4), excessMean.toFixed(4),
-    gapUpRate.toFixed(4), holdMean.toFixed(4), from, to]);
+    gapUpRate.toFixed(4), holdMean.toFixed(4), from, to, locked ? 29 : 27]);
 
   written += 1;
-  console.log(`  ${tier} (간격 ${lower}~${maxLeadGap ?? "∞"}%p) · ${list.length}건 · ${nights}밤 · 상회 ${Math.round(beatRate * 100)}% · 갭상승 ${Math.round(gapUpRate * 100)}% · 초과 ${excessMean >= 0 ? "+" : ""}${excessMean.toFixed(3)}%p · 하루보유 ${holdMean >= 0 ? "+" : ""}${holdMean.toFixed(3)}%p`);
+  console.log(`  ${tier}${locked ? ` (간격 ${lower}~${maxLeadGap ?? "∞"}%p)` : " (27~29%)"} · ${list.length}건 · ${nights}밤 · 상회 ${Math.round(beatRate * 100)}% · 갭상승 ${Math.round(gapUpRate * 100)}% · 초과 ${excessMean >= 0 ? "+" : ""}${excessMean.toFixed(3)}%p · 하루보유 ${holdMean >= 0 ? "+" : ""}${holdMean.toFixed(3)}%p`);
 }
 
 console.log(`\n${written}개 등급 기록 · ${from} ~ ${to} · ${Math.round((Date.now() - started) / 1000)}초`);
