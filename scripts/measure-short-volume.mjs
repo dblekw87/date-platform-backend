@@ -38,7 +38,7 @@ WITH sampled AS (
       FROM us_backfill_progress WHERE bar_count > 0
   ) t WHERE rn % 3 = 0
 ),
-short AS (
+features AS (
   SELECT symbol, session_date,
          short_volume / nullif(total_volume, 0) AS ratio,
          count(*) OVER w AS history,
@@ -53,18 +53,34 @@ short AS (
          w5 AS (PARTITION BY symbol ORDER BY session_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
          wbase AS (PARTITION BY symbol ORDER BY session_date ROWS BETWEEN 25 PRECEDING AND 6 PRECEDING)
 ),
+-- 창 함수는 중첩이 안 되므로 한 겹 더 씁니다. 여기서 한 세션 뒤로 밉니다.
+short AS (
+  SELECT symbol, session_date, ratio,
+         lag(history) OVER w AS history_prev,
+         lag(ratio5) OVER w AS ratio5_prev,
+         lag(persist5) OVER w AS persist5_prev,
+         lag(baseline) OVER w AS baseline_prev,
+         lag(vol5) OVER w AS vol5_prev,
+         lag(vol_baseline) OVER w AS vol_baseline_prev
+    FROM features
+  WINDOW w AS (PARTITION BY symbol ORDER BY session_date)
+),
 pool AS (
   SELECT b.symbol, b.session_date,
          b.volume / s.shares AS turnover,
          b.close * s.shares AS market_cap,
-         sv.ratio, sv.ratio5, sv.persist5, sv.baseline,
-         sv.vol5 / nullif(sv.vol_baseline, 0) AS vol_trend,
+         sv.ratio, sv.ratio5_prev AS ratio5, sv.persist5_prev AS persist5,
+         sv.baseline_prev AS baseline,
+         sv.vol5_prev / nullif(sv.vol_baseline_prev, 0) AS vol_trend,
          (SELECT max(e.session_date) FROM us_surge_events e
            WHERE e.symbol = b.symbol AND e.session_date <= b.session_date) AS last_run
     FROM us_daily_bars b
     JOIN sampled ss ON ss.session_date = b.session_date
+    -- **한 세션 늦은 값을 씁니다.** FINRA는 그날 파일을 다음날 아침에 냅니다. 화면이
+    -- D일 종가로 목록을 만드는 시점에 D일 공매도는 아직 없습니다 -- D-1일까지가
+    -- 전부입니다. 같은 날 것을 쓰면 실제로는 못 보는 값으로 잰 셈이 됩니다.
     JOIN short sv ON sv.symbol = b.symbol AND sv.session_date = b.session_date
-                 AND sv.history >= 26 AND sv.baseline > 0
+                 AND sv.history_prev >= 26 AND sv.baseline_prev > 0
     JOIN LATERAL (
       SELECT u.cik FROM us_tickers u
        WHERE u.symbol = b.symbol AND u.as_of <= b.session_date AND u.cik IS NOT NULL
