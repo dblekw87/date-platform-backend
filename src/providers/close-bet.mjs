@@ -1,3 +1,4 @@
+import { loadNightTriggers } from "./night-triggers.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -324,14 +325,19 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
        LIMIT $1
     `, [limit]);
 
-  return result.rows
-    // 거래정지된 종목은 살 수 없습니다. 조건은 어제 만족했을 수 있어도 후보가
-    // 아닙니다.
-    .filter((row) => !row.trade_halted)
+  // 거래정지된 종목은 살 수 없습니다. 조건은 어제 만족했을 수 있어도 후보가
+  // 아닙니다.
+  const tradable = result.rows.filter((row) => !row.trade_halted);
+  const nightTriggers = await loadNightTriggers(config, tradable.map((row) => row.symbol));
+
+  return tradable
     .map((row) => {
       const dayMove = Number(row.day_move);
       const tier = row.size_label ?? "소형";
       const measured = calibration.get(tier);
+      // 이 종목의 밤을 좌우하는 미국 지표. 재 놓은 두 갈래(반도체·가상화폐)
+      // 밖이면 null이고, 화면은 시장 전체의 밤만 말합니다.
+      const nightTrigger = nightTriggers.get(row.symbol) ?? null;
 
       return {
         breakMargin: Number(Number(row.break_margin).toFixed(2)),
@@ -351,6 +357,7 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
           }
           : null,
         name: row.name ?? row.symbol,
+        nightTrigger,
         // pg는 date를 로컬 자정 Date로 돌려주므로 문자열로 만들면 "Fri Aug 21"이
         // 됩니다. SQL에서 text로 캐스팅한 값을 씁니다.
         observedAt: row.observed_at ? new Date(row.observed_at).toISOString() : null,

@@ -1,3 +1,4 @@
+import { loadNightTriggers } from "./night-triggers.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -251,8 +252,7 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
        ORDER BY p.lead_gap ASC
     `, [day]);
   const seen = new Set();
-
-  return result.rows
+  const shown = result.rows
     .filter((row) => !row.trade_halted)
     .filter((row) => {
       if (seen.has(row.second_symbol)) return false;
@@ -261,7 +261,11 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
 
       return true;
     })
-    .slice(0, limit)
+    .slice(0, limit);
+  // 짝꿍은 2등주를 삽니다. 밤 지표도 2등주 것을 봅니다.
+  const nightTriggers = await loadNightTriggers(config, shown.map((row) => row.second_symbol));
+
+  return shown
     .map((row) => {
       const leadGap = Number(Number(row.lead_gap).toFixed(2));
       const locked = Number(row.leader_move) >= limitUpMove;
@@ -290,6 +294,8 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
             window: `${measured.calibratedFrom} ~ ${measured.calibratedTo}`
           }
           : null,
+        // 짝꿍도 밤을 넘기는 매매입니다. 2등주의 테마에 맞는 미국 지표를 답니다.
+        nightTrigger: nightTriggers.get(row.second_symbol) ?? null,
         second: {
           changeRateValue: Number(Number(row.second_move).toFixed(2)),
           closePrice: Number(row.second_close),
