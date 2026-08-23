@@ -60,7 +60,21 @@ const minimumTurnover = 500_000_000;
  *
  * $1은 기준일입니다.
  */
-export const limitPairSql = `
+/**
+ * 하루치를 물을 때는 일봉 스캔을 그 하루 언저리로 줄입니다.
+ *
+ * 창이 `lag(close)` 하나라 직전 영업일만 있으면 답이 같습니다. 경계를 안 주면
+ * 147만 행 전체에 창을 돌리고 4천 행만 씁니다 -- 2.6초 중 2.3초가 그것이었습니다.
+ * 연휴를 감안해 10일을 봅니다.
+ *
+ * 캘리브레이션은 전 기간을 한 번에 훑으므로 경계도 날짜 필터도 없이 부릅니다.
+ * 조건 정의는 한 문자열에 그대로 남습니다.
+ */
+export function limitPairSql({ oneDay = false } = {}) {
+  const scanBound = oneDay ? "WHERE b.session_date BETWEEN $1::date - 10 AND $1::date" : "";
+  const dayFilter = oneDay ? "session_date = $1::date AND" : "";
+
+  return `
   WITH members AS (
     SELECT DISTINCT symbol, theme_name
       FROM kr_theme_members
@@ -70,17 +84,20 @@ export const limitPairSql = `
     SELECT b.symbol, b.session_date, b.close, b.close * b.volume AS turnover,
            (b.close / lag(b.close) OVER (PARTITION BY b.symbol ORDER BY b.session_date) - 1) * 100 AS day_move
       FROM kr_daily_bars b
+      ${scanBound}
   ),
   today AS (
     SELECT * FROM moves
-     WHERE session_date = $1::date AND day_move IS NOT NULL AND turnover >= ${minimumTurnover}
+     WHERE ${dayFilter} day_move IS NOT NULL AND turnover >= ${minimumTurnover}
   ),
   ranked AS (
     -- 날짜로도 나눠야 합니다. 테마로만 나누면 하루치를 볼 때는 맞지만, 캘리브레이션이
     -- 전 기간을 한 번에 훑을 때 테마당 하루만 1등이 되어 표본이 247건으로 줄어듭니다.
+    -- 동률일 때 순서를 못 박습니다. 상승률만으로 정렬하면 같은 상승률 두 종목의
+    -- 1등·2등이 실행할 때마다 바뀌어, 새로고침만 해도 패널의 1등주가 뒤집힙니다.
     SELECT t.*, m.theme_name,
            row_number() OVER (PARTITION BY m.theme_name, t.session_date
-                              ORDER BY t.day_move DESC) AS move_rank
+                              ORDER BY t.day_move DESC, t.turnover DESC, t.symbol) AS move_rank
       FROM today t
       JOIN members m ON m.symbol = t.symbol
   )
@@ -95,6 +112,7 @@ export const limitPairSql = `
      AND l.day_move >= ${nearLimitMove}
      AND s.day_move >= ${minimumSecondMove}
 `;
+}
 
 /**
  * 등급은 두 축입니다 -- 1등주가 잠겼는가, 그리고 둘이 얼마나 붙어 있는가.
@@ -213,7 +231,7 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
   const result = live
     ? await query(config, livePairSql, [day])
     : await query(config, `
-      WITH pairs AS (${limitPairSql})
+      WITH pairs AS (${limitPairSql({ oneDay: true })})
       SELECT p.*, u.name AS second_name, lu.name AS leader_name, u.market, u.market_cap, u.trade_halted
         FROM pairs p
         LEFT JOIN kr_daily_universe u ON u.symbol = p.second_symbol AND u.session_date = $1::date

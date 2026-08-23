@@ -84,11 +84,81 @@ export const closeBetTiers = sizeThresholds.map((size) => ({ tier: size.label })
 /**
  * 조건을 만족한 하루치를 뽑는 SQL.
  *
- * `session` 이 주어지면 그날, 없으면 가장 최근 거래일입니다. 같은 쿼리를 캘리브레이션이
- * 과거 전체에 대해서도 돌리므로 조건 정의가 두 곳에 갈라지지 않습니다.
+ * 캘리브레이션이 같은 문자열을 전 기간에 대해서도 돌리므로 조건 정의가 두 곳으로
+ * 갈라지지 않습니다.
+ *
+ * `since`는 성능을 위한 것이지 조건이 아닙니다. 창은 60일 신고점과 20일 평균
+ * 거래량이라 그만큼의 과거만 있으면 답이 같은데, 경계를 안 주면 윈도우 함수가
+ * 일봉 147만 행 전체를 훑습니다 -- 보드 콜드 빌드가 41초였고 그중 32초가 이
+ * 쿼리였습니다. 하루치를 뽑을 때는 200일만 봅니다.
+ *
+ * 시가총액은 CTE로 한 번에 모읍니다. LATERAL로 두면 행마다 서브쿼리가 돌고,
+ * 그 행이 147만 개입니다.
  */
-export const closeBetCandidateSql = `
-  WITH bars AS (
+const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+// 창이 60일 신고점과 20일 평균이라 200거래일이면 넉넉합니다. 달력 기준이므로
+// 휴장일을 감안해 300일을 뺍니다.
+const historyDays = 300;
+
+function historyBoundFor(day) {
+  if (!day || !datePattern.test(day)) return null;
+
+  const bound = new Date(`${day}T00:00:00Z`);
+
+  bound.setUTCDate(bound.getUTCDate() - historyDays);
+
+  return bound.toISOString().slice(0, 10);
+}
+
+// 등급이 무엇이든 이 아래로는 후보가 될 수 없습니다. 문턱 표에서 뽑으므로 표를
+// 고치면 같이 움직입니다.
+const dayMoveFloor = Math.min(...sizeThresholds.map((size) => size.minDayMove));
+
+/**
+ * 하루치를 물을 때, 그날 하루만 보고도 탈락이 확실한 종목을 먼저 걷어냅니다.
+ *
+ * 여기 있는 조건은 전부 아래 WHERE에도 그대로 있습니다 -- 새 조건이 아니라 같은
+ * 조건을 일찍 적용하는 것이라 답이 바뀌지 않습니다. 이걸 안 하면 60일 이동최대값을
+ * 77만 행에 대해 계산해 놓고 그중 4천 행만 씁니다(18초 중 18초가 그 창이었습니다).
+ */
+function symbolPrefilter(day) {
+  return `
+  symbols AS (
+    SELECT symbol
+      FROM (
+        SELECT symbol, session_date, open, high, low, close, volume,
+               lag(close) OVER (PARTITION BY symbol ORDER BY session_date) AS prev_close
+          FROM kr_daily_bars
+         WHERE session_date BETWEEN '${day}'::date - 10 AND '${day}'::date
+      ) recent
+     WHERE session_date = '${day}'::date
+       AND prev_close > 0 AND close > 0 AND high > low
+       AND close > open
+       AND close * volume >= ${minimumTurnover}
+       AND (high - close) / nullif(high - low, 0) < ${maximumUpperShadow}
+       AND (close / prev_close - 1) * 100 >= ${dayMoveFloor}
+  ),`;
+}
+
+export function closeBetCandidateSql({ day = null, since = null } = {}) {
+  // 내부에서 만든 날짜만 들어오지만, 문자열로 끼우는 이상 모양은 확인합니다.
+  const oneDay = day && datePattern.test(day) ? day : null;
+  const bounds = [
+    since && datePattern.test(since) ? `session_date >= '${since}'::date` : null,
+    oneDay ? `symbol IN (SELECT symbol FROM symbols)` : null
+  ].filter(Boolean);
+  const bound = bounds.length ? `WHERE ${bounds.join(" AND ")}` : "";
+
+  return `
+  WITH ${oneDay ? symbolPrefilter(oneDay) : ""}
+  caps AS (
+    SELECT DISTINCT ON (symbol) symbol, market_cap AS cap
+      FROM kr_daily_universe
+     WHERE market_cap > 0
+     ORDER BY symbol, session_date DESC
+  ),
+  bars AS (
     SELECT symbol, session_date, open, high, low, close, volume,
            close * volume AS turnover,
            lag(close) OVER w AS prev_close,
@@ -102,16 +172,13 @@ export const closeBetCandidateSql = `
            count(*) OVER (PARTITION BY symbol ORDER BY session_date
                           ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS history
       FROM kr_daily_bars
+      ${bound}
      WINDOW w AS (PARTITION BY symbol ORDER BY session_date)
-  )
-  , sized AS (
-    SELECT b.*, u.market_cap AS cap
+  ),
+  sized AS (
+    SELECT b.*, c.cap
       FROM bars b
-      LEFT JOIN LATERAL (
-        SELECT market_cap FROM kr_daily_universe
-         WHERE symbol = b.symbol AND market_cap > 0
-         ORDER BY session_date DESC LIMIT 1
-      ) u ON true
+      LEFT JOIN caps c ON c.symbol = b.symbol
   )
   SELECT symbol, session_date, open, high, low, close, volume, turnover, prior_high,
          next_open, cap,
@@ -129,8 +196,8 @@ export const closeBetCandidateSql = `
      AND prev_close <= prior_high_yesterday
      AND (high - close) / nullif(high - low, 0) < ${maximumUpperShadow}
      AND (close / prev_close - 1) * 100 >= (CASE ${sizeCase("minDayMove")} END)
-     AND volume / nullif(avg_volume, 0) >= (CASE ${sizeCase("minVolumeRatio")} END)
-`;
+     AND volume / nullif(avg_volume, 0) >= (CASE ${sizeCase("minVolumeRatio")} END)`;
+}
 
 async function loadCalibration(config) {
   const result = await query(
@@ -247,7 +314,7 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
   const result = provisional
     ? await query(config, liveCandidateSql, [sampleDay, limit])
     : await query(config, `
-      WITH candidates AS (${closeBetCandidateSql})
+      WITH candidates AS (${closeBetCandidateSql({ day: barDay, since: historyBoundFor(barDay) })})
       SELECT c.*, c.session_date::text AS session_day, u.name, u.market, u.market_cap, u.trade_halted
         FROM candidates c
         LEFT JOIN kr_daily_universe u

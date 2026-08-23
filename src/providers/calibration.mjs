@@ -41,7 +41,7 @@ function span(rows) {
  */
 export async function calibrateCloseBet(config, { log = () => {} } = {}) {
   const { rows } = await query(config, `
-    WITH candidates AS (${closeBetCandidateSql}),
+    WITH candidates AS (${closeBetCandidateSql()}),
     universe AS (
       SELECT symbol, session_date, close,
              lead(open) OVER (PARTITION BY symbol ORDER BY session_date) AS next_open
@@ -98,9 +98,8 @@ export async function calibrateCloseBet(config, { log = () => {} } = {}) {
  * 짝꿍매매 — 등급은 잠겼는가와 간격입니다.
  */
 export async function calibrateLimitPair(config, { log = () => {} } = {}) {
-  const allDaysSql = limitPairSql.replace("session_date = $1::date AND", "");
   const { rows } = await query(config, `
-    WITH pairs AS (${allDaysSql}),
+    WITH pairs AS (${limitPairSql()}),
     bars AS (
       SELECT symbol, session_date, close,
              lead(open) OVER w AS next_open,
