@@ -5,6 +5,7 @@ import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
+import { calibrateCloseBet, calibrateLimitPair } from "./providers/calibration.mjs";
 import { collectKrDailyBars } from "./providers/kr-daily-bars.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
@@ -608,6 +609,14 @@ function startUniverseSample(config, minute) {
       to: day
     }).then(({ saved }) => console.log(`collector: ${saved} daily bars · ${day}`))
       .catch((error) => console.warn("collector: daily bars failed", error instanceof Error ? error.message : error));
+
+    // 성적표는 오늘 봉이 들어온 뒤에 다시 계산합니다. 손으로 돌리지 않으면 표본이
+    // 만들어진 날에 멈추고, 화면은 몇 달 전 숫자를 오늘의 근거인 것처럼 답하게
+    // 됩니다. 후보 조건이 바뀌어도 여기서 따라옵니다.
+    await calibrateCloseBet(config, { log: (message) => console.log(`collector: ${message}`) })
+      .catch((error) => console.warn("collector: close bet calibration failed", error instanceof Error ? error.message : error));
+    await calibrateLimitPair(config, { log: (message) => console.log(`collector: ${message}`) })
+      .catch((error) => console.warn("collector: limit pair calibration failed", error instanceof Error ? error.message : error));
 
     // 테마 라벨은 "오늘 오른 테마 중 가장 오래된 것"이라 오늘의 등락률이 필요합니다.
     // 그 등락률이 방금 저장된 이 표에서 오므로, 여기가 다시 읽을 자리입니다.
