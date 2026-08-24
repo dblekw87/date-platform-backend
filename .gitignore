@@ -8,3 +8,4 @@ logs
 analysis/.venv
 *.log
 watchdog.log
+*.tmp.mjs
