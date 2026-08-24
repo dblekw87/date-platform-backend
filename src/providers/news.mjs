@@ -719,3 +719,82 @@ export async function loadNewsHeadlines(config) {
     };
   });
 }
+
+const hangulChar = (ch) => ch !== undefined && /[가-힣]/.test(ch);
+const latinChar = (ch) => ch !== undefined && /[A-Za-z0-9]/.test(ch);
+
+// 회사명 뒤에 붙을 수 있는 조사. 이게 아닌 한글이 이어지면 다른 단어입니다 --
+// 태양광의 `태양`, 디스플레이의 `레이`, 하이닉스의 `이닉스`가 전부 그렇게 걸립니다.
+const koreanParticles = new Set([
+  "가", "는", "은", "이", "을", "를", "의", "에", "와", "과",
+  "도", "만", "로", "으", "나", "보", "부", "까", "선", "주"
+]);
+
+/**
+ * 이 이름이 **낱말로서** 등장하는가.
+ *
+ * 앞 글자가 한글이면 더 긴 낱말의 꼬리입니다. 뒤 글자는 조사면 괜찮고 그 밖의
+ * 한글이면 다른 낱말입니다. 알파벳 이름은 앞뒤가 영숫자가 아니어야 합니다 --
+ * 이걸 빼면 CEG 안의 EG가 걸립니다.
+ */
+function nameAppears(text, name) {
+  const isLatin = /^[A-Za-z0-9.&\- ]+$/.test(name);
+
+  for (let from = 0;;) {
+    const at = text.indexOf(name, from);
+
+    if (at < 0) return false;
+
+    const before = text[at - 1];
+    const after = text[at + name.length];
+    // 한글 경계는 알파벳 이름에도 걸립니다. 빼면 `SK하닉`의 SK가 지주사 SK로
+    // 붙습니다 -- 기사는 SK하이닉스 얘기인데 다른 종목에 태그가 갑니다.
+    const koreanClear = !hangulChar(before) && (!hangulChar(after) || koreanParticles.has(after));
+    const latinClear = !isLatin || (!latinChar(before) && !latinChar(after));
+
+    if (koreanClear && latinClear) return true;
+
+    from = at + 1;
+  }
+}
+
+/**
+ * 기사 본문에서 전 종목 이름을 찾아 붙입니다.
+ *
+ * `attachLeaderNewsTags`가 못 채우는 자리를 메웁니다. 그쪽은 주도주만 상대하고
+ * 미국 종목의 별칭까지 보지만, 순위권 밖 종목은 손도 못 댑니다.
+ *
+ * **제목과 본문만 읽습니다.** 발행처(`source`)와 우리가 붙인 라벨은 안 봅니다 --
+ * 조선일보가 실은 기사가 `조선`으로 잡혀 한화오션의 이유로 뜬 적이 있고, 검색어를
+ * 근거로 삼으면 검색어가 자기가 데려온 기사를 보증하는 순환이 됩니다.
+ *
+ * 이미 붙은 종목은 건드리지 않고 모자란 자리만 채웁니다.
+ */
+export function attachKrUniverseTags(headlines, nameIndex, { limit = 4 } = {}) {
+  if (nameIndex.length === 0) return headlines;
+
+  return headlines.map((headline) => {
+    if (headline.region !== "KR") return headline;
+
+    const already = headline.relatedSymbols ?? [];
+
+    if (already.length >= limit) return headline;
+
+    let text = `${headline.text ?? ""} ${headline.originalText ?? ""}`;
+    const found = [];
+
+    for (const entry of nameIndex) {
+      if (already.includes(entry.symbol) || found.includes(entry.symbol)) continue;
+      if (!nameAppears(text, entry.name)) continue;
+
+      found.push(entry.symbol);
+      // 맞춘 이름은 지웁니다. 안 지우면 삼성전자를 맞춘 자리에서 삼성전기까지
+      // 걸릴 여지가 남습니다.
+      text = text.split(entry.name).join(" ");
+
+      if (already.length + found.length >= limit) break;
+    }
+
+    return found.length > 0 ? { ...headline, relatedSymbols: [...already, ...found] } : headline;
+  });
+}

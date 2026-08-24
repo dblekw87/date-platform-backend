@@ -4,7 +4,7 @@ import { hasDartCredentials, loadLeaderDisclosures } from "../providers/dart.mjs
 import { loadKrDisclosureBoard } from "../providers/kr-disclosures.mjs";
 import { loadCloseBetCandidates } from "../providers/close-bet.mjs";
 import { loadLimitPairCandidates } from "../providers/limit-pair.mjs";
-import { loadHaltedStocks } from "../providers/kr-universe.mjs";
+import { loadHaltedStocks, loadKrNameIndex } from "../providers/kr-universe.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
@@ -14,7 +14,7 @@ import { loadKrxCalendar } from "../providers/krx.mjs";
 import { krAfterHoursOpenMinute, seoulMinuteNow, sessionDate } from "../providers/market-session.mjs";
 import { rankDayLeaders } from "../providers/leadership.mjs";
 import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
-import { attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
+import { attachKrUniverseTags, attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
 import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
@@ -466,6 +466,10 @@ async function attachLeaderNews(config, board) {
 
   if (leaders.length === 0) return board;
 
+  // 주도주로 못 채운 자리를 전 종목 이름으로 메웁니다. 목록에 없다는 이유로
+  // 제목에 또렷이 적힌 회사가 아무 종목에도 안 붙던 기사가 국내분의 21%였습니다.
+  const nameIndex = await loadKrNameIndex(config).catch(() => []);
+
   try {
     // Tagging runs after the merge, not before. Tagging first left the
     // per-leader headlines — the ones actually about these companies — with no
@@ -473,11 +477,11 @@ async function attachLeaderNews(config, board) {
     // feed that happened to mention a name in passing.
     const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(config, leaders), 6000));
 
-    return { ...board, headlineFlow: attachLeaderNewsTags(merged, leaders) };
+    return { ...board, headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(merged, leaders), nameIndex) };
   } catch (error) {
     console.warn("leader news lookup failed", error instanceof Error ? error.message : error);
 
-    return { ...board, headlineFlow: attachLeaderNewsTags(board.headlineFlow, leaders) };
+    return { ...board, headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(board.headlineFlow, leaders), nameIndex) };
   }
 }
 

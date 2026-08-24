@@ -52,6 +52,26 @@ const nearLimitMove = 27;
 // 2등주가 이만큼은 달리고 있어야 합니다.
 const minimumSecondMove = 15;
 
+/**
+ * 상한가로 **가는 중**인 1등주를 잡는 문턱.
+ *
+ * 위 27%는 종가로 잰 값이라 장중 진입 자리로는 늦습니다. 1등주가 27%에 닿았을 때는
+ * 이미 잠기기 직전이고, 그때 2등주도 같이 올라와 있어서 살 자리가 아닙니다 --
+ * 2026-08-24 13:00에 뜬 세 건이 전부 1등주 `잠김=true`였고 2등주 신풍제약도
+ * +29.93%였습니다. 화면이 사건을 알려주긴 했지만 매매를 알려주지는 못했습니다.
+ *
+ * 사용자가 실제로 하는 자리는 **1등주가 15~27%를 달리는 동안 3~6%p 뒤에 붙어
+ * 따라오는 2등주**입니다. 그래서 장중 경로만 이 문턱을 씁니다.
+ *
+ * **확정 경로에는 넣지 않습니다.** 종가로 15~27%에 멈춘 1등주는 "가는 중"이 아니라
+ * "못 간" 것이고, 그 자리는 실측에서 마이너스입니다(20~25% −0.102%p, 25~27%
+ * +0.404%p로 잠긴 것의 1/6). 궤적과 결과를 같은 조건으로 부르면 안 됩니다.
+ */
+const approachMove = 15;
+
+// 바짝 붙어 따라오는가. 사용자가 말한 3~6%p를 담되 더 좁은 것도 받습니다.
+const maximumApproachGap = 6;
+
 // 호가 한 칸에 갭이 튀는 종목은 후보가 될 수 없습니다.
 const minimumTurnover = 500_000_000;
 
@@ -140,10 +160,20 @@ export const limitPairTiers = [
   { locked: false, maxLeadGap: null, tier: "상한가 근접" }
 ];
 
-export function limitPairTierFor(leadGap, locked) {
-  if (!locked) return "상한가 근접";
+/**
+ * 잠긴 것 · 근접(27~29%) · 가는 중(15~27%) 셋을 가릅니다.
+ *
+ * `가는 중`은 장중 경로에서만 나옵니다. 성적표가 없는 유일한 등급이라 화면이 그
+ * 사실을 같이 말해야 합니다.
+ */
+export const approachTier = "상한가 진행중";
 
-  return limitPairTiers.find((entry) => entry.locked && (entry.maxLeadGap === null || leadGap <= entry.maxLeadGap))?.tier ?? "상한가·여유";
+export function limitPairTierFor(leadGap, locked, leaderMove = null) {
+  if (locked) {
+    return limitPairTiers.find((entry) => entry.locked && (entry.maxLeadGap === null || leadGap <= entry.maxLeadGap))?.tier ?? "상한가·여유";
+  }
+
+  return leaderMove !== null && leaderMove < nearLimitMove ? approachTier : "상한가 근접";
 }
 
 async function loadCalibration(config) {
@@ -208,8 +238,15 @@ const livePairSql = `
     FROM ranked l
     JOIN ranked s ON s.theme_name = l.theme_name AND s.move_rank = 2
    WHERE l.move_rank = 1
-     AND l.day_move >= ${nearLimitMove}
-     AND s.day_move >= ${minimumSecondMove}
+     AND (
+       -- 이미 잠겼거나 코앞. 2등주도 달리고 있어야 합니다.
+       (l.day_move >= ${nearLimitMove} AND s.day_move >= ${minimumSecondMove})
+       -- 또는 가는 중. 1등주가 15~27%를 달리고 2등주가 6%p 안쪽에 붙어 있는 자리로,
+       -- 2등주 문턱을 따로 두지 않는 것은 간격이 이미 그 역할을 하기 때문입니다
+       -- (1등주 15%에 간격 6%p면 2등주는 9%입니다).
+       OR (l.day_move >= ${approachMove} AND l.day_move < ${nearLimitMove}
+           AND l.day_move - s.day_move BETWEEN 0 AND ${maximumApproachGap})
+     )
    ORDER BY l.day_move - s.day_move ASC
 `;
 
@@ -269,7 +306,7 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
     .map((row) => {
       const leadGap = Number(Number(row.lead_gap).toFixed(2));
       const locked = Number(row.leader_move) >= limitUpMove;
-      const tier = limitPairTierFor(leadGap, locked);
+      const tier = limitPairTierFor(leadGap, locked, Number(row.leader_move));
       const measured = calibration.get(tier);
 
       return {

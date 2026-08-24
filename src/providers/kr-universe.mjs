@@ -218,3 +218,36 @@ export async function loadHaltedStocks(config, { limit = 60 } = {}) {
     turnoverValue: row.turnover === null ? null : Number(row.turnover)
   }));
 }
+
+/**
+ * 전 종목 이름표. 뉴스에서 회사명을 찾는 데 씁니다.
+ *
+ * 주도주 목록이 아니라 **전 종목**인 것이 요점입니다. 뉴스 태깅이 그날 주도주
+ * 수십 개만 상대로 돌고 있어서, 제목에 이름이 또렷이 있는 기사도 그 종목이
+ * 순위권 밖이면 아무 종목에도 안 붙었습니다 -- 국내 기사 3,437건 중 708건이
+ * 그렇게 새고 있었습니다(에코프로머티, 두산로보틱스, 한국항공우주 …).
+ * 판단 조건을 모집단 층에 걸면 아래가 조용히 빈다는 같은 함정입니다.
+ *
+ * 긴 이름부터 돌려줍니다. 삼성전자와 삼성전기, 하이닉스와 이닉스처럼 한쪽이
+ * 다른 쪽에 들어 있는 이름이 많아 짧은 것부터 맞추면 엉뚱한 데 붙습니다.
+ */
+const nameIndexTtlMs = 30 * 60 * 1000;
+let nameIndex = { at: 0, rows: [] };
+
+export async function loadKrNameIndex(config) {
+  if (!config.databaseUrl) return [];
+  if (nameIndex.rows.length > 0 && Date.now() - nameIndex.at < nameIndexTtlMs) return nameIndex.rows;
+
+  const result = await query(config, `
+    SELECT symbol, name FROM kr_daily_universe
+     WHERE session_date = (SELECT max(session_date) FROM kr_daily_universe)
+       AND length(name) >= 2
+  `);
+  const rows = result.rows
+    .map((row) => ({ name: row.name, symbol: row.symbol }))
+    .sort((left, right) => right.name.length - left.name.length);
+
+  nameIndex = { at: Date.now(), rows };
+
+  return rows;
+}
