@@ -7,3 +7,4 @@ logs
 .DS_Store
 analysis/.venv
 *.log
+watchdog.log

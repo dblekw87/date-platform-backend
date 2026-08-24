@@ -1,3 +1,5 @@
+import { attachKrUniverseTags } from "../src/providers/news.mjs";
+import { loadKrNameIndex } from "../src/providers/kr-universe.mjs";
 import { readConfig } from "../src/config.mjs";
 import { query } from "../src/db/client.mjs";
 
@@ -62,16 +64,18 @@ function keywordsOf(headline) {
   return [...grams];
 }
 
-const { rows: news } = await query(config, `
-  SELECT headline, related_symbols, session_day::text AS d
-    FROM (
-      SELECT headline, related_symbols,
-             (published_at + interval '9 hours')::date AS session_day
-        FROM market_news_items
-       WHERE region = 'KR' AND related_symbols IS NOT NULL
-         AND array_length(related_symbols, 1) > 0
-    ) t
+// 저장된 태그는 예전(주도주 한정) 방식이라, 새 태거를 여기서 다시 태워 봅니다.
+const { rows: raw } = await query(config, `
+  SELECT headline, related_symbols, (published_at + interval '9 hours')::date::text AS d
+    FROM market_news_items WHERE region = 'KR'
 `);
+const nameIndex = await loadKrNameIndex(config);
+const news = attachKrUniverseTags(
+  raw.map((row) => ({ d: row.d, region: "KR", relatedSymbols: row.related_symbols ?? [], text: row.headline })),
+  nameIndex
+)
+  .filter((item) => item.relatedSymbols.length > 0)
+  .map((item) => ({ d: item.d, headline: item.text, related_symbols: item.relatedSymbols }));
 
 console.log(`종목이 붙은 국내 기사 ${news.length}건`);
 
@@ -99,7 +103,7 @@ const seeds = [...byKeyword.entries()]
     key,
     symbols: [...entry.symbols.entries()].sort((a, b) => b[1] - a[1])
   }))
-  .filter((s) => s.days >= 2 && s.symbols.length >= 1 && s.symbols.length <= 12
+  .filter((s) => s.days >= 1 && s.symbols.length >= 1 && s.symbols.length <= 12
     && s.symbols.reduce((sum, [, n]) => sum + n, 0) >= 3);
 
 console.log(`씨앗 후보 키워드 ${seeds.length}개 (2일 이상 · 종목 12개 이하 · 기사 3건 이상)\n`);
