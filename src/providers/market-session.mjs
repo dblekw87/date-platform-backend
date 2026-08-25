@@ -14,6 +14,41 @@
 // NXT's pre-market ends at 08:50, ten minutes before the KRX bell, and its
 // after-market opens at 15:40 and trades to 20:00.
 export const krPreMarketCloseMinute = 8 * 60 + 50;
+
+/**
+ * 국내를 분 단위로 훑는 두 구간.
+ *
+ * 수집기가 여기를 1분 간격으로 돌고, 미국 파이프라인은 여기를 **비켜갑니다**.
+ * 미국 패스는 1,460종목이라 2분 넘게 걸리는데, 겹치면 그동안 국내 틱이 통째로
+ * 밀립니다 -- 2026-08-25 프리마켓 08:04·08:05가 그렇게 비었고 그 자리에
+ * yahoo:us:post 1,460행이 있었습니다.
+ *
+ * 두 파일이 같은 숫자를 따로 들고 있었던 것이 원인입니다. 정규장 창만 스케줄러에
+ * 적혀 있었고, 나중에 만든 프리마켓 창은 수집기에만 있어서 미국 쪽이 그 존재를
+ * 몰랐습니다. 한 곳에 둡니다.
+ *
+ *   08:00~08:15  애프터마켓 종가배팅이 나오는 자리
+ *   09:00~09:30  주도주가 갈리는 자리
+ */
+export const krFineWindows = [
+  { from: 8 * 60, label: "프리마켓 청산", to: 8 * 60 + 15 },
+  { from: 9 * 60, label: "개장 30분", to: 9 * 60 + 30 }
+];
+
+/** 지금이 그 구간인가. 주말은 국내장이 없으므로 아닙니다. */
+export function isKrFineWindow(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit", hour12: false, minute: "2-digit",
+    timeZone: "Asia/Seoul", weekday: "short"
+  }).formatToParts(now);
+  const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
+
+  if (value("weekday") === "Sat" || value("weekday") === "Sun") return false;
+
+  const minute = (Number(value("hour")) % 24) * 60 + Number(value("minute"));
+
+  return krFineWindows.some((window) => minute >= window.from && minute < window.to);
+}
 export const krAfterHoursOpenMinute = 15 * 60 + 40;
 export const krAfterHoursCloseMinute = 20 * 60;
 

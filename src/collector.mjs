@@ -15,7 +15,7 @@ import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
+import { isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
@@ -101,10 +101,11 @@ function isAfterHours(minute) {
   return minute >= krAfterHoursOpenMinute && minute < krAfterHoursSettleMinute;
 }
 
-// 프리마켓 청산 구간. 애프터마켓에 들어간 종가배팅은 다음날 08:00 직후에 나오는
-// 매매라, 이 15분이 그 매매의 청산 전부입니다.
-const preMarketFineFrom = 8 * 60;
-const preMarketFineTo = 8 * 60 + 15;
+// 분 단위로 훑는 구간은 market-session.mjs가 정의합니다. 여기서 따로 들고 있었을
+// 때 미국 파이프라인이 그 존재를 몰라 08:04·08:05를 밀어냈습니다.
+const [preMarketFine, openBellFine] = krFineWindows;
+const preMarketFineFrom = preMarketFine.from;
+const preMarketFineTo = preMarketFine.to;
 
 /**
  * How often to sample, by where the session is.
@@ -124,8 +125,8 @@ const preMarketFineTo = 8 * 60 + 15;
  */
 function intervalMsFor(minute) {
   if (minute >= preMarketFineFrom && minute < preMarketFineTo) return 60_000;
-  if (minute < 9 * 60) return 5 * 60_000;
-  if (minute < 9 * 60 + 30) return 60_000;
+  if (minute < openBellFine.from) return 5 * 60_000;
+  if (minute < openBellFine.to) return 60_000;
   if (minute < 10 * 60) return 2 * 60_000;
 
   return 5 * 60_000;
@@ -135,7 +136,7 @@ function intervalMsFor(minute) {
 // a single boundary. The others are cadence changes inside the morning.
 const cadenceBoundaries = [
   preMarketFineFrom, preMarketFineTo, krPreMarketCloseMinute, openBellMinute,
-  9 * 60 + 30, 10 * 60, krAfterHoursOpenMinute
+  openBellFine.to, 10 * 60, krAfterHoursOpenMinute
 ];
 
 /**

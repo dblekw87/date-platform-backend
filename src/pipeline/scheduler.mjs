@@ -2,7 +2,7 @@ import { fetchShortInterest, loadStoredSettlements, saveShortInterest, settlemen
 import { loadShortVolume, saveShortVolume, storedShortVolumeDates } from "../providers/short-volume.mjs";
 import { fillUsIntraday, loadRecentTargets } from "./us-intraday.mjs";
 import { isUniverseStale, newestUniverseDate, refreshUsUniverse, universeSnapshotDate } from "./us-reference.mjs";
-import { sessionDate } from "../providers/market-session.mjs";
+import { isKrFineWindow, krFineWindows, sessionDate } from "../providers/market-session.mjs";
 import { hasUsPipelineTables, isUsPipelineDue, runUsDailyPipeline } from "./us-daily-run.mjs";
 
 /**
@@ -20,9 +20,6 @@ import { hasUsPipelineTables, isUsPipelineDue, runUsDailyPipeline } from "./us-d
 
 const checkIntervalMs = 60 * 60_000;
 const startupDelayMs = 20_000;
-// 09:00-09:30 KST, the half hour the domestic collector samples every minute.
-const krOpeningFrom = 9 * 60;
-const krOpeningTo = 9 * 60 + 30;
 
 // Two sessions back, so a day the machine was off is still picked up, and a
 // move worth spending a request on. Both are bounds on cost rather than
@@ -53,23 +50,11 @@ let running = false;
  * retried an hour later with catchUpDays behind it, so the row that lands is
  * identical. A domestic minute not sampled at 09:07 does not come back.
  */
-export function isKrOpeningWindow(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).formatToParts(now);
-  const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
-  const weekday = value("weekday");
-
-  if (weekday === "Sat" || weekday === "Sun") return false;
-
-  const minute = (Number(value("hour")) % 24) * 60 + Number(value("minute"));
-
-  return minute >= krOpeningFrom && minute < krOpeningTo;
-}
+/*
+ * 창 정의는 market-session.mjs에 있습니다. 여기 숫자를 따로 들고 있었던 것이
+ * 08:04·08:05가 빈 이유입니다 -- 나중에 만든 프리마켓 1분 구간을 이쪽이 몰랐습니다.
+ */
+export const isKrOpeningWindow = isKrFineWindow;
 
 /**
  * The volume the live pass could not read.
@@ -204,7 +189,11 @@ async function tick(config) {
 export function startUsPipelineScheduler(config) {
   if (!config.usPipeline) return;
 
-  console.log("us pipeline on · 매 시각 확인 · 분봉·참조데이터 갱신 포함 · 09:00–09:30 KST 제외");
+  const skipped = krFineWindows
+    .map((window) => `${String(Math.floor(window.from / 60)).padStart(2, "0")}:${String(window.from % 60).padStart(2, "0")}–${String(Math.floor(window.to / 60)).padStart(2, "0")}:${String(window.to % 60).padStart(2, "0")}`)
+    .join(", ");
+
+  console.log(`us pipeline on · 매 시각 확인 · 분봉·참조데이터 갱신 포함 · ${skipped} KST 제외`);
 
   // Late enough that the server is answering requests before a twenty-minute
   // job starts competing with it for the connection pool.

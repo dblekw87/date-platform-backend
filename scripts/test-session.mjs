@@ -80,6 +80,14 @@ check("00:30 KST is the new day", sessionDate("KR", seoul(day, 0, 30)), day);
 // the boundaries are the only thing keeping a twenty-minute batch out of the
 // one window that cannot be re-collected.
 console.log("\nUS pipeline yields the opening half hour");
+// 프리마켓 1분 구간. 여기가 안 막혀 있어서 2026-08-25에 08:04·08:05가 비었고
+// 그 자리에 미국 패스 1,460행이 있었습니다. 애프터마켓 종가배팅이 나오는 자리라
+// 그 두 분은 다시 받을 수 없습니다.
+check("08:00 is the pre-market window", isKrOpeningWindow(seoul(day, 8, 0)), true);
+check("08:05 is the pre-market window", isKrOpeningWindow(seoul(day, 8, 5)), true);
+check("08:14 is still the pre-market window", isKrOpeningWindow(seoul(day, 8, 14)), true);
+check("08:15 is clear", isKrOpeningWindow(seoul(day, 8, 15)), false);
+check("07:59 is clear", isKrOpeningWindow(seoul(day, 7, 59)), false);
 check("08:59 is clear", isKrOpeningWindow(seoul(day, 8, 59)), false);
 check("09:00 is the window", isKrOpeningWindow(seoul(day, 9, 0)), true);
 check("09:29 is still the window", isKrOpeningWindow(seoul(day, 9, 29)), true);
@@ -88,6 +96,7 @@ check("14:00 is clear", isKrOpeningWindow(seoul(day, 14, 0)), false);
 // Nothing is collected at the weekend, so there is nothing to yield to.
 check("Saturday 09:10 is clear", isKrOpeningWindow(seoul("2026-08-22", 9, 10)), false);
 check("Sunday 09:10 is clear", isKrOpeningWindow(seoul("2026-08-23", 9, 10)), false);
+check("Saturday 08:05 is clear", isKrOpeningWindow(seoul("2026-08-22", 8, 5)), false);
 
 // The gap this closes was real: on 2026-08-18 the collector sampled at 08:59:42
 // and then not again until 09:04:49, losing the first five minutes of the
