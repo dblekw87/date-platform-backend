@@ -66,7 +66,16 @@ const { rows } = await query(config, `
   )
   -- providers/limit-pair.mjs와 같은 이유로 중복을 걷습니다 -- 테마를 여럿 공유하는
   -- 짝이 같은 매매를 여러 번 세면 표본이 부풀고 다테마 종목으로 가중치가 쏠립니다.
+  , catalysts AS (
+    SELECT symbol, session_date, count(*) AS filings
+      FROM market_disclosures
+     WHERE market = 'KR' AND symbol IS NOT NULL AND session_date IS NOT NULL
+     GROUP BY symbol, session_date
+  )
   SELECT DISTINCT ON (l.session_date, s.symbol)
+         coalesce(lc.filings, 0) AS leader_filings,
+         coalesce(sc.filings, 0) AS second_filings,
+         (SELECT min(session_date)::text FROM market_disclosures WHERE market = 'KR') AS filings_from,
          l.session_date::text AS d, l.theme_name,
          l.symbol AS leader, l.day_move AS leader_move,
          l.gap - n.market_gap AS leader_gap_excess,
@@ -79,6 +88,8 @@ const { rows } = await query(config, `
     JOIN ranked s ON s.theme_name = l.theme_name AND s.session_date = l.session_date AND s.move_rank = 2
     LEFT JOIN ranked third ON third.theme_name = l.theme_name AND third.session_date = l.session_date AND third.move_rank = 3
     JOIN nights n ON n.session_date = l.session_date
+    LEFT JOIN catalysts lc ON lc.symbol = l.symbol AND lc.session_date = l.session_date
+    LEFT JOIN catalysts sc ON sc.symbol = s.symbol AND sc.session_date = l.session_date
    WHERE l.move_rank = 1
    ORDER BY l.session_date, s.symbol, l.day_move - s.day_move, l.day_move DESC, l.symbol
 `);
@@ -188,6 +199,47 @@ for (const [label, test] of [
   console.log(`  ${label} · ${list.length}건 · 하루 ${(list.length / nights).toFixed(2)}건`);
   report("    갭", list);
   report("    하루 보유", list, "second_next_excess");
+}
+
+
+/*
+ * 각자 다른 재료로 오른 짝을 걸러야 하는가.
+ *
+ * 2026-08-25에 나온 짝: 금호에이치티 +29.94%(최대주 지분 확대) → 나노팀
+ * +22.33%(SK온 ESS 수주). 같은 전기차 테마지만 재료가 서로 다릅니다. 2등주가
+ * 1등주를 따라간 게 아니라 각자 자기 재료로 올랐다면, 그건 짝이 아니라 우연입니다.
+ *
+ * 공시 유무를 재료의 대리값으로 씁니다 -- 정확하지 않습니다. 뉴스로만 움직인 날은
+ * 공시가 없고, 정기공시만 낸 날은 재료 없이 공시가 있습니다. 방향만 봅니다.
+ *
+ * market_disclosures가 쌓인 뒤로만 유효하므로 그 기간의 표본만 셉니다.
+ */
+const filingsFrom = rows.find((r) => r.filings_from)?.filings_from;
+const covered = filingsFrom
+  ? rows.filter((r) => r.d >= filingsFrom)
+  : [];
+
+console.log("");
+console.log("[재료] 2등주가 자기 공시를 갖고 있으면 다른가");
+
+if (covered.length === 0) {
+  console.log("  market_disclosures가 비어 있어 잴 수 없습니다");
+} else {
+  console.log(`  공시 수집 시작 ${filingsFrom} 이후 ${covered.length}건`);
+  console.log("");
+  report("전체 (기간 한정)", covered);
+  report("  2등주 공시 있음", covered.filter((r) => num(r.second_filings) > 0));
+  report("  2등주 공시 없음", covered.filter((r) => num(r.second_filings) === 0));
+  report("  1등주 공시 있음", covered.filter((r) => num(r.leader_filings) > 0));
+  report("  둘 다 공시 있음", covered.filter((r) => num(r.leader_filings) > 0 && num(r.second_filings) > 0));
+
+  const strong = covered.filter((r) => num(r.leader_move) >= 27);
+
+  console.log("");
+  console.log("  1등주 27%↑ 로 좁히면");
+  report("  전체", strong);
+  report("    2등주 공시 있음", strong.filter((r) => num(r.second_filings) > 0));
+  report("    2등주 공시 없음", strong.filter((r) => num(r.second_filings) === 0));
 }
 
 process.exit(0);
