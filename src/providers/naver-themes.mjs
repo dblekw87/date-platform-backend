@@ -125,7 +125,17 @@ export async function saveThemeMembers(config, themeNo, themeName, members) {
 const nonBusinessThemePattern = "(밸류업|기업인수목적|신규상장|리츠\\(REITs\\)|국내 상장 중국기업|지주사)";
 
 // A theme needs a few members priced today before its average means anything.
-const minimumThemeSample = 3;
+/*
+ * 테마 하나를 "움직였다"고 부르려면 몇 종목이 있어야 하는가.
+ *
+ * 3이었습니다. 그러면 세 종목짜리 좁은 테마가 평균이 크게 흔들려 늘 이깁니다 --
+ * 2026-08-25에 이노메트리가 "유리 기판", 엑시콘이 "CXL"을 달았습니다. 틀린 건
+ * 아니지만 그날 그 종목이 오른 이유는 아닙니다.
+ *
+ * 8입니다. 15로 올리면 반도체 라벨은 더 나아지는 대신 "가상화폐"(그날 표본 12종목)가
+ * 잘려 비트플래닛이 "클라우드 컴퓨팅"으로 갑니다 -- 고치려던 바로 그 문제입니다.
+ */
+const minimumThemeSample = 8;
 
 export async function loadSymbolThemes(config) {
   if (!config.databaseUrl) return new Map();
@@ -182,8 +192,19 @@ export async function loadSymbolThemes(config) {
     SELECT DISTINCT ON (b.symbol) b.symbol, b.theme_name
       FROM business b
       LEFT JOIN session s ON s.theme_name = b.theme_name
+     -- 오른 테마 중에서 **가장 크게** 오른 것입니다.
+     --
+     -- theme_no ASC였습니다. 조금이라도 오르기만 하면 번호가 작은 테마가 이기는
+     -- 규칙이라, 상장이 오래된 테마가 늘 이깁니다. 2026-08-25에 아이티센글로벌과
+     -- 비트플래닛이 "SI(시스템통합)"(no.17)를 달고 한 카드에 묶였습니다. 그날 SI는
+     -- -0.58%p로 두 종목의 테마 중 **가장 나빴고**, 비트플래닛을 상한가로 민 것은
+     -- 가상화폐(+5.07%p)였습니다. 테마의 나이는 신호가 아닙니다.
+     --
+     -- theme_no는 마지막 동점 처리로만 남깁니다 -- 값이 같을 때 순서가 흔들리면
+     -- 새로고침마다 라벨이 바뀝니다.
      ORDER BY b.symbol,
               (CASE WHEN coalesce(s.theme_move, 0) > 0 THEN 0 ELSE 1 END),
+              s.theme_move DESC NULLS LAST,
               b.theme_no ASC
   `, [nonBusinessThemePattern, minimumThemeSample, sessionDate("KR")]);
 

@@ -590,6 +590,41 @@ function startInvestorFlow(config, minute) {
 
 // 15:50. 종가가 확정된 직후이고, 투자자별 매매동향(16:10)과 겹치지 않습니다.
 const universeMinute = 15 * 60 + 50;
+/*
+ * 테마 사전을 장중에 다시 읽습니다.
+ *
+ * 라벨은 분봉을 저장할 때 그 표본에 **함께 찍힙니다**. 그래서 사전이 낡으면 그날
+ * 하루치 표본 전부가 낡은 라벨을 달고, 보드는 그걸 되읽습니다 -- 나중에 사전을
+ * 고쳐도 이미 저장된 표본은 바뀌지 않습니다.
+ *
+ * 서버 시작 때와 15:50 전 종목 훑기 때만 읽고 있었습니다. 08:00에 뜬 서버는 장이
+ * 열리기 전 상태(어제 일봉)로 하루를 보냅니다. 2026-08-25에 아이티센글로벌과
+ * 비트플래닛의 08:00~15:36 표본 350개가 전부 "SI(시스템통합)"를 달고 나온 것이
+ * 그것입니다.
+ *
+ * 10분입니다. 사전 한 번이 전 종목 테마 편입과 그날 표본의 평균을 훑으므로 매 틱은
+ * 비싸고, 테마가 10분 안에 뒤바뀌는 일은 드뭅니다.
+ */
+const themeRefreshIntervalMs = 10 * 60_000;
+let themesRefreshedAt = 0;
+let themeRefreshRunning = false;
+
+function startThemeRefresh(config) {
+  if (themeRefreshRunning || Date.now() - themesRefreshedAt < themeRefreshIntervalMs) return;
+
+  themeRefreshRunning = true;
+  themesRefreshedAt = Date.now();
+
+  loadSymbolThemes(config)
+    .then((themes) => setNaverThemes(themes))
+    // 실패하면 직전 사전이 그대로 남습니다. 라벨이 조금 낡는 것이 라벨이 사라지는
+    // 것보다 낫습니다.
+    .catch((error) => console.warn("collector: theme refresh failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      themeRefreshRunning = false;
+    });
+}
+
 let universeDay = null;
 let universeRunning = false;
 
@@ -944,6 +979,9 @@ export function startMarketCollector(config) {
 
         startInvestorFlow(config, minute);
         startUniverseSample(config, minute);
+        // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
+        // 언제나 한 틱 늦게 반영됩니다.
+        startThemeRefresh(config);
 
         const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);
 
