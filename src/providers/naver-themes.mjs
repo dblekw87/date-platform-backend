@@ -1,3 +1,4 @@
+import { sessionDate } from "./market-session.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -137,7 +138,33 @@ export async function loadSymbolThemes(config) {
     ),
     -- 전 종목 일봉이라 테마의 모든 회원이 들어옵니다. 순위권만 보면 오른 종목만
     -- 세게 되어 어느 테마든 올라 보입니다.
-    session AS (
+    --
+    -- **날짜가 문제였습니다.** kr_daily_universe는 전 종목 훑기(15:50)로 하루에
+    -- 한 번만 쌓이므로, 장중에 이걸 읽으면 "오늘 오른 테마"가 실제로는 **어제 오른
+    -- 테마**입니다. 2026-08-25에 현대건설이 원전으로 9% 오르는 동안 화면은 어제
+    -- 기준으로 테마파크를 달고 있었습니다 -- 어제 테마파크가 +0.68%로 오른 테마
+    -- 중 가장 오래된 것이었기 때문입니다.
+    --
+    -- 오늘 장이 열려 분봉이 쌓였으면 그쪽을 먼저 봅니다. 분봉 모집단은 거래대금
+    -- 순위라 오른 종목으로 기우니, 절대 상승이 아니라 **그 표본 안의 시장 평균 대비
+    -- 초과**로 판정합니다. 그러면 다 같이 오른 날 모든 테마가 통과하는 일이 없습니다.
+    live AS (
+      SELECT DISTINCT ON (symbol) symbol, change_rate AS move
+        FROM market_price_samples
+       WHERE market = 'KR' AND session_date = $3::date
+         AND source LIKE 'kis:krx%' AND change_rate IS NOT NULL
+       ORDER BY symbol, observed_at DESC
+    ),
+    live_base AS (SELECT avg(move) AS market FROM live),
+    live_theme AS (
+      SELECT b.theme_name, avg(l.move) - (SELECT market FROM live_base) AS theme_move
+        FROM business b
+        JOIN live l ON l.symbol = b.symbol
+       GROUP BY b.theme_name
+      HAVING count(*) >= $2
+    ),
+    -- 개장 전과 주말에는 분봉이 없습니다. 그때만 마지막 일봉 스냅샷으로 답합니다.
+    snapshot AS (
       SELECT b.theme_name, avg(u.change_rate) AS theme_move
         FROM business b
         JOIN kr_daily_universe u
@@ -145,6 +172,12 @@ export async function loadSymbolThemes(config) {
          AND u.session_date = (SELECT max(session_date) FROM kr_daily_universe)
        GROUP BY b.theme_name
       HAVING count(*) >= $2
+    ),
+    session AS (
+      SELECT theme_name, theme_move FROM live_theme
+       UNION ALL
+      SELECT theme_name, theme_move FROM snapshot
+       WHERE NOT EXISTS (SELECT 1 FROM live_theme)
     )
     SELECT DISTINCT ON (b.symbol) b.symbol, b.theme_name
       FROM business b
@@ -152,7 +185,7 @@ export async function loadSymbolThemes(config) {
      ORDER BY b.symbol,
               (CASE WHEN coalesce(s.theme_move, 0) > 0 THEN 0 ELSE 1 END),
               b.theme_no ASC
-  `, [nonBusinessThemePattern, minimumThemeSample]);
+  `, [nonBusinessThemePattern, minimumThemeSample, sessionDate("KR")]);
 
   return new Map(result.rows.map((row) => [row.symbol, row.theme_name]));
 }
