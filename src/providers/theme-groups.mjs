@@ -1,6 +1,6 @@
 import { formatTradingAmount } from "./format.mjs";
 import { classifyTheme, isEtfLike, isNonOperatingEquity } from "./themes.mjs";
-import { isPreferredShare, minimumCandidateTurnover } from "./pairing.mjs";
+import { isPreferredShare, minimumCandidateTurnover, themeMoveOf } from "./pairing.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -117,7 +117,11 @@ export async function loadThemeGroups(config, sessionDate, { exclude = [], windo
       // showing, not the size of an opportunity.
       leadGap: Number((Number(leader.change_rate) - Number(followers[0].change_rate)).toFixed(2)),
       market: "KR",
-      theme
+      theme,
+      // Over `rows`, not `followers` — the theme's own move has to count the
+      // members that fell, or every theme on the board looks like it moved.
+      themeBreadth: rows.length,
+      themeMove: themeMoveOf(rows.map((row) => Number(row.change_rate)))
     });
   }
 

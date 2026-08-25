@@ -113,6 +113,33 @@ export function isPreferredShare(symbol) {
  * `theme` is a display value that may have come from the registered-industry
  * floor. Pairing has to run on the curated answer only.
  */
+/**
+ * How much the theme itself moved, as the median of its quoted members.
+ *
+ * The member list on a card is filtered to risers, so a mean over what is shown
+ * says the theme moved no matter what it did. The median over **every** member
+ * we hold a quote for, fallers included, is the honest answer to "did this
+ * theme move" — and it is the number that separates a theme from a label.
+ *
+ * SI(시스템통합) on 2026-08-25 is the case this exists for: 비트플래닛 +30% with
+ * LG씨엔에스 +0.97, 다우기술 +0.79, 포스코DX +0.49 under it. One stock ran on
+ * crypto and the card read as though SI had moved. The median says +0.79%.
+ *
+ * Not a filter. Measured over 270,638 stock-days, members that barely moved
+ * still carry an overnight gap of +0.210%p against a +0.089%p control, so there
+ * is no case for dropping them — only for saying what the theme did.
+ */
+export function themeMoveOf(rates) {
+  const sorted = rates.filter((rate) => Number.isFinite(rate)).sort((left, right) => left - right);
+
+  if (sorted.length === 0) return null;
+
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+
+  return Number(median.toFixed(2));
+}
+
 function pairThemeOf(leader, stocksBySymbol) {
   const theme = stocksBySymbol.get(leader.symbol)?.theme?.trim();
 
@@ -206,6 +233,10 @@ export function buildPairBoard(leaders) {
       },
       market: leader.market,
       theme: leader.theme,
+      // Says whether the theme moved or one member did. Null when no member
+      // carried a quote, which the screen reads as "not enough to say".
+      themeBreadth: leader.themeBreadth ?? null,
+      themeMove: leader.themeMove ?? null,
       // How far the strongest member is from the leader. Kept because it is a
       // fact worth reading, no longer treated as the size of an opportunity —
       // see the sort below.
@@ -317,7 +348,11 @@ export async function attachPairCandidates(config, leaders, stocks) {
     const fromPool = stocks.filter((stock) =>
       stock.symbol !== leader.symbol && stock.theme === theme && !isPreferredShare(stock.symbol));
     const fromTheme = membersFor(leader).flatMap((symbol) => inPool.has(symbol) ? [] : outside.get(symbol) ?? []);
-    const candidates = [...fromPool, ...fromTheme]
+    // Held before the riser filter below, because the theme's own move has to
+    // count the members that fell.
+    const everyone = [...fromPool, ...fromTheme];
+    const themeMove = themeMoveOf([leader.changeRateValue, ...everyone.map((member) => Number(member.changeRateValue))]);
+    const candidates = everyone
       .filter((member) => Number(member.changeRateValue) > 0 && Number(member.turnoverValue) >= minimumCandidateTurnover)
       .sort((left, right) => Number(right.changeRateValue) - Number(left.changeRateValue))
       .map((member) => ({
@@ -337,7 +372,9 @@ export async function attachPairCandidates(config, leaders, stocks) {
         : "테마 동반이 없어 개별 재료일 수 있으니 뉴스·공시 원문 확인",
       pairCandidates: candidates,
       pairTrade: candidates.length > 0 ? "테마 주도" : "단독 주도",
-      peerCount: candidates.length
+      peerCount: candidates.length,
+      themeBreadth: everyone.length + 1,
+      themeMove
     };
   });
 }
