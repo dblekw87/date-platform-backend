@@ -187,7 +187,14 @@ export async function loadSymbolThemes(config) {
               b.theme_no ASC
   `, [nonBusinessThemePattern, minimumThemeSample, sessionDate("KR")]);
 
-  return new Map(result.rows.map((row) => [row.symbol, row.theme_name]));
+  const ranked = new Map(result.rows.map((row) => [row.symbol, row.theme_name]));
+  // 오늘 기사가 테마를 지목하면 그쪽이 이깁니다. 순위 규칙은 무엇이 올랐는지만
+  // 알고 왜 올랐는지는 모릅니다.
+  const fromNews = await loadNewsThemes(config).catch(() => new Map());
+
+  for (const [symbol, theme] of fromNews) ranked.set(symbol, theme);
+
+  return ranked;
 }
 
 export async function refreshThemes(config, { log = () => {} } = {}) {
@@ -211,4 +218,106 @@ export async function refreshThemes(config, { log = () => {} } = {}) {
   }
 
   return { saved, themes: index.size };
+}
+
+/**
+ * 오늘 기사가 그 종목의 테마를 직접 말하는가.
+ *
+ * 순위 규칙(오른 것 중 오래된 것)은 **왜 올랐는지**를 모릅니다. 차트와 테마
+ * 평균만 보기 때문입니다. 2026-08-25에 현대건설이 미국 원전 수주 기대로 9%
+ * 올랐을 때 규칙은 `건설 대표주`를, 한전기술에는 `풍력에너지`를 달았습니다.
+ * 순서를 바꿔 봐도 나아지지 않습니다 -- 가장 많이 오른 테마를 집으면 한화가
+ * `태양광에너지`가 됩니다. 예전 측정도 같은 결론이었습니다(가장 오른 테마 27%,
+ * 오른 것 중 오래된 것 49%).
+ *
+ * 뉴스는 압니다. 같은 날 기사가 "하반기 미국 원전 확대에 따른 추가 수주 가능성"
+ * 이라고 적혀 있습니다. 그래서 기사가 테마를 지목하면 그것을 쓰고, 아니면 기존
+ * 규칙으로 돌아갑니다.
+ *
+ * 순환을 피하는 두 가지:
+ *
+ *   회사 이름을 지우고 봅니다. 현대**건설** 기사가 `건설 대표주`를 보증하는 것은
+ *   근거가 아니라 이름의 반복입니다.
+ *
+ *   태그가 **정확히 그 심볼**인 기사만 씁니다. 한화 기사 46건에는 한화투자증권
+ *   기사가 섞입니다.
+ */
+
+// 기사는 줄여 씁니다. 테마명이 그대로 나오는 일은 드뭅니다.
+const themeAliases = {
+  "2차전지": ["배터리"],
+  "방위산업/전쟁 및 테러": ["방산"],
+  "원자력발전": ["원전"],
+  "원자력발전소 해체": ["원전 해체", "원전해체"]
+};
+
+// 한 건은 우연일 수 있습니다. 두 건이면 그 기사가 그 종목을 그 테마로 부르고
+// 있다고 봅니다.
+const minimumThemeArticles = 2;
+
+function themeKeywords(theme) {
+  const base = theme.replace(/\(.*?\)/g, "").trim();
+  const words = base.split(/[\s·/]+/).filter((word) => word.length >= 2);
+
+  return [...new Set([theme, base, ...words, ...(themeAliases[theme] ?? [])])];
+}
+
+export async function loadNewsThemes(config, { day = sessionDate("KR") } = {}) {
+  if (!config.databaseUrl) return new Map();
+
+  const [{ rows: news }, { rows: members }, { rows: names }] = await Promise.all([
+    query(config, `
+      SELECT headline, related_symbols FROM market_news_items
+       WHERE region = 'KR' AND related_symbols IS NOT NULL
+         AND array_length(related_symbols, 1) > 0
+         AND (published_at + interval '9 hours')::date = $1::date
+    `, [day]),
+    query(config, `SELECT symbol, theme_name FROM kr_theme_members WHERE theme_name !~ $1`, [nonBusinessThemePattern]),
+    query(config, `
+      SELECT symbol, name FROM kr_daily_universe
+       WHERE session_date = (SELECT max(session_date) FROM kr_daily_universe) AND length(name) >= 2
+    `)
+  ]);
+
+  if (news.length === 0) return new Map();
+
+  const nameOf = new Map(names.map((row) => [row.symbol, row.name]));
+  const byStock = new Map();
+
+  news.forEach((item) => {
+    item.related_symbols.forEach((symbol) => {
+      if (!byStock.has(symbol)) byStock.set(symbol, []);
+      byStock.get(symbol).push(item.headline);
+    });
+  });
+
+  const themesOf = new Map();
+
+  members.forEach((row) => {
+    if (!themesOf.has(row.symbol)) themesOf.set(row.symbol, []);
+    themesOf.get(row.symbol).push(row.theme_name);
+  });
+
+  const picked = new Map();
+
+  for (const [symbol, headlines] of byStock) {
+    const themes = themesOf.get(symbol);
+
+    if (!themes) continue;
+
+    const own = nameOf.get(symbol);
+    const texts = own ? headlines.map((line) => line.split(own).join(" ")) : headlines;
+    const best = themes
+      .map((theme) => {
+        const keys = themeKeywords(theme);
+
+        return { hits: texts.filter((text) => keys.some((key) => text.includes(key))).length, theme };
+      })
+      .filter((entry) => entry.hits >= minimumThemeArticles)
+      .sort((left, right) => right.hits - left.hits)[0];
+
+    if (best) picked.set(symbol, best.theme);
+  }
+
+  return picked;
 }
