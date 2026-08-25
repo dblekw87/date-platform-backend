@@ -1,4 +1,4 @@
-"""How often a co-moving pair comes back.
+r"""How often a co-moving pair comes back.
 
     .\analysis\.venv\Scripts\python.exe analysis\run_persistence.py
 """

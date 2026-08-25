@@ -119,6 +119,18 @@ function Invoke-DailyBackup {
   & (Join-Path $PSScriptRoot "backup-db.ps1") 2>&1 | ForEach-Object { Write-Line "  backup: $_" }
 }
 
+<#
+  하루 한 번 도는 측정 실행.
+
+  백업과 같은 자리에 매단 이유도 같습니다 -- 권한 없이 쓸 수 있는 되풀이 트리거가
+  이 시간마다 도는 작업뿐이고, 두 경로(백엔드가 이미 떠 있는 흔한 경우와 방금 띄운
+  경우) 모두에서 불려야 합니다. run-analysis.ps1이 날짜와 시각을 스스로 잠그므로
+  하루 열두 번 불려도 실제로 도는 것은 장 끝난 뒤 한 번입니다.
+#>
+function Invoke-DailyAnalysis {
+  & (Join-Path $PSScriptRoot "run-analysis.ps1") 2>&1 | ForEach-Object { Write-Line "  analysis: $_" }
+}
+
 Write-Line "--- start-collector ---"
 
 # A dev window already holding :4010 is the normal case when someone is working.
@@ -127,6 +139,7 @@ Write-Line "--- start-collector ---"
 if (Test-Port -Port $backendPort) {
   Write-Line "backend already listening on :$backendPort - nothing to start"
   Invoke-DailyBackup
+  Invoke-DailyAnalysis
   exit 0
 }
 
@@ -212,6 +225,7 @@ if (Wait-Port -Port $backendPort -Seconds $ServerWaitSeconds -Label "backend") {
   # 5.1, which reads a BOM-less UTF-8 script as ANSI and mangles anything else.
   Write-Line "backend listening on :$backendPort - log $serverLog"
   Invoke-DailyBackup
+  Invoke-DailyAnalysis
   exit 0
 }
 
