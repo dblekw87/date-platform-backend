@@ -78,13 +78,23 @@ export async function saveProgramTrade(config, { rows, sessionDate }) {
     INSERT INTO kr_program_trade
       (symbol, session_date, observed_time, price, change_rate, accumulated_volume,
        net_qty, net_amount, buy_qty, sell_qty, net_qty_change, net_amount_change)
-    SELECT symbol, $2::date, observed_time, price, change_rate, accumulated_volume,
+    -- 한 배치에 같은 (종목, 분)이 두 번 들어오면 ON CONFLICT DO UPDATE가
+    -- "cannot affect row a second time"으로 **배치 전체**를 버립니다. 2026-08-26에
+    -- 한 번 그렇게 날아갔고, 프로그램매매는 하루 다섯 구간뿐이라 한 배치가 곧
+    -- 한 구간입니다.
+    --
+    -- 중복은 같은 분에 대한 같은 응답이므로 어느 쪽을 남겨도 같지만, 배열에서 나중에
+    -- 온 것을 남깁니다 -- 재조회가 있었다면 그쪽이 더 새 값입니다.
+    SELECT DISTINCT ON (symbol, observed_time)
+           symbol, $2::date, observed_time, price, change_rate, accumulated_volume,
            net_qty, net_amount, buy_qty, sell_qty, net_qty_change, net_amount_change
     FROM unnest($1::text[], $3::text[], $4::numeric[], $5::numeric[], $6::numeric[],
                 $7::numeric[], $8::numeric[], $9::numeric[], $10::numeric[],
                 $11::numeric[], $12::numeric[])
+      WITH ORDINALITY
       AS t(symbol, observed_time, price, change_rate, accumulated_volume,
-           net_qty, net_amount, buy_qty, sell_qty, net_qty_change, net_amount_change)
+           net_qty, net_amount, buy_qty, sell_qty, net_qty_change, net_amount_change, ord)
+    ORDER BY symbol, observed_time, ord DESC
     ON CONFLICT (symbol, session_date, observed_time) DO UPDATE
       SET price = EXCLUDED.price,
           change_rate = EXCLUDED.change_rate,

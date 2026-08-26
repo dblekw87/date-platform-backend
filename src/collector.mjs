@@ -794,10 +794,13 @@ function startProgramSample(config) {
       .sort((left, right) => Number(right.turnoverValue ?? 0) - Number(left.turnoverValue ?? 0))
       .slice(0, programSymbolLimit)
       .map((stock) => stock.symbol);
+    // 한 종목이 리더보드에 두 줄로 오를 수 있습니다. 그대로 두면 같은 종목을 두 번
+    // 조회하고, 그 행들이 한 배치에 나란히 들어가 적재가 통째로 실패합니다.
+    const unique = [...new Set(symbols)];
 
     if (symbols.length === 0) return;
 
-    const { answered, rows } = await collectProgramTrade(config, symbols);
+    const { answered, rows } = await collectProgramTrade(config, unique);
 
     if (rows.length === 0) return;
 
@@ -818,7 +821,7 @@ function startProgramSample(config) {
 
     const saved = await saveProgramTrade(config, { rows, sessionDate: day });
 
-    if (saved > 0) console.log(`collector: program trade ${answered}/${symbols.length} symbols · ${saved} rows · ${latest}`);
+    if (saved > 0) console.log(`collector: program trade ${answered}/${unique.length} symbols · ${saved} rows · ${latest}`);
   })()
     .catch((error) => console.warn("collector: program trade failed", error instanceof Error ? error.message : error))
     .finally(() => {
