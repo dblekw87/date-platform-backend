@@ -10,12 +10,12 @@ import { collectKrDailyBars } from "./providers/kr-daily-bars.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
-import { classifyTheme, setNaverThemes } from "./providers/themes.mjs";
+import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
+import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
@@ -615,8 +615,19 @@ function startThemeRefresh(config) {
   themeRefreshRunning = true;
   themesRefreshedAt = Date.now();
 
-  loadSymbolThemes(config)
-    .then((themes) => setNaverThemes(themes))
+  // 지금 달려 있는 사전을 같이 넘깁니다 -- 관성 판정이 그것을 봅니다. 넘기지 않으면
+  // 매번 처음부터 고르고, 0.02%p 차이로 라벨이 뒤집힙니다.
+  loadSymbolThemes(config, { previous: naverThemeMap() })
+    // 몇 종목이 라벨을 갈아탔는지 같이 적습니다. 갱신이 도는지 로그만 보고는 알 수
+    // 없었고, 2026-08-26 아침에 그것을 확인하느라 표본을 뒤져야 했습니다.
+    .then((themes) => {
+      let moved = 0;
+
+      for (const [symbol, theme] of themes) if (naverThemeOf(symbol) !== theme) moved += 1;
+
+      setNaverThemes(themes);
+      console.log(`collector: theme dictionary refreshed · ${themes.size} symbols · ${moved} relabelled`);
+    })
     // 실패하면 직전 사전이 그대로 남습니다. 라벨이 조금 낡는 것이 라벨이 사라지는
     // 것보다 낫습니다.
     .catch((error) => console.warn("collector: theme refresh failed", error instanceof Error ? error.message : error))
@@ -864,6 +875,8 @@ const snapshotIntervalMs = 10 * 60_000;
 // prices in it are older than the ten minutes the snapshot promises.
 const boardReuseMs = 3 * 60_000;
 let lastSnapshotAt = 0;
+// 뉴스 표집이 분리 실행이라 겹칠 수 있습니다. 시간 잠금만으로는 못 막습니다.
+let newsRunning = false;
 let lastBoard = null;
 let lastBoardAt = 0;
 let snapshotRunning = false;
@@ -1019,16 +1032,28 @@ export function startMarketCollector(config) {
     // only place a headline lives until it lands here, and naming why a stock
     // rose has to be learned from months of them, so the corpus cannot lose
     // every evening. Slower off hours because each sample costs a board build.
-    if (Date.now() - lastNewsAt >= (sessionOpen ? newsIntervalMs : offHoursNewsIntervalMs)) {
+    /*
+     * Never awaited, for the reason written above it: each sample costs a board
+     * build, and this loop is on a one-minute cadence during the fine windows.
+     *
+     * It was awaited, and it ate a minute every ten. Measured 2026-08-26 —
+     * 09:22 has no domestic samples and the log shows the board snapshot for
+     * 09:22:16 in its place, with 09:04 and 09:11 the two clusters before it.
+     * A minute inside 09:00-09:30 cannot be re-collected.
+     *
+     * `lastNewsAt` alone was enough while this was awaited, since the loop could
+     * not come round again mid-sample. Detached, it can, so a running flag holds
+     * the door — two overlapping passes would ask every feed twice for the same
+     * minute and write the same headlines.
+     */
+    if (!newsRunning && Date.now() - lastNewsAt >= (sessionOpen ? newsIntervalMs : offHoursNewsIntervalMs)) {
+      newsRunning = true;
       lastNewsAt = Date.now();
 
-      try {
-        const saved = await sampleNews(config);
-
-        if (saved > 0) console.log(`collector: ${saved} news items`);
-      } catch (error) {
-        console.warn("collector: news sample failed", error instanceof Error ? error.message : error);
-      }
+      sampleNews(config)
+        .then((saved) => { if (saved > 0) console.log(`collector: ${saved} news items`); })
+        .catch((error) => console.warn("collector: news sample failed", error instanceof Error ? error.message : error))
+        .finally(() => { newsRunning = false; });
     }
 
     // 공시는 시장이 열려 있는지와 무관하게 접수됩니다. 장 시간 블록 안에 두면
@@ -1077,9 +1102,23 @@ export function startMarketCollector(config) {
         startUsSeenSample(config);
       }
     } else if (usMarketPhase() !== "closed") {
-      // A watchlist pass is 25 seconds of requests rather than one screener
-      // call, so it runs at half the session cadence.
-      if (Date.now() - lastUsExtendedAt >= usExtendedIntervalMs) {
+      /*
+       * A watchlist pass is 25 seconds of requests rather than one screener
+       * call, so it runs at half the session cadence.
+       *
+       * And it yields to the domestic fine windows, because it is **awaited**
+       * here: twenty-five seconds inside a one-minute cadence eats the minute.
+       * Measured 2026-08-26 — 08:05 and 08:11 have no domestic samples at all,
+       * with "1531 US extended-hours samples" sitting between 08:04 and 08:06
+       * in the log. Those two minutes cannot be re-collected.
+       *
+       * The pipeline batch already yields (scheduler.mjs), but that is a
+       * different path and guarding it did not cover this one.
+       *
+       * The throttle stamp is left alone when skipping, so the pass runs on the
+       * first tick after the window rather than waiting out another interval.
+       */
+      if (Date.now() - lastUsExtendedAt >= usExtendedIntervalMs && !isKrFineWindow()) {
         lastUsExtendedAt = Date.now();
 
         try {
