@@ -137,7 +137,25 @@ const nonBusinessThemePattern = "(밸류업|기업인수목적|신규상장|리�
  */
 const minimumThemeSample = 8;
 
-export async function loadSymbolThemes(config) {
+/*
+ * 이미 붙은 라벨을 뒤집으려면 도전자가 얼마나 더 올라야 하는가.
+ *
+ * 없었습니다. 10분마다 처음부터 다시 골랐고, 그래서 2026-08-26 장중에 228종목이
+ * 라벨을 갈아탔습니다 -- 도화엔지니어링과 유신은 전후 재건(2.15%p)과
+ * 수자원(2.13%p) 사이 **0.019%p** 차이로 뒤집혔습니다. 그 차이는 표본 하나가
+ * 만듭니다.
+ *
+ * 편입이 틀린 것이 아닙니다. 현대건설은 남북경협·원자력발전·원전해체·전후재건에
+ * 실제로 다 속하고, 넷 다 오른 날에는 어느 것을 골라도 틀리지 않습니다. 다만 매
+ * 10분 다른 답을 내면 읽는 쪽은 무엇 하나 믿을 수 없습니다.
+ *
+ * 1%p입니다. 그날 측정한 격차 분포에서 0.5%p 아래가 22종목, 1%p 아래가 50종목이라
+ * 노이즈로 뒤집히던 것 대부분이 여기서 멈춥니다. 진짜로 테마가 바뀐 날 --
+ * 2%p 넘게 벌어진 8종목 -- 은 그대로 통과합니다.
+ */
+const relabelMargin = 1;
+
+export async function loadSymbolThemes(config, { previous } = {}) {
   if (!config.databaseUrl) return new Map();
 
   const result = await query(config, `
@@ -189,9 +207,15 @@ export async function loadSymbolThemes(config) {
       SELECT theme_name, theme_move FROM snapshot
        WHERE NOT EXISTS (SELECT 1 FROM live_theme)
     )
-    SELECT DISTINCT ON (b.symbol) b.symbol, b.theme_name
+    SELECT DISTINCT ON (b.symbol) b.symbol, b.theme_name, s.theme_move,
+           -- 지금 달려 있는 라벨이 오늘 얼마나 올랐는지. 관성 판정에 씁니다.
+           (SELECT p.theme_move FROM session p WHERE p.theme_name = held.theme_name) AS held_move,
+           held.theme_name AS held_theme
       FROM business b
       LEFT JOIN session s ON s.theme_name = b.theme_name
+      LEFT JOIN LATERAL (
+        SELECT unnest($4::text[]) AS symbol, unnest($5::text[]) AS theme_name
+      ) held ON held.symbol = b.symbol
      -- 오른 테마 중에서 **가장 크게** 오른 것입니다.
      --
      -- theme_no ASC였습니다. 조금이라도 오르기만 하면 번호가 작은 테마가 이기는
@@ -206,9 +230,27 @@ export async function loadSymbolThemes(config) {
               (CASE WHEN coalesce(s.theme_move, 0) > 0 THEN 0 ELSE 1 END),
               s.theme_move DESC NULLS LAST,
               b.theme_no ASC
-  `, [nonBusinessThemePattern, minimumThemeSample, sessionDate("KR")]);
+  `, [nonBusinessThemePattern, minimumThemeSample, sessionDate("KR"),
+      previous ? [...previous.keys()] : [], previous ? [...previous.values()] : []]);
 
-  const ranked = new Map(result.rows.map((row) => [row.symbol, row.theme_name]));
+  const ranked = new Map(result.rows.map((row) => {
+    /*
+     * 관성. 도전자가 relabelMargin 넘게 앞서지 못하면 달려 있던 라벨을 지킵니다.
+     *
+     * 지금 라벨이 더 이상 오르지 않는 테마면(held_move가 없거나 0 이하) 지키지
+     * 않습니다 -- 그 경우는 관성이 아니라 어제의 이유를 붙들고 있는 것입니다.
+     */
+    const held = row.held_theme;
+    const heldMove = row.held_move === null || row.held_move === undefined ? null : Number(row.held_move);
+    const wonMove = row.theme_move === null || row.theme_move === undefined ? null : Number(row.theme_move);
+
+    if (held && held !== row.theme_name && heldMove !== null && heldMove > 0
+        && (wonMove === null || wonMove - heldMove < relabelMargin)) {
+      return [row.symbol, held];
+    }
+
+    return [row.symbol, row.theme_name];
+  }));
   // 오늘 기사가 테마를 지목하면 그쪽이 이깁니다. 순위 규칙은 무엇이 올랐는지만
   // 알고 왜 올랐는지는 모릅니다.
   const fromNews = await loadNewsThemes(config).catch(() => new Map());

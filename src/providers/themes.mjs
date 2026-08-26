@@ -538,6 +538,16 @@ export function setNaverThemes(map) {
   return naverThemes.size;
 }
 
+/** The whole dictionary, for a refresh that has to know what it is replacing. */
+export function naverThemeMap() {
+  return naverThemes;
+}
+
+/** The label the dictionary currently holds, for callers comparing before a swap. */
+export function naverThemeOf(symbol) {
+  return naverThemes.get(symbol);
+}
+
 export function naverThemeCount() {
   return naverThemes.size;
 }
