@@ -103,13 +103,32 @@ export function limitPairSql({ oneDay = false } = {}) {
   ),
   moves AS (
     SELECT b.symbol, b.session_date, b.close, b.close * b.volume AS turnover,
-           (b.close / lag(b.close) OVER (PARTITION BY b.symbol ORDER BY b.session_date) - 1) * 100 AS day_move
+           (b.close / lag(b.close) OVER (PARTITION BY b.symbol ORDER BY b.session_date) - 1) * 100 AS day_move,
+           -- 직전 거래일에 거래가 없었으면 그날은 정지였고, 그때 종가는 정지 직전
+           -- 가격에서 멈춰 있습니다.
+           lag(b.volume) OVER (PARTITION BY b.symbol ORDER BY b.session_date) AS prev_volume
       FROM kr_daily_bars b
       ${scanBound}
   ),
   today AS (
     SELECT * FROM moves
      WHERE ${dayFilter} day_move IS NOT NULL AND turnover >= ${minimumTurnover}
+       /*
+        * 정지에서 풀린 날은 뺍니다.
+        *
+        * 등락률을 전일 종가로 계산하는데, 정지 기간의 종가는 정지 직전 가격에 멈춰
+        * 있습니다. 거래소는 재개할 때 기준가를 새로 정하므로 실제 등락률과 어긋납니다.
+        * 2026-08-27 파루 -- 512원에서 여섯 거래일 정지된 뒤 1,331원에 재개했고,
+        * 계산상 +159.96%가 되어 상한가 짝꿍의 1등주로 올라왔습니다. 거래소 기준으로는
+        * +29.98%, 평범한 상한가입니다.
+        *
+        * 그리고 이 매매는 상한가에 잠긴 수요가 넘치는 것을 사는 것인데, 재개 첫날은
+        * 호가 범위부터 다릅니다. 숫자가 맞더라도 같은 자리가 아닙니다.
+        *
+        * 과거 2,081건의 재개 중 계산상 +30%를 넘긴 것이 14건입니다. 드물지만 그 14번은
+        * 전부 1등주 자리를 차지합니다.
+        */
+       AND coalesce(prev_volume, 0) > 0
   ),
   ranked AS (
     -- 날짜로도 나눠야 합니다. 테마로만 나누면 하루치를 볼 때는 맞지만, 캘리브레이션이
