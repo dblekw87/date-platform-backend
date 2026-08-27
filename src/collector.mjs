@@ -639,7 +639,10 @@ const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
 function startPairAlert(config, afterHours) {
-  if (afterHours || Date.now() - pairAlertAt < pairAlertIntervalMs) return;
+  // 정규장에만. 상한가는 KRX에만 있고, 프리마켓·애프터마켓 NXT에는 가격제한폭이
+  // 걸리는 방식이 달라 조건 자체가 성립하지 않습니다. 08:00에 어제 짝이 나간 것도
+  // 이 시각에 알림이 돌았기 때문입니다.
+  if (!isRegularSession("KR") || afterHours || Date.now() - pairAlertAt < pairAlertIntervalMs) return;
 
   pairAlertAt = Date.now();
 

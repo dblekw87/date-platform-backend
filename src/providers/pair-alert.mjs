@@ -53,6 +53,19 @@ export async function notifyNewPairs(config, { day, url } = {}) {
     let posted = 0;
 
     for (const pair of pairs) {
+      /*
+       * 오늘 장의 짝만 보냅니다.
+       *
+       * 2026-08-28 08:00에 어제(08-27) 짝인 유디엠텍→라온피플이 발송됐습니다.
+       * 자정에 날짜가 바뀌며 중복 방지가 비워지는데, 그 시각에는 오늘 정규장
+       * 데이터가 없어 확정 경로가 어제 종가로 만든 목록을 그대로 돌려줍니다.
+       * 비워진 기록에 어제 짝이 "새 것"으로 들어온 것입니다.
+       *
+       * 화면에서는 어제 결과가 남아 있는 것이 맞습니다 -- 장 열리기 전에 보드가
+       * 비어 있으면 그게 더 나쁩니다. 알림만 오늘 것을 요구합니다.
+       */
+      if (pair.sessionDate && pair.sessionDate !== day) continue;
+
       const key = `${pair.leader.symbol}|${pair.second.symbol}`;
       const rank = rankOf(pair.tier);
 
