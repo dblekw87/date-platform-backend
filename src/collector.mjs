@@ -12,6 +12,7 @@ import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
+import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
@@ -615,6 +616,25 @@ const universeMinute = 15 * 60 + 50;
  *
  * 정규장에만 돕니다. 애프터마켓은 상한가가 없어 조건 자체가 성립하지 않습니다.
  */
+/*
+ * 미국 개장 신호 알림.
+ *
+ * 조건이 정해지는 건 첫 5분봉이 닫히는 22:35 한 번뿐이라 자주 볼 이유가 없습니다.
+ * 다만 프리마켓 상승 폭은 개장 직전까지 움직이므로 개장 전후 한 시간만 3분마다
+ * 봅니다. 그 바깥에서는 조건이 바뀌지 않습니다.
+ */
+const openSignalIntervalMs = 3 * 60_000;
+let openSignalAt = 0;
+
+function startOpenSignalAlert(config) {
+  if (usMarketPhase() !== "regular" || Date.now() - openSignalAt < openSignalIntervalMs) return;
+
+  openSignalAt = Date.now();
+
+  notifyOpenSignals(config, { day: sessionDate("US"), url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: open signal alert failed", error instanceof Error ? error.message : error));
+}
+
 const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
@@ -1129,6 +1149,8 @@ export function startMarketCollector(config) {
         lastUsSeenAt = Date.now();
         startUsSeenSample(config);
       }
+
+      startOpenSignalAlert(config);
     } else if (usMarketPhase() !== "closed") {
       /*
        * A watchlist pass is 25 seconds of requests rather than one screener

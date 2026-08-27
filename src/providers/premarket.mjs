@@ -114,15 +114,88 @@ async function loadPreviousCloses(config, symbols) {
   }
 }
 
+/**
+ * 어느 전일 종가를 믿을 것인가.
+ *
+ * 저장된 값을 먼저 씁니다 -- 우리 일봉은 확정값이고 Yahoo의 meta는 장중에 흔들립니다.
+ * 다만 **액면병합이 있으면 저장값이 병합 전 가격에 멈춰 있습니다.** 2026-08-27
+ * IMCC가 그랬습니다: 우리 08-26 종가는 $0.1114인데 Yahoo는 $3.342였고(1:30 병합),
+ * 저장값으로 나누니 상승률이 +2916%로 나왔습니다. 실제로는 +0.5%입니다.
+ *
+ * us_splits로 거르려 했지만 IMCC는 거기 없었습니다 -- 분할 정보가 늦게 들어옵니다.
+ * 그래서 표가 아니라 두 값의 어긋남 자체를 신호로 씁니다. 정상적인 하루 변동으로는
+ * 두 배가 벌어지지 않으므로, 벌어졌으면 분할이고 그때는 Yahoo가 맞습니다.
+ */
+function pickPreviousClose(storedClose, result) {
+  const yahoo = Number.isFinite(result?.meta?.chartPreviousClose) ? result.meta.chartPreviousClose
+    : Number.isFinite(result?.meta?.previousClose) ? result.meta.previousClose : null;
+
+  if (!storedClose) return yahoo ?? undefined;
+  if (!yahoo) return storedClose;
+
+  const ratio = storedClose / yahoo;
+
+  return ratio > 2 || ratio < 0.5 ? yahoo : storedClose;
+}
+
+/**
+ * 개장 첫 5분봉과, 그때까지 프리마켓에서 얼마나 올라 있었는지.
+ *
+ * 2024-08~2026-08 1,503건 실측에서 이 둘이 결과를 갈랐습니다. 진입은 정규장 첫 봉
+ * 시가이고 값은 전부 중앙값입니다.
+ *
+ *   프리 50~100%  30분 종가 +21.2%   프리 150~300%  30분 종가 −3.1%
+ *   프리 100~150% 30분 종가 +12.7%   프리 300%↑     30분 종가 −5.7%
+ *
+ * 많이 오를수록 나빠집니다. 프리마켓에서 이미 다 가버려 정규장에 남은 것이
+ * 없기 때문입니다 -- 300% 넘게 오른 것들은 30분 고가가 +10.5%뿐입니다.
+ *
+ * 첫 5분봉의 방향이 그 다음을 가릅니다. 프리 150~300%에서 양봉이면 30분 종가
+ * 중앙값 +3.7%에 승률 56%, 음봉이면 −9.8%에 33%입니다.
+ *
+ * 값이 아직 없을 때(개장 전)와 음봉일 때를 구분해서 냅니다. 둘을 같이 비워 두면
+ * 화면이 "아직 모른다"와 "아니다"를 같게 보여주게 됩니다.
+ */
+function openBar(result, previousClose) {
+  const regular = result?.meta?.currentTradingPeriod?.regular;
+  const stamps = result?.timestamp ?? [];
+  const quote = result?.indicators?.quote?.[0] ?? {};
+
+  if (!regular || stamps.length === 0) return { openBarState: "unknown" };
+
+  const first = stamps.findIndex((stamp) => stamp >= regular.start);
+
+  if (first < 0) {
+    // 아직 개장 전. 프리마켓 상승률만 확정할 수 있습니다.
+    const before = stamps.filter((stamp) => stamp < regular.start).length;
+    const preLast = before > 0 ? quote.close?.[before - 1] : null;
+
+    return { openBarState: "before", preGain: Number.isFinite(preLast) ? preLast / previousClose - 1 : null };
+  }
+
+  const preLast = first > 0 ? quote.close?.[first - 1] : null;
+  const open = quote.open?.[first];
+  const close = quote.close?.[first];
+  // 첫 봉이 아직 닫히지 않았으면 방향을 말하지 않습니다. 5분이 지나기 전의 종가는
+  // 종가가 아닙니다.
+  const settled = Date.now() / 1000 >= stamps[first] + 300;
+
+  return {
+    openBarState: !Number.isFinite(open) || !Number.isFinite(close) ? "unknown"
+      : !settled ? "forming"
+        : close > open ? "green" : "red",
+    openPrice: Number.isFinite(open) ? open : null,
+    preGain: Number.isFinite(preLast) ? preLast / previousClose - 1 : null
+  };
+}
+
 async function readExtendedQuote(symbol, storedClose) {
   const data = await fetchJson(
     `${chartUrl}/${encodeURIComponent(symbol)}?includePrePost=true&interval=5m&range=1d`,
     { headers: { "User-Agent": browserUserAgent }, timeoutMs: 4000 }
   );
   const result = data?.chart?.result?.[0];
-  const previousClose = storedClose
-    ?? (Number.isFinite(result?.meta?.regularMarketPrice) ? result.meta.regularMarketPrice : undefined)
-    ?? result?.meta?.previousClose;
+  const previousClose = pickPreviousClose(storedClose, result);
   const closes = (result?.indicators?.quote?.[0]?.close ?? []).filter((value) => Number.isFinite(value));
   const highs = (result?.indicators?.quote?.[0]?.high ?? []).filter((value) => Number.isFinite(value));
   const volumes = (result?.indicators?.quote?.[0]?.volume ?? []).filter((value) => Number.isFinite(value));
@@ -133,6 +206,7 @@ async function readExtendedQuote(symbol, storedClose) {
   const high = highs.length > 0 ? Math.max(...highs) : last;
 
   return {
+    ...openBar(result, previousClose),
     changeRate: last / previousClose - 1,
     high,
     highRate: high / previousClose - 1,
@@ -328,6 +402,10 @@ export async function loadUsPremarketMovers(config, { limit = 10 } = {}) {
           phase,
           phaseLabel: { post: "애프터마켓", pre: "프리마켓", regular: "정규장" }[phase],
           previousClose: quote.previousClose,
+          // 실측으로 결과가 갈린 두 값. 화면이 조건을 스스로 판단할 수 있게 그대로 냅니다.
+          openBarState: quote.openBarState ?? "unknown",
+          openPrice: quote.openPrice ?? null,
+          preGain: quote.preGain ?? null,
           // What the list said about it before it moved, which is the only
           // reason it was being watched at all.
           probability: candidate?.probability ?? null,
