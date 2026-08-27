@@ -8,10 +8,19 @@
  * 전송" 권한을 주는 절차라 자동화할 수 없고, 해서도 안 됩니다.
  *
  * 사전 준비 (developers.kakao.com):
- *   1. 애플리케이션 추가 → REST API 키 확인
- *   2. 카카오 로그인 활성화 → Redirect URI에 https://localhost 등록
- *   3. 동의항목 → "카카오톡 메시지 전송(talk_message)" 사용 설정
- *   4. .env에 KAKAO_REST_API_KEY 기록
+ *   1. 동의항목 → "카카오톡 메시지 전송(talk_message)"을 **선택 동의**로 저장.
+ *      기본값인 "사용 안 함"이면 권한 요청 자체가 안 나갑니다.
+ *   2. .env에 KAKAO_REST_API_KEY와 KAKAO_CLIENT_SECRET 기록.
+ *      사이트 카카오 로그인이 이미 있으면 같은 앱이므로 그 값을 그대로 씁니다.
+ *   3. Redirect URI는 로그인용으로 이미 등록된 것을 씁니다.
+ *
+ * **로그인용 Redirect URI를 쓰면 앱이 코드를 가로챕니다.** 이 프로젝트에서는
+ * localhost:3000/auth/kakao/callback이 사이트의 실제 콜백이라, 프론트가 떠 있으면
+ * 그쪽이 먼저 받아 로그인으로 처리하고 실패시킵니다(invalid_oauth_state). 그러면
+ * 코드는 소비되고 없습니다. 프론트를 잠시 내린 뒤 받으세요 -- 브라우저는 연결
+ * 오류를 띄우지만 주소창의 code는 그대로입니다.
+ *
+ * 워치독도 같이 멈춰야 합니다. 60초마다 프론트를 되살리므로 내려도 다시 뜹니다.
  */
 
 import { readConfig } from "../src/config.mjs";
@@ -39,7 +48,14 @@ if (!code) {
 }
 
 const response = await fetch("https://kauth.kakao.com/oauth/token", {
-  body: new URLSearchParams({ client_id: key, code, grant_type: "authorization_code", redirect_uri: redirect }),
+  body: new URLSearchParams({
+    client_id: key,
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: redirect,
+    // 앱에 Client Secret이 켜져 있으면 필수입니다. 없으면 KOE010입니다.
+    ...(config.kakao?.clientSecret ? { client_secret: config.kakao.clientSecret } : {})
+  }),
   headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
   method: "POST"
 });

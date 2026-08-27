@@ -37,6 +37,9 @@ async function accessToken(config) {
     refresh_token: config.kakao.refreshToken
   });
 
+  // Client Secret이 켜진 앱은 이것 없이는 KOE010으로 거절합니다.
+  if (config.kakao.clientSecret) body.set("client_secret", config.kakao.clientSecret);
+
   const response = await fetch(tokenUrl, {
     body,
     headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },

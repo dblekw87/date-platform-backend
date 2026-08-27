@@ -17,6 +17,9 @@ export function readConfig() {
     kakao: {
       // 짝꿍 알림용. 없으면 알림만 조용히 꺼지고 나머지는 그대로 돕니다.
       restApiKey: process.env.KAKAO_REST_API_KEY,
+      // 앱에 Client Secret이 켜져 있으면 토큰 요청에 같이 보내야 합니다.
+      // 없으면 KOE010(Bad client credentials)으로 거절됩니다.
+      clientSecret: process.env.KAKAO_CLIENT_SECRET,
       refreshToken: process.env.KAKAO_REFRESH_TOKEN
     },
     port: Number(process.env.PORT ?? 4010),
