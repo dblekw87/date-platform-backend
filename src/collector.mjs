@@ -11,6 +11,7 @@ import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
+import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
@@ -605,6 +606,29 @@ const universeMinute = 15 * 60 + 50;
  * 10분입니다. 사전 한 번이 전 종목 테마 편입과 그날 표본의 평균을 훑으므로 매 틱은
  * 비싸고, 테마가 10분 안에 뒤바뀌는 일은 드뭅니다.
  */
+/*
+ * 짝꿍 알림.
+ *
+ * 2분입니다. 이 매매는 1등주가 상한가에 잠기는 순간을 사는 것이라 10분은 늦고,
+ * 매 틱은 짝꿍 질의를 분마다 도는 셈이라 비쌉니다. 새 짝이 없으면 아무것도 안
+ * 보내므로 대부분의 호출은 질의 한 번으로 끝납니다.
+ *
+ * 정규장에만 돕니다. 애프터마켓은 상한가가 없어 조건 자체가 성립하지 않습니다.
+ */
+const pairAlertIntervalMs = 2 * 60_000;
+let pairAlertAt = 0;
+
+function startPairAlert(config, afterHours) {
+  if (afterHours || Date.now() - pairAlertAt < pairAlertIntervalMs) return;
+
+  pairAlertAt = Date.now();
+
+  // 던지지 않게 만들어 뒀지만, 여기서도 한 번 더 막습니다 -- 이 틱이 죽으면
+  // 그 분의 분봉이 사라집니다.
+  notifyNewPairs(config, { day: sessionDate("KR"), url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: pair alert failed", error instanceof Error ? error.message : error));
+}
+
 const themeRefreshIntervalMs = 10 * 60_000;
 let themesRefreshedAt = 0;
 let themeRefreshRunning = false;
@@ -995,6 +1019,7 @@ export function startMarketCollector(config) {
 
         startInvestorFlow(config, minute);
         startUniverseSample(config, minute);
+        startPairAlert(config, afterHours);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
         startThemeRefresh(config);

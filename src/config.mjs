@@ -12,6 +12,13 @@ export function readConfig() {
     .filter(Boolean);
 
   return {
+    // 알림에 붙는 링크. 눌러서 바로 보드를 열 수 있게.
+    publicSiteUrl: process.env.PUBLIC_SITE_URL ?? "https://date-platform.vercel.app",
+    kakao: {
+      // 짝꿍 알림용. 없으면 알림만 조용히 꺼지고 나머지는 그대로 돕니다.
+      restApiKey: process.env.KAKAO_REST_API_KEY,
+      refreshToken: process.env.KAKAO_REFRESH_TOKEN
+    },
     port: Number(process.env.PORT ?? 4010),
     frontendOrigins,
     databaseUrl: process.env.DATABASE_URL,
