@@ -1138,7 +1138,24 @@ export function startMarketCollector(config) {
     // more than ten minutes behind, whichever market happens to be open.
     startSnapshotPublish(config);
 
-    if (!stopped) timeoutId = setTimeout(tick, delay);
+    /*
+     * 다음 틱은 **지금** 시각으로 다시 계산합니다.
+     *
+     * 위에서 한 번 계산해 두고 여기서 쓰고 있었습니다. 그 사이의 작업 시간만큼 매
+     * 틱이 밀리고, 밀린 만큼 다음 틱도 늦게 시작해 누적됩니다. 2026-08-27 09:21~09:28
+     * 측정 -- 틱 간격이 62초에서 72초로 벌어지며 09:18과 09:27이 통째로 비었습니다.
+     * 그 두 분은 되찾을 수 없습니다.
+     *
+     * 어제 고친 두 건(미국 애프터마켓 패스, 뉴스 표집)은 한 틱을 25초씩 붙잡던
+     * 것이라 증상이 컸고, 이건 11초짜리라 다섯 틱에 한 번씩 샙니다. 원인이 다릅니다.
+     *
+     * 재계산하면 작업이 얼마나 걸렸든 다음 경계에 맞춰 깨어납니다.
+     */
+    if (!stopped) {
+      const after = seoulMinute(new Date());
+
+      timeoutId = setTimeout(tick, sessionOpen ? delayMsFrom(after.minute, after.second) : delay);
+    }
   }
 
   console.log("market collector on · 국내 08:00–20:00 · 미국 18:00–09:00(프리·정규·애프터) · 뉴스 상시");
