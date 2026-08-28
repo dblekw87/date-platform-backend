@@ -612,13 +612,15 @@ export async function loadLeaderNewsHeadlines(config, leaders) {
   // Taken per market, not off the front of the combined list. The domestic
   // leaders arrive first and there are sixty of them, so slicing the whole list
   // spent every query on KR and left US company news out of the feed entirely.
-  const leadersFor = (market) => leaders.filter((leader) => leader.market === market).slice(0, 8);
+  // 국내 12개로 늘렸습니다. 앞쪽에 종가배팅·짝꿍 후보가 오므로, 8이면 그날 실제로
+  // 판단이 필요한 종목이 잘려 나갑니다.
+  const leadersFor = (market) => leaders.filter((leader) => leader.market === market).slice(0, market === "KR" ? 12 : 6);
   const leaderQueries = uniqueBy(
     [...leadersFor("KR"), ...leadersFor("US")].map((leader) => (leader.market === "KR"
       ? { query: `${leaderSearchName(leader)} 주식`, region: "KR", language: "ko", label: "종목 뉴스" }
       : { query: `${leaderCompanySearchName(leader)} stock news`, region: "US", language: "en", label: "종목 뉴스" })),
     (item) => `${item.region}:${item.query}`
-  ).slice(0, 16);
+  ).slice(0, 18);
   const themeQueries = uniqueBy(
     leaders.flatMap((leader) => {
       const theme = leaderTheme(leader);

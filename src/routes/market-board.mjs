@@ -462,6 +462,25 @@ function mergeHeadlines(baseItems, extraItems) {
  * A failure here leaves the untagged headlines in place.
  */
 async function attachLeaderNews(config, board) {
+  /*
+   * 뉴스 검색 대상.
+   *
+   * 주도주만 넣고 있었습니다. 그런데 종가배팅 후보는 대개 주도주가 아니고 -- 시총
+   * 수백억짜리가 대부분이라 -- 그 종목들이 왜 올랐는지가 정작 안 들어왔습니다.
+   * 2026-08-28 기준 국내 뉴스에 종목이 붙은 것이 326개뿐인데, 전 종목은 4,300개입니다.
+   *
+   * 종가배팅과 짝꿍 후보를 같이 넣습니다. 그날 실제로 판단이 필요한 종목들이고,
+   * 검색어는 회사 이름이라 주제 검색보다 훨씬 정확히 닿습니다.
+   */
+  const signalNames = [
+    ...(board.krCloseBetCandidates ?? []).map((candidate) => ({
+      market: "KR", name: candidate.name, symbol: candidate.symbol
+    })),
+    ...(board.krLimitPairs ?? []).flatMap((pair) => [
+      { market: "KR", name: pair.leader.name, symbol: pair.leader.symbol },
+      { market: "KR", name: pair.second.name, symbol: pair.second.symbol }
+    ])
+  ];
   const leaders = [...board.krLeadingStocks, ...board.usLeadingStocks];
 
   if (leaders.length === 0) return board;
@@ -475,7 +494,7 @@ async function attachLeaderNews(config, board) {
     // per-leader headlines — the ones actually about these companies — with no
     // symbols at all, so anything reading relatedSymbols saw only the general
     // feed that happened to mention a name in passing.
-    const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(config, leaders), 6000));
+    const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(config, [...signalNames, ...leaders]), 6000));
 
     return { ...board, headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(merged, leaders), nameIndex) };
   } catch (error) {
