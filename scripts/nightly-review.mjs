@@ -234,7 +234,13 @@ const summary = await query(config, `
          round(avg(session_low - entry_rate)::numeric, 2) AS drawdown,
          count(*) FILTER (WHERE session_low - entry_rate <= -10) AS deep,
          round(avg(session_close - entry_rate)::numeric, 2) AS to_close
-    FROM kr_signal_outcomes WHERE scored_at IS NOT NULL GROUP BY kind`);
+    FROM kr_signal_outcomes
+   WHERE scored_at IS NOT NULL
+     -- 종가배팅은 뺍니다. 이 요약의 축은 장중 되돌림인데, 15:30에 사는 신호에는
+     -- 장중이 없습니다 -- 컬럼이 비어서 평균이 0에 가깝게 나오고, 그 0이
+     -- '되돌림이 없었다'로 읽힙니다. 아래에서 밤 기준으로 따로 셉니다.
+     AND kind <> 'close_bet'
+   GROUP BY kind`);
 
 /*
  * 종가배팅은 따로 셉니다.
