@@ -135,28 +135,36 @@ function flowOf(member) {
   const parts = [];
 
   if (member.foreign_qty !== null && Number(member.foreign_qty) !== 0) {
-    parts.push(`외인 ${Number(member.foreign_qty) > 0 ? "+" : ""}${Math.round(Number(member.foreign_qty) / 1000).toLocaleString("ko-KR")}천주`);
+    parts.push(`외인${Number(member.foreign_qty) > 0 ? "+" : ""}${Math.round(Number(member.foreign_qty) / 1000).toLocaleString("ko-KR")}천주`);
   }
   if (member.program_amount !== null && Math.abs(Number(member.program_amount)) >= 1e8) {
-    parts.push(`프로그램 ${Number(member.program_amount) > 0 ? "+" : ""}${eok(member.program_amount)}`);
+    parts.push(`프로그램${Number(member.program_amount) > 0 ? "+" : ""}${eok(member.program_amount)}`);
   }
 
-  return parts.join(" · ");
+  return parts.join(" ");
 }
 
-function line(groups, at) {
-  const body = groups.map((group, rank) => {
-    const names = group.members.map((member, i) => {
-      const move = Number(member.change_rate);
-      const flow = flowOf(member);
+/*
+ * 섹터 하나에 한 통.
+ *
+ * 카카오 텍스트 템플릿은 200자입니다. 셋을 한 통에 담으면 2026-08-28에 그랬듯
+ * "#2 전력"에서 잘립니다 -- 잘린 알림은 안 온 것보다 나쁩니다. 뒤에 뭐가 있었는지
+ * 모르니까요.
+ *
+ * 섹터 이름의 괄호는 뗍니다. "수자원(양적/질적 개선)"에서 뒷부분은 그날의 이유와
+ * 아무 상관이 없고, 200자 중 열두 자를 씁니다.
+ */
+function line(group, rank, at) {
+  const names = group.members.map((member, i) => {
+    const move = Number(member.change_rate);
+    const flow = flowOf(member);
 
-      return `  ${i + 1}등 ${member.name} ${move > 0 ? "+" : ""}${move.toFixed(2)}% · ${eok(member.turnover)}${flow ? `\n     ${flow}` : ""}`;
-    }).join("\n");
+    return `${i + 1}등 ${member.name} ${move > 0 ? "+" : ""}${move.toFixed(2)}% ${eok(member.turnover)}${flow ? "\n   " + flow : ""}`;
+  }).join("\n");
 
-    return `#${rank + 1} ${group.sector} (${group.count}종목)\n${names}`;
-  }).join("\n\n");
+  const sector = group.sector.replace(/\s*\(.*?\)\s*/g, "").trim() || group.sector;
 
-  return `[오늘의 주도 섹터] ${at}\n거래대금 100위 기준\n\n${body}\n\n기관 수급은 마감 후`;
+  return `[주도 섹터 #${rank + 1}] ${sector} · ${at}\n${group.count}종목 · 거래대금 100위\n\n${names}`;
 }
 
 /** 절대 던지지 않습니다 -- 알림 때문에 수집 틱이 멈추면 그 분의 분봉을 잃습니다. */
@@ -183,12 +191,19 @@ export async function notifyLeaders(config, { day, minute, url } = {}) {
 
     const at = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
-    if (!await sendKakaoMemo(config, { text: line(groups, at), url })) return 0;
+    let posted = 0;
+
+    for (const [rank, group] of groups.entries()) {
+      if (await sendKakaoMemo(config, { text: line(group, rank, at), url })) posted += 1;
+    }
+
+    // 한 통이라도 나갔으면 보낸 것으로 칩니다. 전부 실패했을 때만 다시 시도합니다.
+    if (posted === 0) return 0;
 
     sentKey = key;
-    console.log(`kakao: 주도 섹터 · ${groups.map((group) => group.sector).join(" > ")}`);
+    console.log(`kakao: 주도 섹터 ${posted}통 · ${groups.map((group) => group.sector).join(" > ")}`);
 
-    return 1;
+    return posted;
   } catch (error) {
     console.warn("leader alert failed", error instanceof Error ? error.message : error);
 
