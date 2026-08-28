@@ -61,8 +61,7 @@ $node0 = (Get-Command node -ErrorAction SilentlyContinue).Source
 if ($node0) {
   $out = Join-Path $outDir "review-$stamp.txt"
   Push-Location $Root
-  & $node0 "scripts
-ightly-review.mjs" 2>&1 | Out-File -FilePath $out -Encoding utf8
+  & $node0 (Join-Path $Root "scripts/nightly-review.mjs") 2>&1 | Out-File -FilePath $out -Encoding utf8
   Pop-Location
   Write-Line "nightly review -> $out"
 }

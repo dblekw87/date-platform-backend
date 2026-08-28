@@ -150,7 +150,7 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 // 휴장일을 감안해 300일을 뺍니다.
 const historyDays = 300;
 
-function historyBoundFor(day) {
+export function historyBoundFor(day) {
   if (!day || !datePattern.test(day)) return null;
 
   const bound = new Date(`${day}T00:00:00Z`);
