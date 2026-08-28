@@ -131,6 +131,26 @@ function Invoke-DailyAnalysis {
   & (Join-Path $PSScriptRoot "run-analysis.ps1") 2>&1 | ForEach-Object { Write-Line "  analysis: $_" }
 }
 
+<#
+  Backfilling the news the machine missed while it was off.
+
+  The price series cannot be recovered, but the news can: Google News RSS takes
+  after: / before:, so an article published while the laptop was shut down is
+  still there to be fetched. This is what makes it safe to turn the machine off
+  over a weekend.
+
+  Called on both paths for the same reason as the backup above. It costs nothing
+  when nothing is missing - backfill-news.mjs measures the gap itself and exits
+  in a second if the newest article is under six hours old.
+#>
+function Invoke-NewsBackfill {
+  $node = (Get-Command node -ErrorAction SilentlyContinue).Source
+
+  if (-not $node) { return }
+
+  & $node (Join-Path $PSScriptRoot "backfill-news.mjs") 2>&1 | ForEach-Object { Write-Line "  news: $_" }
+}
+
 Write-Line "--- start-collector ---"
 
 # A dev window already holding :4010 is the normal case when someone is working.
@@ -140,6 +160,7 @@ if (Test-Port -Port $backendPort) {
   Write-Line "backend already listening on :$backendPort - nothing to start"
   Invoke-DailyBackup
   Invoke-DailyAnalysis
+  Invoke-NewsBackfill
   exit 0
 }
 
@@ -226,6 +247,7 @@ if (Wait-Port -Port $backendPort -Seconds $ServerWaitSeconds -Label "backend") {
   Write-Line "backend listening on :$backendPort - log $serverLog"
   Invoke-DailyBackup
   Invoke-DailyAnalysis
+  Invoke-NewsBackfill
   exit 0
 }
 

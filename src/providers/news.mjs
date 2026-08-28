@@ -26,7 +26,7 @@ const cacheTtlMs = 30_000;
 // On Naver and the Google feed, not NewsAPI. Those two carry the Korean side
 // and neither is metered the way NewsAPI is.
 const activeThemeQueryLimit = 12;
-const naverQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "금리 환율", "원달러 환율", "반도체 2차전지", "AI 데이터센터", "전력 설비", "바이오 제약", "조선 방산", "방산 수출", "로봇 원전", "우주 항공", "자동차 은행", "정책 수혜", "인수합병 공시", "남북 경협", "대북 정책"];
+export const naverQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "금리 환율", "원달러 환율", "반도체 2차전지", "AI 데이터센터", "전력 설비", "바이오 제약", "조선 방산", "방산 수출", "로봇 원전", "우주 항공", "자동차 은행", "정책 수혜", "인수합병 공시", "남북 경협", "대북 정책"];
 // Six queries at two-hour spacing, which is the whole NewsAPI budget.
 //
 // A developer key allows a hundred requests a day and this file was asking for
@@ -45,7 +45,7 @@ const newsApiQueries = ["stock market", "earnings", "semiconductor stocks", "ai 
 const newsApiIntervalMs = 2 * 60 * 60_000;
 
 let lastNewsApiAt = 0;
-const koreanRssQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "반도체 주식", "AI 데이터센터 주식", "전력 설비 주식", "2차전지 주식", "바이오 제약 주식", "조선 방산 주식", "방산 수출 주식", "로봇 원전 주식", "우주 항공 주식", "수소 연료전지 주식", "재생에너지 태양광 풍력 주식", "정책 수혜주", "국내 공시 인수합병", "남북 경협주", "대북 정책 수혜주"];
+export const koreanRssQueries = ["국내 증시", "코스피 코스닥", "미국 증시", "반도체 주식", "AI 데이터센터 주식", "전력 설비 주식", "2차전지 주식", "바이오 제약 주식", "조선 방산 주식", "방산 수출 주식", "로봇 원전 주식", "우주 항공 주식", "수소 연료전지 주식", "재생에너지 태양광 풍력 주식", "정책 수혜주", "국내 공시 인수합병", "남북 경협주", "대북 정책 수혜주"];
 
 const usCompanySearchNames = {
   AMD: "Advanced Micro Devices",
@@ -144,7 +144,7 @@ function dayLabel(dateText) {
 }
 
 // Blogs and cafes surface in RSS results but are not reportable sources.
-function isArticleLikeSource(source, title) {
+export function isArticleLikeSource(source, title) {
   return !/blog|블로그|cafe|카페|tistory|티스토리|brunch|브런치/i.test(`${source ?? ""} ${title ?? ""}`);
 }
 
@@ -159,7 +159,7 @@ const listedNamesTtlMs = 6 * 60 * 60_000;
  * keywords alone left 8% unmatched, the widened vocabulary 3.5%, and adding the
  * names 2.2% — and what remains at 2.2% is spam and clickbait.
  */
-async function loadListedNames(config) {
+export async function loadListedNames(config) {
   return readThroughCache("kr-listed-names", listedNamesTtlMs, async () => {
     const result = await query(
       config,
@@ -186,7 +186,7 @@ async function loadListedNames(config) {
  * query passed the gate on the strength of the query that fetched it. Only the
  * article speaks for the article now.
  */
-function isMarketRelevant(item, listed = []) {
+export function isMarketRelevant(item, listed = []) {
   if (marketRelevancePattern.test(item.text)) return true;
 
   return listed.some((entry) => item.text.includes(entry.name));
@@ -202,7 +202,7 @@ function isMarketRelevant(item, listed = []) {
  * story is about is a better answer than the query that found it, and the
  * collector already knows what theme every name it has seen belongs to.
  */
-function themeLabelFor(item, listed) {
+export function themeLabelFor(item, listed) {
   if (item.label !== "헤드라인" || item.region !== "KR") return item.label;
 
   const named = listed.find((entry) => entry.theme && entry.theme !== "미분류" && item.text.includes(entry.name));
