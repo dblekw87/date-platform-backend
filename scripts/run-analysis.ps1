@@ -54,6 +54,19 @@ if ($minutes -lt (15 * 60 + 40) -and -not $Force) { exit 0 }
 
 Write-Line "--- run-analysis $stamp ---"
 
+# 국내장 채점부터. 파이썬 트랙과 달리 이건 매일 답이 쌓입니다 -- 신호가 맞았는지를
+# 사람이 그때그때 확인하면 기억에 남는 것만 남고, 빗나간 것은 조용히 잊힙니다.
+$node0 = (Get-Command node -ErrorAction SilentlyContinue).Source
+
+if ($node0) {
+  $out = Join-Path $outDir "review-$stamp.txt"
+  Push-Location $Root
+  & $node0 "scripts
+ightly-review.mjs" 2>&1 | Out-File -FilePath $out -Encoding utf8
+  Pop-Location
+  Write-Line "nightly review -> $out"
+}
+
 if (Test-Path $python) {
   $out = Join-Path $outDir "persistence-$stamp.txt"
   & $python (Join-Path $Root "analysis\run_persistence.py") 2>&1 | Out-File -FilePath $out -Encoding utf8
