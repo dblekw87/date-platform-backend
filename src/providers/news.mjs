@@ -311,17 +311,42 @@ const koreanPressFeeds = [
   { label: "헤드라인", name: "연합인포맥스", url: "https://news.einfomax.co.kr/rss/allArticle.xml" }
 ];
 
-// 매일경제가 기본 헤더에 403을 돌려줍니다. 한 곳 때문에 갈래를 만들 이유가 없어
-// 전부 같은 것을 씁니다.
-const pressFeedHeaders = {
-  "Accept": "application/rss+xml,application/xml,text/xml,*/*",
-  "Referer": "https://www.google.com/",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-};
+/*
+ * 헤더 두 벌.
+ *
+ * 한 벌로 안 됩니다. 매일경제는 브라우저처럼 안 보이면 403을 주고, **한국경제는
+ * 정반대로 크롬 UA를 주면 403을 줍니다**(짧은 Mozilla/5.0이나 헤더 없음은 통과).
+ * 한쪽에 맞추면 다른 쪽이 막히므로 순서대로 시도합니다.
+ *
+ * 어느 쪽이 맞는지 표로 적어 두는 대신 실패하면 바꿔 끼웁니다. 매체가 정책을
+ * 바꿔도 따라가고, 무엇보다 첫 번째 판정이 틀렸을 때 조용히 0건이 되지 않습니다.
+ */
+const pressFeedHeaderSets = [
+  { "User-Agent": "Mozilla/5.0" },
+  {
+    "Accept": "application/rss+xml,application/xml,text/xml,*/*",
+    "Referer": "https://www.google.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+  }
+];
+
+export async function fetchPressFeed(url, { timeoutMs = 5000 } = {}) {
+  let lastError;
+
+  for (const headers of pressFeedHeaderSets) {
+    try {
+      return await fetchText(url, { headers, timeoutMs });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
 
 function koreanPressFeed(feed) {
   return async () => {
-    const xml = await fetchText(feed.url, { timeoutMs: 5000, headers: pressFeedHeaders });
+    const xml = await fetchPressFeed(feed.url);
     const items = [...xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/gi)]
       .slice(0, 40)
       .map((match) => ({
