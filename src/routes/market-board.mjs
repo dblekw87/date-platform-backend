@@ -496,11 +496,22 @@ async function attachLeaderNews(config, board) {
     // feed that happened to mention a name in passing.
     const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(config, [...signalNames, ...leaders]), 6000));
 
-    return { ...board, headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(merged, leaders), nameIndex) };
+    return {
+      ...board,
+      headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(merged, leaders), nameIndex),
+      // 저장되는 쪽. 화면 한도(국내 45건)에 안 잘린 전량이고, 태깅은 같은
+      // 이름 목록으로 받습니다 -- 여기가 갈리면 저장된 기사와 화면의 기사가
+      // 서로 다른 종목에 붙습니다.
+      ...(board.newsCorpus ? { newsCorpus: attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex) } : {})
+    };
   } catch (error) {
     console.warn("leader news lookup failed", error instanceof Error ? error.message : error);
 
-    return { ...board, headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(board.headlineFlow, leaders), nameIndex) };
+    return {
+      ...board,
+      headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(board.headlineFlow, leaders), nameIndex),
+      ...(board.newsCorpus ? { newsCorpus: attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex) } : {})
+    };
   }
 }
 
@@ -724,12 +735,20 @@ async function buildKrPairPanels(config, livePairs) {
  * readers go through, and the default is the safe one — a new caller has to ask
  * for the payloads to get them.
  */
+/*
+ * 브라우저로 나가기 전에 떼는 것들.
+ *
+ * raw는 provider가 준 원본이고 화면은 안 씁니다. newsCorpus는 수집기 전용
+ * 전량 목록이라 더더욱 나가면 안 됩니다 -- 화면이 쓰는 것보다 몇 배 큽니다.
+ */
 function withoutRawPayloads(board) {
-  if (!board.headlineFlow) return board;
+  const { newsCorpus, ...rest } = board;
+
+  if (!rest.headlineFlow) return rest;
 
   return {
-    ...board,
-    headlineFlow: board.headlineFlow.map(({ raw, ...headline }) => headline)
+    ...rest,
+    headlineFlow: rest.headlineFlow.map(({ raw, ...headline }) => headline)
   };
 }
 

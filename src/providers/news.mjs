@@ -279,6 +279,66 @@ function naverDevelopersFeed(config, query) {
   };
 }
 
+/*
+ * 국내 언론사 RSS.
+ *
+ * 네이버 검색이 API Hub로 이관되면서 막혔고(2026-08-28 401), 이관 공지에
+ * "한시적 무료"라고 적혀 있어 언제 유료가 될지도 모릅니다. 검색 한 곳에
+ * 국내 기사를 전부 맡기고 있던 것이 문제였으므로, 키가 필요 없고 언론사가
+ * 직접 내보내는 RSS를 나란히 둡니다.
+ *
+ * 검색과 다른 점이 있습니다. 검색은 우리가 정한 열여덟 개 낱말에 걸리는 것만
+ * 가져오지만 RSS는 그 매체가 낸 것을 순서대로 줍니다. 그래서 우리가 검색어를
+ * 생각해내지 못한 재료가 들어옵니다 -- 커버리지가 검색어 목록에 매이지 않습니다.
+ *
+ * 대신 **되받아올 수는 없습니다.** RSS는 최근 것만 싣고 과거로 가는 수단이
+ * 없습니다. 주말을 메우는 일은 여전히 구글 뉴스(after:/before:)의 몫입니다.
+ *
+ * 2026-08-28 응답을 확인하고 고른 열 곳입니다. 매일경제는 브라우저 헤더가
+ * 없으면 403을 돌려주므로 전부에 같은 헤더를 붙입니다. 이데일리와 서울경제는
+ * 각각 갱신이 멈춰 있고 경로가 없어 뺐습니다.
+ */
+const koreanPressFeeds = [
+  { label: "헤드라인", name: "한국경제", url: "https://www.hankyung.com/feed/finance" },
+  { label: "헤드라인", name: "한국경제", url: "https://www.hankyung.com/feed/economy" },
+  { label: "헤드라인", name: "매일경제", url: "https://www.mk.co.kr/rss/50200011/" },
+  { label: "헤드라인", name: "파이낸셜뉴스", url: "https://www.fnnews.com/rss/r20/fn_realnews_stock.xml" },
+  { label: "헤드라인", name: "머니투데이", url: "https://rss.mt.co.kr/mt_news.xml" },
+  { label: "헤드라인", name: "연합뉴스", url: "https://www.yna.co.kr/rss/economy.xml" },
+  { label: "헤드라인", name: "아시아경제", url: "https://www.asiae.co.kr/rss/stock.htm" },
+  { label: "헤드라인", name: "뉴시스", url: "https://newsis.com/RSS/economy.xml" },
+  { label: "헤드라인", name: "조선비즈", url: "https://biz.chosun.com/arc/outboundfeeds/rss/category/stock/?outputType=xml" },
+  { label: "헤드라인", name: "연합인포맥스", url: "https://news.einfomax.co.kr/rss/allArticle.xml" }
+];
+
+// 매일경제가 기본 헤더에 403을 돌려줍니다. 한 곳 때문에 갈래를 만들 이유가 없어
+// 전부 같은 것을 씁니다.
+const pressFeedHeaders = {
+  "Accept": "application/rss+xml,application/xml,text/xml,*/*",
+  "Referer": "https://www.google.com/",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+};
+
+function koreanPressFeed(feed) {
+  return async () => {
+    const xml = await fetchText(feed.url, { timeoutMs: 5000, headers: pressFeedHeaders });
+    const items = [...xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/gi)]
+      .slice(0, 40)
+      .map((match) => ({
+        category: feed.name,
+        label: feed.label,
+        originalUrl: firstXmlValue(match[1], "link"),
+        provider: "국내 언론",
+        pubDate: firstXmlValue(match[1], "pubDate") || firstXmlValue(match[1], "dc:date"),
+        region: "KR",
+        source: feed.name,
+        title: firstXmlValue(match[1], "title")?.replace(/<[^>]+>/g, "").trim()
+      }))
+      .filter((item) => item.title && isArticleLikeSource(item.source, item.title));
+
+    return { items };
+  };
+}
 function googleNewsRssFeed(query, options = {}) {
   return async () => {
     const region = options.region ?? "KR";
@@ -673,6 +733,7 @@ export async function loadNewsHeadlines(config) {
     naverQueries.forEach((query) => loaders.push(naverApiHubFeed(config, query)));
     naverQueries.forEach((query) => loaders.push(naverDevelopersFeed(config, query)));
     koreanRssQueries.forEach((query) => loaders.push(googleNewsRssFeed(query)));
+    koreanPressFeeds.forEach((feed) => loaders.push(koreanPressFeed(feed)));
 
     // The fixed queries above name eighteen themes because somebody thought of
     // them. These are the themes carrying money today, whatever they are, so
@@ -698,7 +759,18 @@ export async function loadNewsHeadlines(config) {
     const relevant = (await settleFeeds(loaders))
       .filter((item) => isMarketRelevant(item, listed))
       .map((item) => ({ ...item, label: themeLabelFor(item, listed) }));
-    const headlineFlow = await translateUsHeadlines(config, balanceByRegion(limitDominantLabels(dedupeNews(relevant))));
+    /*
+     * 모으는 것과 보여주는 것을 나눕니다.
+     *
+     * 여태 수집기는 화면에 그릴 목록을 그대로 저장했습니다. 그 목록은 국내 45건,
+     * 라벨당 10~16건으로 잘려 있습니다 -- 화면이 읽을 만하려고 있는 한도인데,
+     * 저장까지 같은 것을 쓰는 바람에 **표시 한도가 곧 수집 한도**였습니다.
+     * 소스를 아무리 늘려도 45건에서 잘리므로 늘린 만큼이 버려집니다.
+     *
+     * corpus는 안 자릅니다. 화면은 예전 그대로입니다.
+     */
+    const corpus = dedupeNews(relevant);
+    const headlineFlow = await translateUsHeadlines(config, balanceByRegion(limitDominantLabels(corpus)));
     const newHeadlineIds = await recordHeadlines(headlineFlow.map((item) => item.id));
     const detectedAt = new Date().toISOString();
     const withState = headlineFlow.map((item) => ({ ...item, isNew: newHeadlineIds.has(item.id) }));
@@ -717,6 +789,7 @@ export async function loadNewsHeadlines(config) {
 
     return {
       ...(withState.length > 0 ? { headlineFlow: withState } : {}),
+      ...(corpus.length > 0 ? { newsCorpus: corpus } : {}),
       ...(calendarItems.length > 0 ? { calendarItems } : {})
     };
   });

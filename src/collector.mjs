@@ -1012,7 +1012,11 @@ async function sampleNews(config) {
       .catch((error) => console.warn("collector: macro sample failed", error instanceof Error ? error.message : error));
   }
 
-  return saveMarketNewsItems(config, board.headlineFlow ?? []);
+  // headlineFlow가 아니라 newsCorpus입니다. 앞의 것은 화면용으로 국내 45건에서
+  // 잘려 있고, 뒤의 것은 안 잘린 전량입니다. 소스를 늘린 만큼이 실제로 저장되게
+  // 하려면 여기가 corpus를 봐야 합니다. 예전 응답에는 없는 필드라 없으면 예전
+  // 동작으로 돌아갑니다.
+  return saveMarketNewsItems(config, board.newsCorpus ?? board.headlineFlow ?? []);
 }
 
 export function startMarketCollector(config) {
