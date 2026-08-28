@@ -27,7 +27,30 @@ const lookback = 60;
 // 하루 거래대금 10억 미만은 갭이 호가 한 칸에도 튀어서 후보가 될 수 없습니다.
 const minimumTurnover = 1_000_000_000;
 
-const maximumUpperShadow = 0.3;
+/*
+ * 윗꼬리 -- 오늘 오른 값을 종가까지 지켰는가.
+ *
+ * 0.3이었습니다. 2026-08-29에 운영 조건 그대로의 후보 3,256건·371장에서 다시
+ * 재고 0.15로 좁혔습니다(scripts/measure-close-bet-shadow.mjs).
+ *
+ *   30% 미만   3,256건 · 하루 8.8건 · 초과 +2.518%p · 상회 60%
+ *   15% 미만   2,125건 · 하루 5.7건 · 초과 +3.518%p · 상회 65%
+ *   버려지는 15~30%  1,131건 · 초과 +0.638%p · 상회 51%
+ *
+ * 버리는 쪽이 마이너스는 아닙니다. 다만 하루 세 건을 더 보여 주는 대가로 목록
+ * 전체의 초과가 1%p 깎입니다 -- 종가 동시호가까지 몇 분 안에 골라야 하는 자리라
+ * 목록이 짧고 진한 편이 낫습니다.
+ *
+ * **통제를 통과합니다.** 윗꼬리가 짧은 날은 많이 오른 날이기도 해서(상한가는
+ * 윗꼬리가 0) 그냥 상승률을 다시 재는 것일 수 있는데, 당일 상승률을 고정해도
+ * 네 구간 전부에서 15% 미만이 앞섭니다 -- +1.092 vs +0.890, +0.948 vs +0.713,
+ * +1.221 vs +0.762, 그리고 22%↑에서 +4.889 vs +0.046. 세 규모에서도 전부 앞섭니다.
+ *
+ * 실제 값은 0~5%에 몰려 있습니다(1,456건 +4.824%p 상회 73%). 거기까지 좁히면
+ * 하루 3.9건이 되는데, 대형주가 하루 한 건 밑으로 내려가 화면이 비는 날이
+ * 생깁니다. 그 사이를 택했습니다.
+ */
+const maximumUpperShadow = 0.15;
 
 /**
  * 문턱은 규모마다 다릅니다.
@@ -148,7 +171,7 @@ const dayMoveFloor = Math.min(...sizeThresholds.map((size) => size.minDayMove));
  * 조건을 일찍 적용하는 것이라 답이 바뀌지 않습니다. 이걸 안 하면 60일 이동최대값을
  * 77만 행에 대해 계산해 놓고 그중 4천 행만 씁니다(18초 중 18초가 그 창이었습니다).
  */
-function symbolPrefilter(day) {
+function symbolPrefilter(day, upperShadow) {
   return `
   symbols AS (
     SELECT symbol
@@ -162,12 +185,22 @@ function symbolPrefilter(day) {
        AND prev_close > 0 AND close > 0 AND high > low
        AND close > open
        AND close * volume >= ${minimumTurnover}
-       AND (high - close) / nullif(high - low, 0) < ${maximumUpperShadow}
+       AND (high - close) / nullif(high - low, 0) < ${upperShadow}
        AND (close / prev_close - 1) * 100 >= ${dayMoveFloor}
   ),`;
 }
 
-export function closeBetCandidateSql({ day = null, since = null } = {}) {
+/*
+ * upperShadow를 인자로 둔 이유.
+ *
+ * 문턱을 0.3에서 0.15로 좁힌 근거가 '0.15 안쪽과 바깥쪽의 비교'인데, 상수를
+ * 좁히고 나면 바깥쪽이 후보에서 사라져 그 표를 다시 만들 수 없습니다. 근거를
+ * 확인할 수 없는 상수가 되는 셈입니다.
+ *
+ * 측정 스크립트가 넓은 값을 넘겨 예전 비교를 언제든 재현할 수 있게 열어 둡니다.
+ * 운영 경로는 인자를 안 주므로 동작이 달라지지 않습니다.
+ */
+export function closeBetCandidateSql({ day = null, since = null, upperShadow = maximumUpperShadow } = {}) {
   // 내부에서 만든 날짜만 들어오지만, 문자열로 끼우는 이상 모양은 확인합니다.
   const oneDay = day && datePattern.test(day) ? day : null;
   const bounds = [
@@ -177,7 +210,7 @@ export function closeBetCandidateSql({ day = null, since = null } = {}) {
   const bound = bounds.length ? `WHERE ${bounds.join(" AND ")}` : "";
 
   return `
-  WITH ${oneDay ? symbolPrefilter(oneDay) : ""}
+  WITH ${oneDay ? symbolPrefilter(oneDay, upperShadow) : ""}
   caps AS (
     -- 주식수는 시가총액 ÷ 종가입니다. 별도 컬럼이 없고, universe가 하루치 스냅샷이라
     -- 그 값을 과거 전체에 씁니다 -- 그 사이 액면분할이나 증자가 있었던 종목은
@@ -225,7 +258,7 @@ export function closeBetCandidateSql({ day = null, since = null } = {}) {
      AND close > open
      AND close > prior_high
      AND prev_close <= prior_high_yesterday
-     AND (high - close) / nullif(high - low, 0) < ${maximumUpperShadow}
+     AND (high - close) / nullif(high - low, 0) < ${upperShadow}
      AND (close / prev_close - 1) * 100 >= (CASE ${sizeCase("minDayMove")} END)
      AND volume / nullif(share_count, 0) * 100 >= ${minimumTurnoverRatio}`;
 }
