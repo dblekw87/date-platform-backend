@@ -472,6 +472,7 @@ async function attachLeaderNews(config, board) {
    * 종가배팅과 짝꿍 후보를 같이 넣습니다. 그날 실제로 판단이 필요한 종목들이고,
    * 검색어는 회사 이름이라 주제 검색보다 훨씬 정확히 닿습니다.
    */
+  const movers = await loadUsPremarketMovers(config).then((result) => result.movers ?? []).catch(() => []);
   const signalNames = [
     ...(board.krCloseBetCandidates ?? []).map((candidate) => ({
       market: "KR", name: candidate.name, symbol: candidate.symbol
@@ -486,13 +487,15 @@ async function attachLeaderNews(config, board) {
      * 2026-08-28 FNGR이 프리마켓 +198%를 갔는데 뉴스가 한 건도 안 붙었습니다.
      * 거래대금 주도주가 아니어서 종목별 조회 대상에 없었기 때문입니다 -- 그런데
      * 이유를 알아야 하는 종목은 큰 종목이 아니라 **오늘 갑자기 움직인 종목**입니다.
+     *
+     * board에서 못 읽고 직접 부릅니다. 이 함수는 보드 조립 중간에 불리는데
+     * usPremarketMovers는 그보다 **뒤에** 붙습니다 -- board.usPremarketMovers를
+     * 읽으면 언제나 undefined입니다. loadUsPremarketMovers는 readThroughCache라
+     * 뒤에서 또 불러도 값을 다시 만들지 않습니다.
      */
-    ...(board.usPremarketMovers ?? []).map((mover) => ({
+    ...movers.map((mover) => ({
       market: "US", name: mover.name ?? mover.symbol, symbol: mover.symbol
-    })),
-    ...(board.usSurgeCandidates?.rows ?? board.usSurgeCandidates ?? []).map((candidate) => ({
-      market: "US", name: candidate.name ?? candidate.symbol, symbol: candidate.symbol
-    })).filter((candidate) => candidate.symbol)
+    })).filter((mover) => mover.symbol)
   ];
   const leaders = [...board.krLeadingStocks, ...board.usLeadingStocks];
 
@@ -508,7 +511,16 @@ async function attachLeaderNews(config, board) {
     // per-leader headlines — the ones actually about these companies — with no
     // symbols at all, so anything reading relatedSymbols saw only the general
     // feed that happened to mention a name in passing.
-    const merged = mergeHeadlines(board.headlineFlow, await withTimeout(loadLeaderNewsHeadlines(config, [...signalNames, ...leaders]), 6000));
+    const perSymbol = await withTimeout(loadLeaderNewsHeadlines(config, [...signalNames, ...leaders]), 6000);
+
+    /*
+     * 화면에는 앞의 30건만, 저장에는 전부.
+     *
+     * 종목별 조회를 급등주까지 넓히면서 결과가 세 배가 됐습니다. 저장은 많을수록
+     * 좋지만 화면 헤드라인이 249건이 되면 읽을 수가 없습니다. 넓힌 것이 화면을
+     * 망치지 않도록 여기서 갈라 둡니다 -- 30은 넓히기 전 화면이 받던 양입니다.
+     */
+    const merged = mergeHeadlines(board.headlineFlow, perSymbol.slice(0, 30));
 
     return {
       ...board,
@@ -516,7 +528,15 @@ async function attachLeaderNews(config, board) {
       // 저장되는 쪽. 화면 한도(국내 45건)에 안 잘린 전량이고, 태깅은 같은
       // 이름 목록으로 받습니다 -- 여기가 갈리면 저장된 기사와 화면의 기사가
       // 서로 다른 종목에 붙습니다.
-      ...(board.newsCorpus ? { newsCorpus: attachUsUniverseTags(attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex), usTickers) } : {})
+      /*
+       * 종목별 기사는 **저장되는 쪽에도** 합칩니다.
+       *
+       * corpus를 화면과 분리하면서 여기를 빠뜨렸습니다. 종목 뉴스가 headlineFlow에만
+       * 들어가는 바람에, 정작 '이 종목이 왜 올랐나'에 답하는 기사들이 화면에만
+       * 스쳐 가고 저장은 안 됐습니다. FNGR 기사 두 건이 돌아왔는데 DB에 0건이었던
+       * 것이 그 증상입니다.
+       */
+      ...(board.newsCorpus ? { newsCorpus: attachUsUniverseTags(attachKrUniverseTags(attachLeaderNewsTags(mergeHeadlines(board.newsCorpus, perSymbol), leaders), nameIndex), usTickers) } : {})
     };
   } catch (error) {
     console.warn("leader news lookup failed", error instanceof Error ? error.message : error);

@@ -830,7 +830,10 @@ export async function loadLeaderNewsHeadlines(config, leaders) {
   const listed = await loadListedNames(config);
   const headlines = dedupeNews((await settleFeeds(loaders))
     .filter((item) => isMarketRelevant(item, listed))
-    .map((item) => ({ ...item, label: themeLabelFor(item, listed) }))).slice(0, 60);
+    // 화면이 쓰던 30건이었습니다. 이제 이 목록은 저장까지 가고, 종목별 피드
+    // 열두 개가 여기서 자리를 다툽니다 -- 좁게 두면 정작 급등주 기사가 주도주
+    // 기사에 밀려 잘립니다. 화면은 뒤에서 따로 자르므로 여기서 아낄 이유가 없습니다.
+    .map((item) => ({ ...item, label: themeLabelFor(item, listed) }))).slice(0, 150);
   const tagged = attachLeaderNewsTags(headlines, leaders);
   const newHeadlineIds = await recordHeadlines(tagged.map((item) => item.id));
 
