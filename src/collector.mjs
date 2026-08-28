@@ -60,6 +60,33 @@ const newsIntervalMs = 10 * 60_000;
 const offHoursNewsIntervalMs = 45 * 60_000;
 const idleIntervalMs = 60_000;
 
+/*
+ * 로그에 찍는 시각은 **항상 한국시간**입니다.
+ *
+ * 국내장과 미국장을 함께 다루지만 읽는 사람은 한 명이고 한국에 있습니다. 미국
+ * 구간을 동부시각으로 적으면 읽을 때마다 열세 시간을 머릿속에서 더해야 하고,
+ * ISO(...Z)로 적으면 아홉 시간을 빼야 합니다. 둘 다 실수를 부릅니다.
+ *
+ * 장 판정은 각 거래소의 시간대로 하되(서머타임이 있으니 그래야 맞습니다) 사람이
+ * 보는 자리에서는 전부 KST로 바꿔 적습니다. 기계의 시간대 설정과 무관하게
+ * Intl에 Asia/Seoul을 직접 넘기므로 재부팅하거나 PC 시간대를 바꿔도 같습니다.
+ */
+function seoulStamp(at = new Date()) {
+  const when = at instanceof Date ? at : new Date(at);
+
+  if (Number.isNaN(when.getTime())) return String(at);
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(when).replace(",", "") + " KST";
+}
 function seoulMinute(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -983,7 +1010,7 @@ function startSnapshotPublish(config) {
       : await getMarketBoard(config);
     const result = await publishBoardSnapshot(board, { config });
 
-    if (result.published) console.log(`collector: board snapshot published · ${result.generatedAt}`);
+    if (result.published) console.log(`collector: board snapshot published · ${seoulStamp(result.generatedAt)}`);
     else if (result.reason !== "변경 없음") console.warn(`collector: snapshot held · ${result.reason}`);
   })()
     .catch((error) => console.warn("collector: snapshot publish failed", error instanceof Error ? error.message : error))
