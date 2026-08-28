@@ -13,6 +13,7 @@ import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/ki
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
+import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
@@ -623,6 +624,25 @@ const universeMinute = 15 * 60 + 50;
  * 다만 프리마켓 상승 폭은 개장 직전까지 움직이므로 개장 전후 한 시간만 3분마다
  * 봅니다. 그 바깥에서는 조건이 바뀌지 않습니다.
  */
+/*
+ * 거래대금 주도주 알림.
+ *
+ * 09:20부터, 5분마다 확인하되 상위 3위 구성이 바뀔 때만 보냅니다. 주도주는 하루
+ * 종일 서서히 바뀌므로 매번 보내면 수십 통이 되고, 한 번만 보내면 뒤늦게 올라온
+ * 종목을 놓칩니다.
+ */
+const leaderAlertIntervalMs = 5 * 60_000;
+let leaderAlertAt = 0;
+
+function startLeaderAlert(config, minute) {
+  if (!isRegularSession("KR") || Date.now() - leaderAlertAt < leaderAlertIntervalMs) return;
+
+  leaderAlertAt = Date.now();
+
+  notifyLeaders(config, { day: sessionDate("KR"), minute, url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: leader alert failed", error instanceof Error ? error.message : error));
+}
+
 const openSignalIntervalMs = 3 * 60_000;
 let openSignalAt = 0;
 
@@ -1043,6 +1063,7 @@ export function startMarketCollector(config) {
         startInvestorFlow(config, minute);
         startUniverseSample(config, minute);
         startPairAlert(config, afterHours);
+        startLeaderAlert(config, minute);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
         startThemeRefresh(config);
