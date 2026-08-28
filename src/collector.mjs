@@ -1022,6 +1022,32 @@ export function startMarketCollector(config) {
     return () => {};
   }
 
+  /*
+   * 뉴스 소스가 살아 있는지 시작할 때 한 번 말합니다.
+   *
+   * 없는 키는 loader가 빈 배열을 돌려주고 끝입니다 -- 조용해서 좋은 설계인데,
+   * 조용해서 나쁜 결과가 나왔습니다. 2026-08-28 확인해 보니 네이버 두 경로가
+   * 모두 죽어 있었고(개발자센터 키 없음, API Hub 키 401) 국내 기사가 전부 구글
+   * 뉴스에서만 오고 있었습니다. 언제부터인지 알 수 없습니다 -- 기사는 계속
+   * 들어오니 화면으로는 티가 나지 않았기 때문입니다.
+   *
+   * 붙었는지 안 붙었는지는 여기 한 줄이면 보입니다.
+   */
+  const naverDevelopers = Boolean(config.news.naverSearchClientId && config.news.naverSearchClientSecret);
+  const naverApiHub = Boolean(config.news.naverApiHubKeyId && config.news.naverApiHubKey);
+  const newsSources = [
+    ["구글 뉴스 RSS", true],
+    ["네이버 개발자센터", naverDevelopers],
+    ["네이버 API Hub", naverApiHub],
+    ["NewsAPI", Boolean(config.news.newsApiKey)],
+    ["Finnhub", Boolean(config.news.finnhubApiKey)]
+  ];
+
+  console.log(`collector: news sources — ${newsSources.map(([name, on]) => `${name} ${on ? "on" : "OFF"}`).join(" · ")}`);
+
+  if (!naverDevelopers && !naverApiHub) {
+    console.warn("collector: 네이버 뉴스가 두 경로 다 꺼져 있습니다 - 국내 기사는 구글 뉴스만 들어옵니다");
+  }
   let stopped = false;
   let timeoutId;
   let lastDisclosureAt = 0;

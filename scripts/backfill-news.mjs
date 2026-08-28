@@ -2,7 +2,7 @@ import { readConfig } from "../src/config.mjs";
 import { query } from "../src/db/client.mjs";
 import { saveMarketNewsItems } from "../src/db/repositories.mjs";
 import { dedupeNews, normalizeNewsItem } from "../src/providers/news-normalizer.mjs";
-import { attachKrUniverseTags, isArticleLikeSource, isMarketRelevant, koreanRssQueries, loadListedNames, themeLabelFor } from "../src/providers/news.mjs";
+import { attachKrUniverseTags, isArticleLikeSource, isMarketRelevant, koreanRssQueries, loadListedNames, naverQueries, themeLabelFor } from "../src/providers/news.mjs";
 import { loadKrNameIndex } from "../src/providers/kr-universe.mjs";
 
 /**
@@ -119,6 +119,61 @@ async function fetchDay(topic, day) {
     .filter((item) => item.title && isArticleLikeSource(item.source, item.title));
 }
 
+/*
+ * 네이버 검색. 키가 있을 때만 돕니다.
+ *
+ * 구글보다 깊습니다 -- 구글 RSS는 요청당 100건이 끝인데 네이버는 start로 1,000건까지
+ * 거슬러 갑니다. 그래서 날짜를 끊지 않고 검색어마다 최신순으로 훑다가, 메우려는
+ * 기간보다 오래된 쪽으로 넘어가면 멈춥니다.
+ *
+ * 두 문 중 설정된 쪽으로 갑니다. 2026-08-28 현재 둘 다 막혀 있어 이 함수는 돌지
+ * 않습니다. 개발자센터 앱에 검색 API를 추가하면 그날부터 저절로 돕니다.
+ */
+const viaApiHub = Boolean(config.news.naverApiHubKeyId && config.news.naverApiHubKey);
+const viaDevelopers = Boolean(config.news.naverSearchClientId && config.news.naverSearchClientSecret);
+const naverOn = viaDevelopers || viaApiHub;
+const naverPageSize = 100;
+const naverMaxStart = 1000;
+
+async function fetchNaverPage(topic, start) {
+  const url = new URL(viaDevelopers
+    ? "https://openapi.naver.com/v1/search/news.json"
+    : "https://naverapihub.apigw.ntruss.com/search/v1/news");
+
+  url.searchParams.set("query", topic);
+  url.searchParams.set("display", String(naverPageSize));
+  url.searchParams.set("start", String(start));
+  url.searchParams.set("sort", "date");
+
+  if (!viaDevelopers) url.searchParams.set("format", "json");
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(8000),
+    headers: viaDevelopers ? {
+      "X-Naver-Client-Id": config.news.naverSearchClientId,
+      "X-Naver-Client-Secret": config.news.naverSearchClientSecret
+    } : {
+      "X-NCP-APIGW-API-KEY": config.news.naverApiHubKey,
+      "X-NCP-APIGW-API-KEY-ID": config.news.naverApiHubKeyId
+    }
+  });
+
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  const data = await response.json();
+
+  // naverDevelopersFeed가 만드는 것과 같은 모양.
+  return (data?.items ?? []).map((item) => ({
+    ...item,
+    category: topic,
+    originalUrl: item.originallink || item.link,
+    provider: "NAVER",
+    region: "KR",
+    source: item.source ?? "NAVER",
+    text: item.title || item.description
+  }));
+}
+
 const listed = await loadListedNames(config);
 const nameIndex = await loadKrNameIndex(config).catch(() => []);
 const before = (await query(config, "SELECT count(*) AS n FROM market_news_items")).rows[0].n;
@@ -126,6 +181,7 @@ const targets = Array.from({ length: days }, (unused, index) => seoulDay(index))
 
 console.log("");
 console.log(`구글 뉴스 RSS · 검색어 ${koreanRssQueries.length}개 × ${days}일 = ${koreanRssQueries.length * days}회 요청`);
+console.log(naverOn ? `네이버 ${viaDevelopers ? "개발자센터" : "API Hub"} · 검색어 ${naverQueries.length}개 × 최대 ${naverMaxStart}건` : "네이버 검색 키가 없습니다 - 구글만 훑습니다");
 console.log(`날짜 ${targets[targets.length - 1]} ~ ${targets[0]}`);
 console.log(`상장 이름 ${listed.length.toLocaleString("ko-KR")}개로 관련성 판정, ${nameIndex.length.toLocaleString("ko-KR")}개로 종목 태깅`);
 console.log("");
@@ -151,6 +207,62 @@ for (let i = 0; i < jobs.length; i += perSecond) {
   if (spent < 1000) await new Promise((resolve) => setTimeout(resolve, 1000 - spent));
 }
 
+/*
+ * 네이버 훑기. 구글이 끝난 뒤에 돕니다 -- 겹치는 기사는 저장 단계에서 하나가
+ * 되므로 두 소스를 다 받아도 중복이 쌓이지 않습니다.
+ */
+if (naverOn) {
+  const since = new Date(Date.now() - days * 86400_000);
+
+  /*
+   * 한 번 찔러보고 들어갑니다.
+   *
+   * 키가 죽어 있으면 검색어마다 실패가 나서 로그가 열여덟 줄씩 쌓입니다. 로그온마다
+   * 도는 스크립트라 그게 매일 반복됩니다. 죽은 키는 첫 요청에서 이미 드러나므로
+   * 거기서 접습니다.
+   */
+  const probe = await fetchNaverPage(naverQueries[0], 1).catch((error) => error);
+
+  if (probe instanceof Error) {
+    console.log(`  네이버 검색이 응답하지 않습니다 (${probe.message}) - 구글만 씁니다`);
+  } else {
+    let naverGot = 0;
+  
+    for (let i = 0; i < naverQueries.length; i += perSecond) {
+      const tick = Date.now();
+
+      await Promise.all(naverQueries.slice(i, i + perSecond).map(async (topic) => {
+        for (let start = 1; start <= naverMaxStart; start += naverPageSize) {
+          let items = [];
+
+          try {
+            items = await fetchNaverPage(topic, start);
+          } catch (error) {
+            failed += 1;
+            console.warn(`  네이버 ${topic} start=${start} 실패: ${error instanceof Error ? error.message : error}`);
+            break;
+          }
+
+          if (items.length === 0) break;
+
+          naverGot += items.length;
+          collected.push(...items);
+
+          // 메우려는 기간보다 오래된 쪽으로 넘어갔으면 더 볼 이유가 없습니다.
+          const oldest = items[items.length - 1]?.pubDate;
+
+          if (oldest && new Date(oldest) < since) break;
+        }
+      }));
+
+      const spent = Date.now() - tick;
+
+      if (spent < 1000) await new Promise((resolve) => setTimeout(resolve, 1000 - spent));
+    }
+
+    console.log(`  네이버(${viaDevelopers ? "개발자센터" : "API Hub"})에서 ${naverGot.toLocaleString("ko-KR")}건 추가로 받았습니다`);
+  }
+}
 const normalized = dedupeNews(collected.map(normalizeNewsItem).filter(Boolean));
 const relevant = normalized
   .filter((item) => isMarketRelevant(item, listed))
