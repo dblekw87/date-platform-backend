@@ -209,6 +209,10 @@ export function normalizeNewsItem(item, index) {
     label: labelFromRaw(item),
     text: title,
     provider: "news",
+    // provider가 이미 종목을 알고 준 경우에는 그대로 들고 갑니다. 종목별 피드로
+    // 받은 기사가 그렇습니다 -- 본문에서 티커를 다시 찾을 이유가 없고, 찾아봐야
+    // 제목에 티커가 없으면 못 찾습니다.
+    ...(item.relatedSymbols?.length > 0 ? { relatedSymbols: item.relatedSymbols } : {}),
     // The provider's own object, kept whole because normalization is lossy in a
     // way that cannot be undone later. What it drops - description, summary,
     // the feed's own category, the tickers some providers already tag - is

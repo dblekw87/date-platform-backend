@@ -344,6 +344,55 @@ export async function fetchPressFeed(url, { timeoutMs = 5000 } = {}) {
   throw lastError;
 }
 
+/*
+ * 미국 뉴스.
+ *
+ * 2026-08-28 FNGR이 프리마켓에서 +198%를 갔는데 우리 뉴스에는 한 건도 없었습니다.
+ * 발표는 GlobeNewswire를 통해 나갔고 우리 미국 소스는 Finnhub·NewsAPI·Benzinga
+ * 뿐이었습니다. 급등의 이유가 배포망에 있는데 배포망을 안 보고 있었던 것입니다.
+ *
+ * 두 갈래를 나눠 둡니다. **보도자료 배포망**은 회사가 직접 낸 1차 자료라 가장
+ * 먼저 나오고 종목이 또렷합니다. **시장 매체**는 해석과 시황이라 늦지만 넓습니다.
+ * 급등 이유를 찾는 데 값을 하는 쪽은 앞의 것입니다.
+ */
+const usPressFeeds = [
+  { label: "보도자료", name: "GlobeNewswire", url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies" },
+  { label: "보도자료", name: "BusinessWire", url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeGVtRVQ==" },
+  { label: "보도자료", name: "PR Newswire", url: "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss" }
+];
+
+const usMediaFeeds = [
+  { label: "헤드라인", name: "MarketWatch", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
+  { label: "헤드라인", name: "CNBC", url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069" },
+  { label: "헤드라인", name: "Seeking Alpha", url: "https://seekingalpha.com/market_currents.xml" },
+  { label: "헤드라인", name: "Nasdaq", url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets" }
+];
+
+function usRssFeed(feed) {
+  return async () => {
+    const xml = await fetchPressFeed(feed.url);
+
+    return {
+      items: [...xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/gi)]
+        .slice(0, 40)
+        .map((match) => ({
+          category: feed.name,
+          // description을 버리지 않습니다. 보도자료는 제목에 티커를 안 쓰고
+          // 본문 첫 줄에 "(Nasdaq: FNGR)"로 적습니다 -- 종목을 붙일 수 있는
+          // 유일한 단서가 거기 있습니다.
+          description: firstXmlValue(match[1], "description")?.replace(/<[^>]+>/g, " ").trim(),
+          label: feed.label,
+          originalUrl: firstXmlValue(match[1], "link"),
+          provider: feed.name,
+          pubDate: firstXmlValue(match[1], "pubDate") || firstXmlValue(match[1], "dc:date"),
+          region: "US",
+          source: feed.name,
+          title: firstXmlValue(match[1], "title")?.replace(/<[^>]+>/g, "").trim()
+        }))
+        .filter((item) => item.title && isArticleLikeSource(item.source, item.title))
+    };
+  };
+}
 function koreanPressFeed(feed) {
   return async () => {
     const xml = await fetchPressFeed(feed.url);
@@ -693,6 +742,45 @@ export function attachLeaderNewsTags(headlines, leaders) {
   });
 }
 
+/*
+ * 한 종목의 뉴스를 **티커로** 직접 받아옵니다.
+ *
+ * 이름으로 검색하는 것과 다릅니다. 2026-08-28 FNGR이 프리마켓에서 +198%를
+ * 갔는데 우리 뉴스에는 한 건도 없었습니다. 이유는 두 겹입니다 -- 발표가
+ * GlobeNewswire로 나갔고 우리가 그걸 안 봤고, 봤더라도 FNGR은 거래대금 주도주가
+ * 아니라 종목별 검색 대상에도 없었습니다.
+ *
+ * 야후의 종목 피드는 티커로 물어보므로 회사 이름을 몰라도 되고, 이름이 흔한
+ * 낱말이어도 엉뚱한 기사가 안 섞입니다. 소형주에는 이게 유일하게 닿는 길입니다.
+ */
+function usSymbolFeed(symbol) {
+  return async () => {
+    const xml = await fetchText(
+      `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`,
+      { timeoutMs: 4000, headers: { "User-Agent": "Mozilla/5.0" } }
+    );
+
+    return {
+      items: [...xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/gi)]
+        .slice(0, 8)
+        .map((match) => ({
+          category: symbol,
+          description: firstXmlValue(match[1], "description")?.replace(/<[^>]+>/g, " ").trim(),
+          label: "종목 뉴스",
+          originalUrl: firstXmlValue(match[1], "link"),
+          provider: "Yahoo Finance",
+          pubDate: firstXmlValue(match[1], "pubDate"),
+          region: "US",
+          // 이 피드로 온 기사는 그 종목의 기사입니다. 본문에서 티커를 다시
+          // 찾을 필요가 없으므로 여기서 바로 붙입니다.
+          relatedSymbols: [symbol],
+          source: "Yahoo Finance",
+          title: firstXmlValue(match[1], "title")?.replace(/<[^>]+>/g, "").trim()
+        }))
+        .filter((item) => item.title)
+    };
+  };
+}
 export async function loadLeaderNewsHeadlines(config, leaders) {
   // Taken per market, not off the front of the combined list. The domestic
   // leaders arrive first and there are sixty of them, so slicing the whole list
@@ -723,13 +811,26 @@ export async function loadLeaderNewsHeadlines(config, leaders) {
     }),
     (item) => `${item.region}:${item.query}`
   ).slice(0, 4);
-  const loaders = [...leaderQueries, ...themeQueries].map((item) =>
-    googleNewsRssFeed(item.query, { region: item.region, language: item.language, label: item.label })
-  );
+  /*
+   * 미국 종목은 티커 피드로 한 번 더 훑습니다.
+   *
+   * 이름 검색과 겹치는 것 같지만 겹치지 않습니다 -- 이름 검색은 상위 6개까지만
+   * 가고 소형주 이름은 검색에 잘 안 걸립니다. 티커 피드는 값싸고 정확하므로
+   * 오늘 움직인 미국 종목 전부에 겁니다.
+   */
+  const usSymbols = uniqueBy(
+    leaders.filter((leader) => leader.market === "US" && leader.symbol),
+    (leader) => leader.symbol
+  ).slice(0, 12).map((leader) => leader.symbol);
+  const loaders = [
+    ...[...leaderQueries, ...themeQueries].map((item) =>
+      googleNewsRssFeed(item.query, { region: item.region, language: item.language, label: item.label })),
+    ...usSymbols.map(usSymbolFeed)
+  ];
   const listed = await loadListedNames(config);
   const headlines = dedupeNews((await settleFeeds(loaders))
     .filter((item) => isMarketRelevant(item, listed))
-    .map((item) => ({ ...item, label: themeLabelFor(item, listed) }))).slice(0, 30);
+    .map((item) => ({ ...item, label: themeLabelFor(item, listed) }))).slice(0, 60);
   const tagged = attachLeaderNewsTags(headlines, leaders);
   const newHeadlineIds = await recordHeadlines(tagged.map((item) => item.id));
 
@@ -759,6 +860,8 @@ export async function loadNewsHeadlines(config) {
     naverQueries.forEach((query) => loaders.push(naverDevelopersFeed(config, query)));
     koreanRssQueries.forEach((query) => loaders.push(googleNewsRssFeed(query)));
     koreanPressFeeds.forEach((feed) => loaders.push(koreanPressFeed(feed)));
+    usPressFeeds.forEach((feed) => loaders.push(usRssFeed(feed)));
+    usMediaFeeds.forEach((feed) => loaders.push(usRssFeed(feed)));
 
     // The fixed queries above name eighteen themes because somebody thought of
     // them. These are the themes carrying money today, whatever they are, so
@@ -870,6 +973,55 @@ function nameAppears(text, name) {
  *
  * 이미 붙은 종목은 건드리지 않고 모자란 자리만 채웁니다.
  */
+/*
+ * 미국 기사에 종목 붙이기 -- **티커로 붙입니다, 회사 이름이 아니라.**
+ *
+ * 국내는 이름으로 붙일 수 있습니다. 한글 회사명은 일상어와 잘 안 겹치니까요.
+ * 영어는 안 됩니다. Apple, Target, Gap, Ford, Visa, Block, Match는 전부 상장사
+ * 이름이면서 흔한 낱말입니다. 이름으로 붙이면 기사 절반에 엉뚱한 종목이 붙습니다.
+ *
+ * 대신 미국에는 국내에 없는 관행이 있습니다 -- 보도자료가 회사를 처음 언급할 때
+ * 반드시 거래소와 티커를 괄호에 적습니다. FNGR의 8월 27일 자료도 정확히
+ * "FingerMotion, Inc. (Nasdaq: FNGR)"였습니다. 이건 오탐이 거의 없습니다.
+ *
+ * 캐시태그($FNGR)도 같이 봅니다. 상장 티커에 있는 것만 통과시키므로 $10 같은
+ * 것은 걸리지 않습니다.
+ */
+const exchangeTicker = /\((?:Nasdaq|NASDAQ|NYSE(?:\s+American|\s+Arca)?|NYSEAMERICAN|AMEX|OTCQB|OTCQX|OTC\s+Markets|OTC|CSE|TSX(?:V)?)\s*[:\s]\s*([A-Z][A-Z.\-]{0,6})\s*\)/g;
+const cashTag = /\$([A-Z]{1,5})/g;
+
+export function attachUsUniverseTags(headlines, tickers, { limit = 4 } = {}) {
+  if (tickers.size === 0) return headlines;
+
+  return headlines.map((headline) => {
+    if (headline.region !== "US") return headline;
+
+    const already = headline.relatedSymbols ?? [];
+
+    if (already.length >= limit) return headline;
+
+    // 제목만으로는 부족합니다. 티커는 본문 첫 문단에 있습니다.
+    const text = `${headline.text ?? ""} ${headline.raw?.description ?? ""}`;
+    const found = [];
+
+    for (const pattern of [exchangeTicker, cashTag]) {
+      pattern.lastIndex = 0;
+
+      for (const match of text.matchAll(pattern)) {
+        const symbol = match[1];
+
+        if (!tickers.has(symbol)) continue;
+        if (already.includes(symbol) || found.includes(symbol)) continue;
+
+        found.push(symbol);
+
+        if (already.length + found.length >= limit) break;
+      }
+    }
+
+    return found.length > 0 ? { ...headline, relatedSymbols: [...already, ...found] } : headline;
+  });
+}
 export function attachKrUniverseTags(headlines, nameIndex, { limit = 4 } = {}) {
   if (nameIndex.length === 0) return headlines;
 

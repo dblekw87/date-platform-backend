@@ -231,6 +231,31 @@ export async function loadHaltedStocks(config, { limit = 60 } = {}) {
  * 긴 이름부터 돌려줍니다. 삼성전자와 삼성전기, 하이닉스와 이닉스처럼 한쪽이
  * 다른 쪽에 들어 있는 이름이 많아 짧은 것부터 맞추면 엉뚱한 데 붙습니다.
  */
+/*
+ * 미국 상장 티커 집합.
+ *
+ * 이름이 아니라 티커만 있으면 됩니다 -- 미국 기사는 티커로 붙이기 때문입니다
+ * (attachUsUniverseTags 참고). 집합으로 두는 이유는 기사마다 여러 번 조회하기
+ * 때문이고, 정규식이 찾아낸 문자열이 진짜 상장 티커인지 거르는 게 유일한 일입니다.
+ *
+ * active만 봅니다. 상장폐지된 티커가 남아 있으면 지금 다른 회사가 쓰고 있는
+ * 심볼에 옛 회사 기사가 붙습니다.
+ */
+let usTickerSet = { at: 0, rows: new Set() };
+
+export async function loadUsTickerSet(config) {
+  if (!config.databaseUrl) return new Set();
+  if (usTickerSet.rows.size > 0 && Date.now() - usTickerSet.at < nameIndexTtlMs) return usTickerSet.rows;
+
+  const result = await query(config, `
+    SELECT DISTINCT symbol FROM us_tickers
+     WHERE active AND type = 'CS' AND symbol ~ '^[A-Z]{1,5}$'
+  `);
+
+  usTickerSet = { at: Date.now(), rows: new Set(result.rows.map((row) => row.symbol)) };
+
+  return usTickerSet.rows;
+}
 const nameIndexTtlMs = 30 * 60 * 1000;
 let nameIndex = { at: 0, rows: [] };
 

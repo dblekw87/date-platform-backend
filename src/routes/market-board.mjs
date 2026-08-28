@@ -4,7 +4,7 @@ import { hasDartCredentials, loadLeaderDisclosures } from "../providers/dart.mjs
 import { loadKrDisclosureBoard } from "../providers/kr-disclosures.mjs";
 import { loadCloseBetCandidates } from "../providers/close-bet.mjs";
 import { loadLimitPairCandidates } from "../providers/limit-pair.mjs";
-import { loadHaltedStocks, loadKrNameIndex } from "../providers/kr-universe.mjs";
+import { loadHaltedStocks, loadKrNameIndex, loadUsTickerSet } from "../providers/kr-universe.mjs";
 import { attachDayLeaderCatalysts } from "../providers/catalyst.mjs";
 import { attachLeaderReasons } from "../providers/reasons.mjs";
 import { resolveIndustryThemes } from "../providers/industry.mjs";
@@ -14,7 +14,7 @@ import { loadKrxCalendar } from "../providers/krx.mjs";
 import { krAfterHoursOpenMinute, seoulMinuteNow, sessionDate } from "../providers/market-session.mjs";
 import { rankDayLeaders } from "../providers/leadership.mjs";
 import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
-import { attachKrUniverseTags, attachLeaderNewsTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
+import { attachKrUniverseTags, attachLeaderNewsTags, attachUsUniverseTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
 import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
@@ -479,7 +479,20 @@ async function attachLeaderNews(config, board) {
     ...(board.krLimitPairs ?? []).flatMap((pair) => [
       { market: "KR", name: pair.leader.name, symbol: pair.leader.symbol },
       { market: "KR", name: pair.second.name, symbol: pair.second.symbol }
-    ])
+    ]),
+    /*
+     * 미국 급등주도 같은 자리에 넣습니다.
+     *
+     * 2026-08-28 FNGR이 프리마켓 +198%를 갔는데 뉴스가 한 건도 안 붙었습니다.
+     * 거래대금 주도주가 아니어서 종목별 조회 대상에 없었기 때문입니다 -- 그런데
+     * 이유를 알아야 하는 종목은 큰 종목이 아니라 **오늘 갑자기 움직인 종목**입니다.
+     */
+    ...(board.usPremarketMovers ?? []).map((mover) => ({
+      market: "US", name: mover.name ?? mover.symbol, symbol: mover.symbol
+    })),
+    ...(board.usSurgeCandidates?.rows ?? board.usSurgeCandidates ?? []).map((candidate) => ({
+      market: "US", name: candidate.name ?? candidate.symbol, symbol: candidate.symbol
+    })).filter((candidate) => candidate.symbol)
   ];
   const leaders = [...board.krLeadingStocks, ...board.usLeadingStocks];
 
@@ -488,6 +501,7 @@ async function attachLeaderNews(config, board) {
   // 주도주로 못 채운 자리를 전 종목 이름으로 메웁니다. 목록에 없다는 이유로
   // 제목에 또렷이 적힌 회사가 아무 종목에도 안 붙던 기사가 국내분의 21%였습니다.
   const nameIndex = await loadKrNameIndex(config).catch(() => []);
+  const usTickers = await loadUsTickerSet(config).catch(() => new Set());
 
   try {
     // Tagging runs after the merge, not before. Tagging first left the
@@ -498,19 +512,19 @@ async function attachLeaderNews(config, board) {
 
     return {
       ...board,
-      headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(merged, leaders), nameIndex),
+      headlineFlow: attachUsUniverseTags(attachKrUniverseTags(attachLeaderNewsTags(merged, leaders), nameIndex), usTickers),
       // 저장되는 쪽. 화면 한도(국내 45건)에 안 잘린 전량이고, 태깅은 같은
       // 이름 목록으로 받습니다 -- 여기가 갈리면 저장된 기사와 화면의 기사가
       // 서로 다른 종목에 붙습니다.
-      ...(board.newsCorpus ? { newsCorpus: attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex) } : {})
+      ...(board.newsCorpus ? { newsCorpus: attachUsUniverseTags(attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex), usTickers) } : {})
     };
   } catch (error) {
     console.warn("leader news lookup failed", error instanceof Error ? error.message : error);
 
     return {
       ...board,
-      headlineFlow: attachKrUniverseTags(attachLeaderNewsTags(board.headlineFlow, leaders), nameIndex),
-      ...(board.newsCorpus ? { newsCorpus: attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex) } : {})
+      headlineFlow: attachUsUniverseTags(attachKrUniverseTags(attachLeaderNewsTags(board.headlineFlow, leaders), nameIndex), usTickers),
+      ...(board.newsCorpus ? { newsCorpus: attachUsUniverseTags(attachKrUniverseTags(attachLeaderNewsTags(board.newsCorpus, leaders), nameIndex), usTickers) } : {})
     };
   }
 }
