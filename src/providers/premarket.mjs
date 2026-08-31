@@ -2,6 +2,7 @@ import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
 import { loadMarketData } from "./market.mjs";
 import { loadUsSurgeCandidates } from "./surge-candidates.mjs";
+import { loadUsMarketGainers } from "./us-market-gainers.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -320,6 +321,28 @@ export async function loadUsWatchlist(config) {
     for (const symbol of await loadLiquidCore(config)) symbols.add(symbol);
   } catch (error) {
     console.warn("premarket: liquid core unavailable", error instanceof Error ? error.message : error);
+  }
+
+  /*
+   * Whatever ran today, at any size.
+   *
+   * The three sources above all describe stocks that were already known here:
+   * ones our history says surge, ones the predefined screener ranked, and the
+   * liquid core. All three inherit the predefined screener's floor - measured
+   * on 2026-08-31 at $2.0B for day_gainers and $383M for small_cap_gainers -
+   * so a nano-cap that runs for the first time is in none of them. RDHL went
+   * +139% that day at a $4M cap and never appeared in a single sample.
+   *
+   * The custom screener has no floor, so today's movers land here and are
+   * sampled from now on - including tomorrow, through the recorded-symbols
+   * branch below.
+   */
+  try {
+    const gainers = await loadUsMarketGainers(config, { minPercent: 15 });
+
+    for (const row of gainers) symbols.add(row.symbol);
+  } catch (error) {
+    console.warn("premarket: market gainers unavailable", error instanceof Error ? error.message : error);
   }
 
   if (config.databaseUrl) {

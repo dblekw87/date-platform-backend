@@ -13,6 +13,7 @@ import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/ki
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
+import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
@@ -682,6 +683,25 @@ function startOpenSignalAlert(config) {
     .catch((error) => console.warn("collector: open signal alert failed", error instanceof Error ? error.message : error));
 }
 
+/*
+ * 미국 장중 급등 알림.
+ *
+ * 개장 신호(3분)보다 느리게 돕니다. 이쪽은 시장 전체 스크리너 한 번이라
+ * 감시 목록을 훑는 것보다 싸지만, 야후 무료 티어라 아껴 부르는 편이 낫습니다.
+ * 급등은 몇 분 안에 끝나는 사건이 아니므로 5분이면 놓치지 않습니다.
+ */
+const usSurgeIntervalMs = 5 * 60_000;
+let usSurgeAt = 0;
+
+function startUsSurgeAlert(config) {
+  if (usMarketPhase() !== "regular" || Date.now() - usSurgeAt < usSurgeIntervalMs) return;
+
+  usSurgeAt = Date.now();
+
+  notifyUsSurges(config, { day: sessionDate("US"), url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: us surge alert failed", error instanceof Error ? error.message : error));
+}
+
 const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
@@ -1232,6 +1252,7 @@ export function startMarketCollector(config) {
       }
 
       startOpenSignalAlert(config);
+      startUsSurgeAlert(config);
     } else if (usMarketPhase() !== "closed") {
       /*
        * A watchlist pass is 25 seconds of requests rather than one screener
