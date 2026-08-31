@@ -237,14 +237,30 @@ export async function loadSymbolThemes(config, { previous } = {}) {
     /*
      * 관성. 도전자가 relabelMargin 넘게 앞서지 못하면 달려 있던 라벨을 지킵니다.
      *
-     * 지금 라벨이 더 이상 오르지 않는 테마면(held_move가 없거나 0 이하) 지키지
-     * 않습니다 -- 그 경우는 관성이 아니라 어제의 이유를 붙들고 있는 것입니다.
+     * `heldMove > 0` 조건이 있었습니다 -- 지금 라벨이 더 이상 오르지 않으면
+     * 관성을 통째로 건너뛰는 탈출구입니다. 의도는 "어제의 이유를 붙들지 말자"
+     * 였는데, theme_move는 시장 평균 대비 초과라 장중 내내 0 근처에서 부호가
+     * 바뀝니다. 그래서 달려 있던 테마가 잠깐 마이너스로 내려갈 때마다 도전자가
+     * **마진 없이** 이겼고, 관성이 사실상 꺼져 있었습니다.
+     *
+     * 2026-08-30에 8/26~8/28 세 장을 10분 틱으로 되돌려 쟀습니다. 조항 하나를
+     * 빼는 것만으로(마진은 그대로 1) 전환이 절반 아래로 떨어집니다.
+     *
+     *            탈출구 on    off      마감 라벨
+     *   08-26      764회     355회     차이 없음
+     *   08-27      591회     326회     차이 없음
+     *   08-28    1,226회     346회     나노팀·한울앤제주만 인접 테마로 이동
+     *
+     * 탈출구가 없어도 의도는 지켜집니다 -- 죽은 테마를 붙들고 있으면 살아 있는
+     * 도전자가 1%p쯤은 우습게 앞서므로 마진이 알아서 놓아줍니다. 조항이 필요했던
+     * 경우는 둘 다 0 근처인 때뿐이고, 그때 뒤집히는 것은 신호가 아니라 잡음입니다.
+     * 더 눌러야 하면 relabelMargin을 2로 올리세요(08-28 기준 346 → 207회).
      */
     const held = row.held_theme;
     const heldMove = row.held_move === null || row.held_move === undefined ? null : Number(row.held_move);
     const wonMove = row.theme_move === null || row.theme_move === undefined ? null : Number(row.theme_move);
 
-    if (held && held !== row.theme_name && heldMove !== null && heldMove > 0
+    if (held && held !== row.theme_name && heldMove !== null
         && (wonMove === null || wonMove - heldMove < relabelMargin)) {
       return [row.symbol, held];
     }
