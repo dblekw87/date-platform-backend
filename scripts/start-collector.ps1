@@ -142,13 +142,25 @@ function Invoke-DailyAnalysis {
   Called on both paths for the same reason as the backup above. It costs nothing
   when nothing is missing - backfill-news.mjs measures the gap itself and exits
   in a second if the newest article is under six hours old.
+
+  Push-Location is load-bearing, the same way -WorkingDirectory is for the
+  server below: config.mjs reads the .env through existsSync(".env"), so this
+  resolves against whatever directory the caller happened to be in. Started
+  from anywhere but the repo root it died with "DATABASE_URL is not configured"
+  and the weekend backfill silently never ran. run-analysis.ps1 already wraps
+  its node calls this way.
 #>
 function Invoke-NewsBackfill {
   $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 
   if (-not $node) { return }
 
-  & $node (Join-Path $PSScriptRoot "backfill-news.mjs") 2>&1 | ForEach-Object { Write-Line "  news: $_" }
+  Push-Location $root
+  try {
+    & $node (Join-Path $PSScriptRoot "backfill-news.mjs") 2>&1 | ForEach-Object { Write-Line "  news: $_" }
+  } finally {
+    Pop-Location
+  }
 }
 
 Write-Line "--- start-collector ---"
