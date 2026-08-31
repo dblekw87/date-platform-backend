@@ -26,11 +26,31 @@ function rankOf(tier) {
   return tierRank[tier] ?? 2;
 }
 
+/*
+ * 테마 이름 옆에 그 테마가 오늘 얼마나 앞섰는지를 붙입니다.
+ *
+ * 짝은 공유 테마가 하나라도 있으면 서므로 한 종목이 여러 알림의 1등주로 나옵니다.
+ * 2026-08-31 사토시홀딩스가 15:08 드론, 15:13 건강기능식품으로 두 번 갔고 -- 편입이
+ * 넷이라 둘 다 맞는 알림이지만, 받는 쪽에서는 "왜 같은 종목이 다른 테마냐"로 읽힙니다.
+ * 그날 건강기능식품은 초과 +6.47%p, 드론은 +2.68%p였습니다. 그 숫자가 있으면 어느
+ * 알림이 진짜인지 메시지 한 줄로 갈립니다.
+ *
+ * 회원 수까지 적는 것은 셋짜리 테마의 평균이 크게 나오기 쉬워서입니다.
+ */
+function themeNote(pair) {
+  if (pair.themeMove === null || pair.themeMove === undefined) return "";
+
+  const move = Number(pair.themeMove);
+  const members = pair.themeMembers ? `·${pair.themeMembers}종목` : "";
+
+  return ` ${move >= 0 ? "+" : ""}${move.toFixed(2)}%p${members}`;
+}
+
 function line(pair) {
   const gap = Number(pair.leadGap);
 
   return [
-    `[${pair.tier}] ${pair.theme}`,
+    `[${pair.tier}] ${pair.theme}${themeNote(pair)}`,
     `1등주 ${pair.leader.name} +${Number(pair.leader.changeRateValue).toFixed(2)}%`,
     `2등주 ${pair.second.name} +${Number(pair.second.changeRateValue).toFixed(2)}%`,
     `간격 ${gap.toFixed(2)}%p`

@@ -279,6 +279,52 @@ const livePairSql = `
  * 편입). 가장 좁은 간격 하나만 남깁니다 -- 같은 종목을 세 번 보여주는 것은 후보가
  * 셋이라는 뜻으로 읽힙니다.
  */
+/**
+ * 카드에 붙일 "그 테마 자체가 오늘 얼마나 올랐는가".
+ *
+ * 짝은 공유하는 테마가 하나라도 있으면 성립하므로, 한 종목이 여러 카드의 1등주로
+ * 동시에 나옵니다 -- 2026-08-31 사토시홀딩스는 드론과 건강기능식품 두 카드에
+ * 5분 간격으로 올라왔습니다. 편입이 넷이니 틀린 카드는 없지만, 그 종목을 +30%로
+ * 민 힘은 하나입니다. 그날 건강기능식품은 초과 +6.47%p였고 드론은 +2.68%p였습니다.
+ * 그 숫자가 카드에 없어서 어느 쪽이 진짜인지 화면만 보고는 가릴 수 없었습니다.
+ *
+ * 절대 상승이 아니라 **모집단 평균 대비 초과**입니다. 장중 모집단은 거래대금
+ * 순위라 오른 종목으로 기울고, 다 같이 오른 날에는 어느 테마든 올라 보입니다.
+ * naver-themes.mjs의 판정이 쓰는 정의와 같아서, 카드의 숫자와 종목에 붙은
+ * 라벨이 같은 것을 말합니다.
+ *
+ * 회원 수를 같이 내는 것은 표본이 셋인 테마의 평균을 열둘인 테마와 같은 무게로
+ * 읽으면 안 되기 때문입니다. 라벨 판정은 8명 미만을 아예 버리지만 여기서는
+ * 버리지 않습니다 -- 카드는 이미 만들어져 화면에 있고, 숨기는 것보다 몇 명짜리인지
+ * 밝히는 편이 낫습니다.
+ */
+async function loadThemeMoves(config, day, live) {
+  const source = live
+    ? `SELECT DISTINCT ON (symbol) symbol, change_rate
+         FROM market_price_samples
+        WHERE market = 'KR' AND session_date = $1::date
+          AND source LIKE 'kis:krx%' AND change_rate IS NOT NULL
+        ORDER BY symbol, observed_at DESC`
+    : `SELECT symbol, change_rate
+         FROM kr_daily_universe
+        WHERE session_date = $1::date AND change_rate IS NOT NULL`;
+
+  const { rows } = await query(config, `
+    WITH moves AS (${source}),
+    base AS (SELECT avg(change_rate) AS market FROM moves)
+    SELECT m.theme_name, count(*) AS members,
+           avg(v.change_rate) - (SELECT market FROM base) AS excess
+      FROM kr_theme_members m
+      JOIN moves v ON v.symbol = m.symbol
+     GROUP BY m.theme_name
+  `, [day]);
+
+  return new Map(rows.map((row) => [row.theme_name, {
+    members: Number(row.members),
+    move: Number(Number(row.excess).toFixed(2))
+  }]));
+}
+
 export async function loadLimitPairCandidates(config, { limit = 10, sessionDate } = {}) {
   if (!config.databaseUrl) return [];
 
@@ -320,6 +366,8 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
     .slice(0, limit);
   // 짝꿍은 2등주를 삽니다. 밤 지표도 2등주 것을 봅니다.
   const nightTriggers = await loadNightTriggers(config, shown.map((row) => row.second_symbol));
+  // 테마가 없으면 카드가 못 나오므로 실패해도 카드는 그대로 두고 숫자만 비웁니다.
+  const themeMoves = await loadThemeMoves(config, day, live).catch(() => new Map());
 
   return shown
     .map((row) => {
@@ -327,6 +375,7 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
       const locked = Number(row.leader_move) >= limitUpMove;
       const tier = limitPairTierFor(leadGap, locked, Number(row.leader_move));
       const measured = calibration.get(tier);
+      const themeMove = themeMoves.get(row.theme_name) ?? null;
 
       return {
         id: `limit-pair-${row.second_symbol}`,
@@ -367,6 +416,9 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
         locked,
         sessionDate: day,
         theme: row.theme_name,
+        // 이 테마에 오늘 몇 명이 있었고, 그 평균이 시장보다 얼마나 앞섰는가.
+        themeMembers: themeMove ? themeMove.members : null,
+        themeMove: themeMove ? themeMove.move : null,
         tier
       };
     });
