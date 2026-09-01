@@ -127,6 +127,50 @@ async function loadPreviousCloses(config, symbols) {
  * 그래서 표가 아니라 두 값의 어긋남 자체를 신호로 씁니다. 정상적인 하루 변동으로는
  * 두 배가 벌어지지 않으므로, 벌어졌으면 분할이고 그때는 Yahoo가 맞습니다.
  */
+/**
+ * 분할이 났는데 두 전일종가가 **나란히** 낡아 있는 경우.
+ *
+ * `pickPreviousClose`는 저장값과 Yahoo meta를 비교합니다. 둘 중 하나만 갱신되면
+ * 어긋남이 보이지만, 2026-09-01 FEED는 둘 다 병합 전이었습니다 -- 저장값 $0.3501,
+ * meta.chartPreviousClose $0.3445, 비율 1.02라 가드가 아무것도 못 봤습니다.
+ * 정작 갱신된 것은 **시세 쪽**이었습니다:
+ *
+ *   5분봉 시세      $4.58 → $3.85   (1:12 병합 후)
+ *   5분봉 meta      전일종가 $0.3445 (병합 전)
+ *   일봉 엔드포인트  전일종가 $4.74   (병합 후, 정확)
+ *
+ * 화면에 +1819%가 떴고 실제로는 그날 하락 중이었습니다. Yahoo가 엔드포인트마다
+ * 다른 배율을 주는 구간이 있고, 5분봉 쪽이 늦습니다.
+ *
+ * 그래서 어긋남을 하나 더 봅니다 -- **오늘 시세가 전일종가의 두 배를 넘는가.**
+ * 하루에 두 배는 정상 변동이 아니므로 그 자체가 분할 신호이고, 그때는 일봉
+ * 엔드포인트가 맞습니다. 분할이 난 날 몇 종목에서만 도는 추가 호출입니다.
+ *
+ * 일봉도 같은 배율이면(진짜로 두 배 오른 날) 그대로 씁니다. 그런 날은 실제로
+ * 있습니다 -- 2026-08-31 RDHL이 +139%였습니다.
+ */
+async function reconcileSplit(symbol, previousClose, last) {
+  if (!previousClose || !Number.isFinite(last) || last / previousClose <= 2) return previousClose;
+
+  try {
+    const data = await fetchJson(
+      `${chartUrl}/${encodeURIComponent(symbol)}?interval=1d&range=5d`,
+      { headers: { "User-Agent": browserUserAgent }, timeoutMs: 4000 }
+    );
+    const daily = data?.chart?.result?.[0]?.meta?.chartPreviousClose;
+
+    if (!Number.isFinite(daily) || daily <= 0) return previousClose;
+
+    // 일봉 쪽으로 재면 두 배 아래인가. 그렇다면 5분봉 meta가 낡은 것이고 일봉이
+    // 맞습니다. 여전히 두 배 위라면 진짜로 그만큼 오른 날이므로 손대지 않습니다.
+    return last / daily <= 2 ? daily : previousClose;
+  } catch {
+    // 확인에 실패하면 원래 값을 씁니다. 여기서 null을 내면 분할과 무관한 종목까지
+    // 화면에서 사라집니다.
+    return previousClose;
+  }
+}
+
 function pickPreviousClose(storedClose, result) {
   const yahoo = Number.isFinite(result?.meta?.chartPreviousClose) ? result.meta.chartPreviousClose
     : Number.isFinite(result?.meta?.previousClose) ? result.meta.previousClose : null;
@@ -196,14 +240,16 @@ async function readExtendedQuote(symbol, storedClose) {
     { headers: { "User-Agent": browserUserAgent }, timeoutMs: 4000 }
   );
   const result = data?.chart?.result?.[0];
-  const previousClose = pickPreviousClose(storedClose, result);
   const closes = (result?.indicators?.quote?.[0]?.close ?? []).filter((value) => Number.isFinite(value));
   const highs = (result?.indicators?.quote?.[0]?.high ?? []).filter((value) => Number.isFinite(value));
   const volumes = (result?.indicators?.quote?.[0]?.volume ?? []).filter((value) => Number.isFinite(value));
 
-  if (!previousClose || closes.length === 0) return null;
+  if (closes.length === 0) return null;
 
   const last = closes.at(-1);
+  const previousClose = await reconcileSplit(symbol, pickPreviousClose(storedClose, result), last);
+
+  if (!previousClose) return null;
   const high = highs.length > 0 ? Math.max(...highs) : last;
 
   return {
