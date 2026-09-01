@@ -387,39 +387,32 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
 
       return true;
     });
+  const shown = eligible.slice(0, limit);
   /*
-   * 테마 평균은 상한(limit)을 자르기 **전에** 냅니다.
+   * 나머지 테마가 마이너스인 짝을 버려봤고, 반증됐습니다 (2026-09-01 측정,
+   * `scripts/measure-pair-theme-filter.mjs`, 전 기간 1,790쌍).
    *
-   * 자른 뒤에 테마 조건을 걸면 열 칸을 뽑아 놓고 그중 여덟을 버리는 셈이라,
-   * 조건을 만족하는 열한 번째 짝이 있어도 화면은 두 칸만 채운 채 조용히 빕니다.
-   * 판단 조건을 모집단 층에 거는 것과 같은 실수입니다.
+   *                     전체            나머지 > 0        나머지 <= 0
+   *   밀착        603건 76% +5.793   465건 74% +5.768   138건 80% +5.875
+   *   여유        957건 49% +0.561   678건 50% +0.727   279건 48% +0.158
+   *   근접        123건 46% +0.165    97건 43% +0.007    26건 54% +0.751
+   *
+   * 등급마다 방향이 다르고, **이 매매의 전부인 밀착에서는 차이가 없습니다** --
+   * 거르면 표본의 23%를 버리면서 초과는 그대로입니다. 여유에서만 맞는데 그 등급은
+   * 초과가 +0.5%p대라 얻는 것이 작습니다.
+   *
+   * 짝을 사후 조건으로 걸러내려는 시도는 이번이 두 번째 실패입니다 -- 2026-08-25에
+   * "재료가 다른 짝 제외"도 같은 방식으로 반증됐습니다. 간격과 잠김 말고 다른 축을
+   * 붙이면 표본만 줄어듭니다. 다시 제안하기 전에 위 표를 보세요.
+   *
+   * 숫자는 계속 냅니다. 거르는 데 못 쓸 뿐이지 읽는 사람에게는 알려줄 값입니다 --
+   * 한 종목이 여러 테마 카드에 동시에 뜰 때 어느 쪽이 진짜인지는 이 숫자가 가릅니다.
    */
-  const exclusions = eligible.flatMap((row) => [
+  const exclusions = shown.flatMap((row) => [
     { symbol: row.leader_symbol, theme: row.theme_name },
     { symbol: row.second_symbol, theme: row.theme_name }
   ]);
-  // 테마를 못 읽으면 조건을 걸 수 없습니다. 그때는 거르지 않고 전부 냅니다 --
-  // 조용히 빈 화면보다 조건이 덜 걸린 화면이 낫고, 숫자 자리가 비어 있으면
-  // 읽는 쪽도 그것을 압니다.
   const themeMoves = await loadThemeMoves(config, day, live, exclusions).catch(() => new Map());
-  /*
-   * 나머지 테마가 안 올랐으면 짝꿍이 아닙니다.
-   *
-   * 두 종목이 같은 태그를 달고 나란히 오른 것만으로는 짝이 아니라는 뜻입니다 --
-   * 실측에서 살아남은 신호가 테마 자체였고(테마 6배), 나머지가 마이너스면 그
-   * 신호가 없는 자리입니다. 2026-09-01 장중 알림 넷이 전부 여기 걸렸습니다.
-   *
-   * **성적표는 이 조건 없이 잰 값입니다.** 화면의 등급별 숫자(밀착 76% 등)는
-   * 거르기 전 모집단의 것이라, 지금은 걸러진 목록에 거르지 않은 성적을 붙이고
-   * 있습니다. 다시 재기 전까지는 그 점을 알고 읽어야 합니다.
-   */
-  const shown = eligible
-    .filter((row) => {
-      const theme = themeMoves.get(row.theme_name);
-
-      return themeMoves.size === 0 || (theme ? theme.move > 0 : false);
-    })
-    .slice(0, limit);
   // 짝꿍은 2등주를 삽니다. 밤 지표도 2등주 것을 봅니다.
   const nightTriggers = await loadNightTriggers(config, shown.map((row) => row.second_symbol));
 
