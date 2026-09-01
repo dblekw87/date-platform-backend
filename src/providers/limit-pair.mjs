@@ -297,8 +297,28 @@ const livePairSql = `
  * 읽으면 안 되기 때문입니다. 라벨 판정은 8명 미만을 아예 버리지만 여기서는
  * 버리지 않습니다 -- 카드는 이미 만들어져 화면에 있고, 숨기는 것보다 몇 명짜리인지
  * 밝히는 편이 낫습니다.
+ *
+ * **짝꿍 두 종목은 평균에서 뺍니다.** 넣으면 순환입니다 -- "이 테마가 올랐다"가
+ * 사실은 "이 두 종목이 올랐다"를 다시 말한 것이 되고, 독립적인 근거인 것처럼
+ * 읽힙니다. 2026-09-01 장중에 나간 알림 넷을 다시 재보니 전부 부호가 뒤집혔습니다:
+ *
+ *   마이크로 LED   +5.93 → -2.96   (4종목 중 2개가 짝 자신)
+ *   유전자 치료제  +4.48 → -1.42
+ *   갤럭시 부품주  +2.11 → -0.27
+ *   코로나19       -0.45 → -1.24
+ *
+ * 넷 다 "테마가 간" 것이 아니라 "두 종목만 간" 자리였는데 화면은 반대로 말하고
+ * 있었습니다. 빼도 원래 목적은 살아남습니다 -- 2026-08-31 사토시홀딩스는
+ * 건강기능식품 +6.47 → +1.93, 드론 +2.68 → -3.62으로, 승자는 그대로면서 오히려
+ * 부호까지 갈립니다.
+ *
+ * 시장 평균(기준선)은 전 표본으로 냅니다. 빼는 것은 테마 평균 쪽뿐입니다.
+ *
+ * 짝을 빼면 남는 회원이 0인 테마가 생깁니다(2종목짜리 테마). 그때 move는 null이고
+ * members는 0이라, 화면이 "나머지 없음"이라고 말할 수 있습니다 -- 숫자를 지어내는
+ * 것보다 없다고 하는 편이 낫습니다.
  */
-async function loadThemeMoves(config, day, live) {
+async function loadThemeMoves(config, day, live, exclusions = []) {
   const source = live
     ? `SELECT DISTINCT ON (symbol) symbol, change_rate
          FROM market_price_samples
@@ -311,13 +331,17 @@ async function loadThemeMoves(config, day, live) {
 
   const { rows } = await query(config, `
     WITH moves AS (${source}),
-    base AS (SELECT avg(change_rate) AS market FROM moves)
+    base AS (SELECT avg(change_rate) AS market FROM moves),
+    excluded AS (SELECT unnest($2::text[]) AS theme_name, unnest($3::text[]) AS symbol)
     SELECT m.theme_name, count(*) AS members,
            avg(v.change_rate) - (SELECT market FROM base) AS excess
       FROM kr_theme_members m
       JOIN moves v ON v.symbol = m.symbol
+     WHERE NOT EXISTS (
+       SELECT 1 FROM excluded e WHERE e.theme_name = m.theme_name AND e.symbol = m.symbol
+     )
      GROUP BY m.theme_name
-  `, [day]);
+  `, [day, exclusions.map((row) => row.theme), exclusions.map((row) => row.symbol)]);
 
   return new Map(rows.map((row) => [row.theme_name, {
     members: Number(row.members),
@@ -354,7 +378,7 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
        ORDER BY p.lead_gap ASC
     `, [day]);
   const seen = new Set();
-  const shown = result.rows
+  const eligible = result.rows
     .filter((row) => !row.trade_halted)
     .filter((row) => {
       if (seen.has(row.second_symbol)) return false;
@@ -362,12 +386,42 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
       seen.add(row.second_symbol);
 
       return true;
+    });
+  /*
+   * 테마 평균은 상한(limit)을 자르기 **전에** 냅니다.
+   *
+   * 자른 뒤에 테마 조건을 걸면 열 칸을 뽑아 놓고 그중 여덟을 버리는 셈이라,
+   * 조건을 만족하는 열한 번째 짝이 있어도 화면은 두 칸만 채운 채 조용히 빕니다.
+   * 판단 조건을 모집단 층에 거는 것과 같은 실수입니다.
+   */
+  const exclusions = eligible.flatMap((row) => [
+    { symbol: row.leader_symbol, theme: row.theme_name },
+    { symbol: row.second_symbol, theme: row.theme_name }
+  ]);
+  // 테마를 못 읽으면 조건을 걸 수 없습니다. 그때는 거르지 않고 전부 냅니다 --
+  // 조용히 빈 화면보다 조건이 덜 걸린 화면이 낫고, 숫자 자리가 비어 있으면
+  // 읽는 쪽도 그것을 압니다.
+  const themeMoves = await loadThemeMoves(config, day, live, exclusions).catch(() => new Map());
+  /*
+   * 나머지 테마가 안 올랐으면 짝꿍이 아닙니다.
+   *
+   * 두 종목이 같은 태그를 달고 나란히 오른 것만으로는 짝이 아니라는 뜻입니다 --
+   * 실측에서 살아남은 신호가 테마 자체였고(테마 6배), 나머지가 마이너스면 그
+   * 신호가 없는 자리입니다. 2026-09-01 장중 알림 넷이 전부 여기 걸렸습니다.
+   *
+   * **성적표는 이 조건 없이 잰 값입니다.** 화면의 등급별 숫자(밀착 76% 등)는
+   * 거르기 전 모집단의 것이라, 지금은 걸러진 목록에 거르지 않은 성적을 붙이고
+   * 있습니다. 다시 재기 전까지는 그 점을 알고 읽어야 합니다.
+   */
+  const shown = eligible
+    .filter((row) => {
+      const theme = themeMoves.get(row.theme_name);
+
+      return themeMoves.size === 0 || (theme ? theme.move > 0 : false);
     })
     .slice(0, limit);
   // 짝꿍은 2등주를 삽니다. 밤 지표도 2등주 것을 봅니다.
   const nightTriggers = await loadNightTriggers(config, shown.map((row) => row.second_symbol));
-  // 테마가 없으면 카드가 못 나오므로 실패해도 카드는 그대로 두고 숫자만 비웁니다.
-  const themeMoves = await loadThemeMoves(config, day, live).catch(() => new Map());
 
   return shown
     .map((row) => {
@@ -375,7 +429,14 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
       const locked = Number(row.leader_move) >= limitUpMove;
       const tier = limitPairTierFor(leadGap, locked, Number(row.leader_move));
       const measured = calibration.get(tier);
-      const themeMove = themeMoves.get(row.theme_name) ?? null;
+      /*
+       * 짝을 빼고 남은 회원이 없으면 그 테마는 GROUP BY에서 아예 사라집니다
+       * (2종목짜리 테마). 조회가 통째로 실패한 경우와 구분해야 합니다 -- 전자는
+       * "나머지가 없다"는 사실이고 후자는 모른다는 뜻이라, 화면이 다르게 말해야
+       * 합니다. 지도가 비어 있지 않은데 이 테마만 없으면 전자입니다.
+       */
+      const themeMove = themeMoves.get(row.theme_name)
+        ?? (themeMoves.size > 0 ? { members: 0, move: null } : null);
 
       return {
         id: `limit-pair-${row.second_symbol}`,
@@ -416,7 +477,7 @@ export async function loadLimitPairCandidates(config, { limit = 10, sessionDate 
         locked,
         sessionDate: day,
         theme: row.theme_name,
-        // 이 테마에 오늘 몇 명이 있었고, 그 평균이 시장보다 얼마나 앞섰는가.
+        // 짝 두 종목을 뺀 나머지가 몇이었고, 그 평균이 시장보다 얼마나 앞섰는가.
         themeMembers: themeMove ? themeMove.members : null,
         themeMove: themeMove ? themeMove.move : null,
         tier

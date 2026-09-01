@@ -38,12 +38,15 @@ function rankOf(tier) {
  * 회원 수까지 적는 것은 셋짜리 테마의 평균이 크게 나오기 쉬워서입니다.
  */
 function themeNote(pair) {
+  // 짝 두 종목을 뺀 **나머지**입니다. 그 말을 붙이지 않으면 "테마가 올랐다"로
+  // 읽히는데, 짝을 포함해 재던 시절이 정확히 그 오해였습니다.
+  if (pair.themeMembers === 0) return " 나머지 없음";
   if (pair.themeMove === null || pair.themeMove === undefined) return "";
 
   const move = Number(pair.themeMove);
   const members = pair.themeMembers ? `·${pair.themeMembers}종목` : "";
 
-  return ` ${move >= 0 ? "+" : ""}${move.toFixed(2)}%p${members}`;
+  return ` 나머지 ${move >= 0 ? "+" : ""}${move.toFixed(2)}%p${members}`;
 }
 
 function line(pair) {
