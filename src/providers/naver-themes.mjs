@@ -161,7 +161,7 @@ export async function loadSymbolThemes(config, { previous } = {}) {
   const result = await query(config, `
     WITH business AS (
       SELECT symbol, theme_name, theme_no
-        FROM kr_theme_members
+        FROM kr_theme_membership
        WHERE theme_name !~ $1
     ),
     -- 전 종목 일봉이라 테마의 모든 회원이 들어옵니다. 순위권만 보면 오른 종목만
@@ -351,7 +351,7 @@ export async function loadNewsThemes(config, { day = sessionDate("KR") } = {}) {
          AND array_length(related_symbols, 1) > 0
          AND (published_at + interval '9 hours')::date = $1::date
     `, [day]),
-    query(config, `SELECT symbol, theme_name FROM kr_theme_members WHERE theme_name !~ $1`, [nonBusinessThemePattern]),
+    query(config, `SELECT symbol, theme_name FROM kr_theme_membership WHERE theme_name !~ $1`, [nonBusinessThemePattern]),
     query(config, `
       SELECT symbol, name FROM kr_daily_universe
        WHERE session_date = (SELECT max(session_date) FROM kr_daily_universe) AND length(name) >= 2

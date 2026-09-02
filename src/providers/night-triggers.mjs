@@ -57,7 +57,7 @@ export async function loadNightTriggers(config, symbols) {
 
   const { rows } = await query(
     config,
-    "SELECT symbol, array_agg(theme_name) AS themes FROM kr_theme_members WHERE symbol = ANY($1::text[]) GROUP BY symbol",
+    "SELECT symbol, array_agg(theme_name) AS themes FROM kr_theme_membership WHERE symbol = ANY($1::text[]) GROUP BY symbol",
     [wanted]
   );
 

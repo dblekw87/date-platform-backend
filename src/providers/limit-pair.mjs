@@ -98,7 +98,7 @@ export function limitPairSql({ oneDay = false } = {}) {
   return `
   WITH members AS (
     SELECT DISTINCT symbol, theme_name
-      FROM kr_theme_members
+      FROM kr_theme_membership
      WHERE theme_name !~ '(밸류업|기업인수목적|신규상장|리츠\\(REITs\\)|국내 상장 중국기업|지주사)'
   ),
   moves AS (
@@ -231,7 +231,7 @@ async function loadCalibration(config) {
 const livePairSql = `
   WITH members AS (
     SELECT DISTINCT symbol, theme_name
-      FROM kr_theme_members
+      FROM kr_theme_membership
      WHERE theme_name !~ '(밸류업|기업인수목적|신규상장|리츠\\(REITs\\)|국내 상장 중국기업|지주사)'
   ),
   today AS (
@@ -335,7 +335,7 @@ async function loadThemeMoves(config, day, live, exclusions = []) {
     excluded AS (SELECT unnest($2::text[]) AS theme_name, unnest($3::text[]) AS symbol)
     SELECT m.theme_name, count(*) AS members,
            avg(v.change_rate) - (SELECT market FROM base) AS excess
-      FROM kr_theme_members m
+      FROM kr_theme_membership m
       JOIN moves v ON v.symbol = m.symbol
      WHERE NOT EXISTS (
        SELECT 1 FROM excluded e WHERE e.theme_name = m.theme_name AND e.symbol = m.symbol

@@ -46,7 +46,7 @@ async function record(day) {
        WHERE market='KR' AND session_date=$1::date AND source LIKE 'kis:krx%' AND change_rate IS NOT NULL
     ),
     members AS (
-      SELECT DISTINCT symbol, theme_name FROM kr_theme_members
+      SELECT DISTINCT symbol, theme_name FROM kr_theme_membership
        WHERE theme_name !~ '(밸류업|기업인수목적|신규상장|리츠|지주사)'
     ),
     locked AS (
@@ -178,8 +178,8 @@ async function candidates(day) {
       SELECT a.symbol AS left_symbol, b.symbol AS right_symbol
         FROM moved a JOIN moved b ON a.symbol < b.symbol
        WHERE NOT EXISTS (
-         SELECT 1 FROM kr_theme_members ma
-           JOIN kr_theme_members mb ON mb.theme_name = ma.theme_name
+         SELECT 1 FROM kr_theme_membership ma
+           JOIN kr_theme_membership mb ON mb.theme_name = ma.theme_name
           WHERE ma.symbol = a.symbol AND mb.symbol = b.symbol)
     )
     INSERT INTO kr_theme_candidates (left_symbol, right_symbol, first_seen, last_seen)

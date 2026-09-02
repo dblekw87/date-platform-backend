@@ -50,7 +50,7 @@ const { rows } = await query(config, `
      WHERE dm IS NOT NULL GROUP BY session_date HAVING count(*) >= 50
   ),
   members AS (
-    SELECT DISTINCT symbol, theme_name FROM kr_theme_members WHERE theme_name !~ $1
+    SELECT DISTINCT symbol, theme_name FROM kr_theme_membership WHERE theme_name !~ $1
   ),
   -- 짝 두 종목을 뺀 나머지 테마 회원의 그날 초과등락.
   rest AS (

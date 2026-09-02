@@ -38,7 +38,7 @@ const { rows } = await query(config, `
   WITH members AS (
     -- 지수·구조 테마는 사업이 아니라 상장 형태입니다. 짝꿍이 성립하지 않습니다.
     SELECT DISTINCT symbol, theme_name
-      FROM kr_theme_members
+      FROM kr_theme_membership
      WHERE theme_name !~ '(밸류업|기업인수목적|신규상장|리츠\\(REITs\\)|국내 상장 중국기업|지주사)'
   ),
   bars AS (

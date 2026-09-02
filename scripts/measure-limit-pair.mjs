@@ -32,7 +32,7 @@ const config = readConfig();
 const { rows } = await query(config, `
   WITH members AS (
     SELECT DISTINCT symbol, theme_name
-      FROM kr_theme_members
+      FROM kr_theme_membership
      WHERE theme_name !~ '(밸류업|기업인수목적|신규상장|리츠\\(REITs\\)|국내 상장 중국기업|지주사)'
   ),
   bars AS (

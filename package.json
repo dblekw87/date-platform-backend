@@ -24,6 +24,7 @@
     "theme:backfill": "node scripts/backfill-sample-themes.mjs",
     "theme:backfill:apply": "node scripts/backfill-sample-themes.mjs --apply",
     "theme:candidates": "node scripts/theme-candidates.mjs",
+    "theme:overlay": "node scripts/theme-overlay.mjs",
     "us:backfill": "node scripts/backfill-us-daily.mjs",
     "us:calibrate": "node scripts/calibrate-us-surges.mjs",
     "us:daily": "node scripts/run-us-pipeline.mjs",
