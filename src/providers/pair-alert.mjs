@@ -89,7 +89,21 @@ export async function notifyNewPairs(config, { day, url } = {}) {
        */
       if (pair.sessionDate && pair.sessionDate !== day) continue;
 
-      const key = `${pair.leader.symbol}|${pair.second.symbol}`;
+      /*
+       * 짝의 신원은 **순서와 무관**합니다.
+       *
+       * `leader|second`로 두면 둘이 1·2등을 바꿀 때마다 새 짝이 됩니다.
+       * 2026-09-01에 16통 중 3통이 그 왕복이었습니다 -- 바이오니아↔모아라이프플러스,
+       * 유티아이↔비에이치, 인디에프↔온타이드가 각각 두 번씩 왔습니다.
+       *
+       * 자리를 바꿔가며 서로를 앞선다는 것은 한쪽이 끌고 다른 쪽이 따라오는 모양이
+       * 아니라 **둘이 같이 가고 있다**는 뜻입니다. 첫 통이 이미 그 쌍을 알렸으므로
+       * 두 번째는 새로 알릴 것이 없습니다.
+       *
+       * 등급이 오르면 순서와 무관하게 다시 보냅니다 -- 진행중에서 밀착으로 가는 것은
+       * 실제로 달라진 사실이고, 그 판단은 아래 rank 비교가 그대로 합니다.
+       */
+      const key = [pair.leader.symbol, pair.second.symbol].sort().join("|");
       const rank = rankOf(pair.tier);
 
       // 같은 짝이 같은 등급 이하로 다시 오면 조용히 넘깁니다.
