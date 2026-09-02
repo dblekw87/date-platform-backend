@@ -26,6 +26,13 @@ import db
 MINIMUM_TICKS = 12
 MINIMUM_TURNOVER = 1_000_000_000
 CORRELATION_FLOOR = 0.6
+# 공통요인을 뽑으려면 뽑을 만한 모집단이 있어야 합니다. 지금 데이터의 가장 얇은
+# 날이 146종목이라 이 문턱은 걸리지 않습니다 -- 반나절 장이나 수집 사고처럼
+# 모집단이 무너진 날에 첫 주성분이 한두 종목 자신이 되는 것을 막는 안전장치입니다.
+MINIMUM_SYMBOLS = 30
+# 걷어낼 공통 방향의 수. 1개로는 부족했습니다 -- remove_common_factor 주석의 사다리
+# 참고. 손으로 고른 상수이고, 지금 데이터로는 이보다 잘 고를 방법이 없습니다.
+COMMON_FACTORS = 3
 
 
 def load_day(session_date: str, market: str = "KR") -> pd.DataFrame:
@@ -69,6 +76,118 @@ def liquid_symbols(frame: pd.DataFrame) -> pd.DataFrame:
     return last[last["turnover"].astype(float) >= MINIMUM_TURNOVER]
 
 
+def remove_common_factor(frame: pd.DataFrame) -> tuple[pd.DataFrame, float]:
+    """Strip the one thing every stock did together, and say how big it was.
+
+    Without this the correlation answers "did the market move" far more often
+    than "is this a theme". Measured over 2026-08-18..09-02: the raw pair count
+    ranged 94..1,344 per day, and the two biggest days collapsed to a fraction
+    once the factor was gone (996 -> 153, 1,344 -> 48). Those were index days,
+    not theme days, and 엘에스일렉트릭 came out paired with 수소 · 로봇 · 2차전지
+    · 조선 names at once - the signature of a factor, not a theme.
+
+    **The mean is the wrong centre here.** The sampled universe is the turnover
+    ranking, so it is biased to whatever is surging ([[ranking-keyhole-finding]]),
+    and a mean is dragged by those few. Subtracting it injects the same -mean
+    series into every quiet name and makes the quiet names correlate with each
+    other: on 2026-08-18 that turned 209 pairs into 920 and the busiest symbol
+    into 73 of them. The median does not do this (215 pairs, hub 17), and the
+    first principal component - the direction the day actually moved in - does
+    better still. Measured, all four side by side:
+
+        raw     4,682 pairs · 28.8% already in one theme · 94..1,344/day · hub 63
+        mean    2,159        · 26.3%                     · 37..920      · hub 73
+        median  1,665        · 38.0%                     · 42..362      · hub 31
+        pc1     1,484        · 45.8%                     · 48..243      · hub 31
+
+    Agreement with the dictionary is the quality proxy: a measure that keeps
+    finding pairs the dictionary already groups is finding themes, so what it
+    finds *outside* the dictionary is worth reading as a real gap.
+
+    Missing values are restored afterwards. Filling them with zero to run the
+    decomposition and leaving them filled would quietly disable the
+    MINIMUM_TICKS gate - a symbol seen three times would carry zeros everywhere
+    else and correlate with anything.
+
+    **How many directions to strip.** One was not enough - hubs survived it
+    (두산 in 10 of the 53 residual pairs, against LG이노텍 · 에임드바이오 ·
+    리가켐바이오 · 한화오션 at once). But more is not simply better, because the
+    thing being looked for is itself a factor: strip enough directions and the
+    반도체 cluster goes with them. So the ladder is read on three numbers, not
+    on the share alone - how many known-theme pairs survive (recall), what
+    fraction of the survivors are known themes (precision), and how that
+    fraction compares to picking any liquid pair at random that day (lift):
+
+        strip  pairs  in-dict  share   random   lift
+          0    4,682   1,350   28.8%   10.2%    2.8x
+          1    1,954     772   39.5%    9.9%    4.0x
+          2    1,033     487   47.1%   10.2%    4.6x
+          3      800     402   50.2%   10.2%    4.9x
+          5      673     351   52.2%   10.3%    5.0x
+          8      514     263   51.2%   10.3%    5.0x
+
+    Lift saturates at three and the share stops improving after five, while
+    recall keeps falling the whole way - 8 strips a third of the known themes
+    out of the answer and buys nothing. Three is the knee.
+
+    Marchenko-Pastur was tried for picking this per day and does not work on
+    this data: with ~370 symbols against ~180 ticks the sample correlation
+    matrix is rank deficient, and the count ran into its cap on 11 of 12 days.
+    Narrowing to the top 60-150 names by turnover makes it behave (3-6
+    directions) but the count then tracks the universe size, which is a knob in
+    a different place rather than an answer. Three stays a chosen constant, and
+    it should be revisited when the tick grid is finer than five minutes.
+    """
+    if frame.shape[1] < MINIMUM_SYMBOLS or frame.shape[0] < 2:
+        return frame, 0.0
+
+    missing = frame.isna()
+    filled = frame.fillna(0.0).to_numpy(dtype=float)
+    centred = filled - filled.mean(axis=0, keepdims=True)
+    left, strength, right = np.linalg.svd(centred, full_matrices=False)
+    total = float((strength ** 2).sum())
+    share = float((strength[:COMMON_FACTORS] ** 2).sum() / total) if total > 0 else 0.0
+    taken = min(COMMON_FACTORS, len(strength))
+    residual = centred - (left[:, :taken] * strength[:taken]) @ right[:taken, :]
+    stripped = pd.DataFrame(residual, index=frame.index, columns=frame.columns)
+
+    return stripped.mask(missing), share
+
+
+_MEMBERSHIP: dict[str, set[str]] | None = None
+
+
+def theme_membership() -> dict[str, set[str]]:
+    """Every theme a symbol belongs to, not just the one label the board prints.
+
+    market_price_samples.theme carries a single representative label per symbol
+    (classifyTheme takes the lowest theme_no), so comparing labels asks a
+    narrower question than the one this module is for. 로보티즈 prints
+    피지컬 AI/휴머노이드 로봇 and 클로봇 prints 지능형로봇/인공지능(AI), and the
+    two look like a hole in the dictionary - but both sit in
+    로봇(산업용/협동로봇 등) in kr_theme_members, along with seven other robot
+    names. The dictionary already holds that pair; only the printed label
+    differs.
+
+    So the label question and the membership question are answered separately.
+    Counting a pair as "the dictionary missed this" requires that the two share
+    no theme at all. The JS side learned the same thing about 짝꿍 pairs, where
+    using the representative label alone lost 한전산업 → 우리기술.
+    """
+    global _MEMBERSHIP
+
+    if _MEMBERSHIP is None:
+        frame = db.read("SELECT symbol, theme_name FROM kr_theme_membership")
+        membership: dict[str, set[str]] = {}
+
+        for symbol, theme_name in zip(frame["symbol"], frame["theme_name"]):
+            membership.setdefault(symbol, set()).add(theme_name)
+
+        _MEMBERSHIP = membership
+
+    return _MEMBERSHIP
+
+
 def day_pairs(session_date: str, market: str = "KR") -> pd.DataFrame:
     frame = load_day(session_date, market)
 
@@ -76,13 +195,17 @@ def day_pairs(session_date: str, market: str = "KR") -> pd.DataFrame:
         return pd.DataFrame()
 
     liquid = liquid_symbols(frame)
+    members = theme_membership()
     returns = tick_returns(frame)
     shared = [symbol for symbol in returns.columns if symbol in liquid.index]
 
     if len(shared) < 2:
         return pd.DataFrame()
 
-    correlations = returns[shared].corr(min_periods=MINIMUM_TICKS)
+    # 시장이 함께 움직인 몫을 먼저 걷어냅니다. 걷지 않으면 상관은 "테마인가"보다
+    # "그날 지수가 움직였는가"에 더 자주 답합니다.
+    residual, factor_share = remove_common_factor(returns[shared])
+    correlations = residual.corr(min_periods=MINIMUM_TICKS)
     # A limit-up stock has zero variance, so its correlation is undefined rather
     # than zero. Dropped rather than filled, which is what "측정불가" means.
     matrix = correlations.to_numpy()
@@ -108,7 +231,12 @@ def day_pairs(session_date: str, market: str = "KR") -> pd.DataFrame:
             "leader": leader,
             "leader_name": liquid.loc[leader, "name"],
             "leader_theme": liquid.loc[leader, "theme"],
+            # 그날 걷어낸 공통 방향들이 설명한 분산 비율. 크면 테마가 아니라
+            # 시장이 움직인 날이고, 남은 쌍을 그만큼 조심해서 읽어야 합니다.
+            "factor_share": round(factor_share, 3),
             "same_theme": bool(liquid.loc[leader, "theme"] == liquid.loc[follower, "theme"]),
+            # 같은 라벨인가가 아니라, 사전이 둘을 어디서든 함께 두는가입니다.
+            "shared_theme": bool(members.get(leader, set()) & members.get(follower, set())),
             "session_date": session_date,
         })
 
@@ -126,7 +254,7 @@ def persistence(market: str = "KR") -> tuple[pd.DataFrame, pd.DataFrame]:
 
     every = pd.concat(frames, ignore_index=True)
     repeated = (every
-                .groupby(["leader", "leader_name", "follower", "follower_name", "same_theme"])
+                .groupby(["leader", "leader_name", "follower", "follower_name", "same_theme", "shared_theme"])
                 .agg(days=("session_date", "nunique"),
                      mean_correlation=("correlation", "mean"))
                 .reset_index()
