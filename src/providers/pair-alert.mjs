@@ -49,6 +49,23 @@ function themeNote(pair) {
   return ` 나머지 ${move >= 0 ? "+" : ""}${move.toFixed(2)}%p${members}`;
 }
 
+/*
+ * 기준을 매 통에 답니다.
+ *
+ * 등급 이름만 보내면 화면의 성적(밀착 612건 +5.55%p·상회 76%)이 따라옵니다. 그런데
+ * 그 값은 **종가에 사서 익일 시가에 판** 것이고 이 알림은 장중에 옵니다 -- 받는 쪽이
+ * 지금 들어가는 근거로 읽으면 재지 않은 매매를 하는 셈입니다.
+ *
+ * 2026-09-02에 그 구간을 실제로 쟀고 성립하지 않았습니다: 149건·12개 장, 진입 뒤
+ * 마감까지 평균 -2.41%·상회 30%로 같은 순간에 오르던 다른 급등주(3,668건 -2.19%)와
+ * 구별되지 않습니다. 화면에는 적었는데 알림에만 없으면 정작 장중에 도착하는 쪽이
+ * 조용합니다.
+ *
+ * 알림을 없애지 않는 이유는 이 자리가 **종가 매수 후보를 미리 아는 자리**이기
+ * 때문입니다. 없앨지는 사용자가 정할 일입니다.
+ */
+const BASIS = "※ 성적은 종가매수·익일시가 기준. 장중 진입은 실측 -2.41%(149건)";
+
 function line(pair) {
   const gap = Number(pair.leadGap);
 
@@ -56,7 +73,8 @@ function line(pair) {
     `[${pair.tier}] ${pair.theme}${themeNote(pair)}`,
     `1등주 ${pair.leader.name} +${Number(pair.leader.changeRateValue).toFixed(2)}%`,
     `2등주 ${pair.second.name} +${Number(pair.second.changeRateValue).toFixed(2)}%`,
-    `간격 ${gap.toFixed(2)}%p`
+    `간격 ${gap.toFixed(2)}%p`,
+    BASIS
   ].join("\n");
 }
 
