@@ -58,12 +58,17 @@ Write-Line "--- run-analysis $stamp ---"
 # 사람이 그때그때 확인하면 기억에 남는 것만 남고, 빗나간 것은 조용히 잊힙니다.
 $node0 = (Get-Command node -ErrorAction SilentlyContinue).Source
 
+# 채점이 "아직 모른다"고 답하면(75) 마커를 남기지 않습니다. 그러면 다음 정시에
+# 다시 돌아서, 일봉이 늦게 들어온 날에도 후보가 유실되지 않습니다.
+$reviewCode = 0
+
 if ($node0) {
   $out = Join-Path $outDir "review-$stamp.txt"
   Push-Location $Root
   & $node0 (Join-Path $Root "scripts/nightly-review.mjs") 2>&1 | Out-File -FilePath $out -Encoding utf8
+  $reviewCode = $LASTEXITCODE
   Pop-Location
-  Write-Line "nightly review -> $out"
+  Write-Line "nightly review -> $out (exit $reviewCode)"
 }
 
 if (Test-Path $python) {
@@ -88,5 +93,9 @@ if ($node) {
   Write-Line "node not found"
 }
 
-Set-Content -Path $marker -Value (Get-Date -Format "o")
-Write-Line "done"
+if ($reviewCode -eq 75) {
+  Write-Line "daily bars not in yet - no marker, will retry next hour"
+} else {
+  Set-Content -Path $marker -Value (Get-Date -Format "o")
+  Write-Line "done"
+}

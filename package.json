@@ -42,7 +42,8 @@
     "kr:leaders": "node scripts/measure-leaders.mjs",
     "kr:close-bet": "node scripts/calibrate-close-bet.mjs",
     "kr:daily-bars": "node scripts/backfill-kr-daily-bars.mjs",
-    "kr:limit-pair": "node scripts/calibrate-limit-pair.mjs"
+    "kr:limit-pair": "node scripts/calibrate-limit-pair.mjs",
+    "kr:close-bet-log": "node scripts/close-bet-log.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"

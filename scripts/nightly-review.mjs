@@ -221,6 +221,42 @@ if (backfillAt >= 0) {
 
 const day = await sessionDay();
 
+/*
+ * 오늘 일봉이 다 들어왔는가.
+ *
+ * **이 확인이 없어서 사흘치를 잃었습니다.** 종가배팅 후보는 일봉에서 나오는데,
+ * 수집기는 15:50부터 4,300종목을 받고 run-analysis.ps1은 15:55~15:58에 이 파일을
+ * 부릅니다. 둘은 다른 프로세스라 순서 보장이 없고, 봉이 덜 들어온 상태로 돌면
+ * 후보가 0건으로 기록되고 마커가 남아 **그날은 다시 돌지 않습니다.**
+ *
+ * 2026-09-01은 실제로 4건(인디에프·바이오니아·더핑크퐁컴퍼니·대아티아이),
+ * 09-02는 1건(엑시콘)이었는데 셋 다 0건으로 남았습니다. 조용히 잃는 종류라
+ * 사용자가 "어제 대상이 뭐였지"라고 묻지 않았으면 몰랐을 것입니다.
+ *
+ * 0건과 "아직 모른다"는 다릅니다. 모를 때는 기록하지 말고 다음 시각에 다시
+ * 물어야 합니다. 종료 코드 75면 run-analysis.ps1이 마커를 남기지 않습니다.
+ */
+const readiness = await query(config, `
+  SELECT (SELECT count(*) FROM kr_daily_bars WHERE session_date = $1::date) AS today,
+         (SELECT count(*) FROM kr_daily_bars
+           WHERE session_date = (SELECT max(session_date) FROM kr_daily_bars
+                                  WHERE session_date < $1::date)) AS previous
+`, [day]);
+const barsToday = Number(readiness.rows[0].today);
+const barsPrevious = Number(readiness.rows[0].previous);
+// 지난 장의 90%면 다 들어온 것으로 봅니다. 상장·폐지로 몇 종목은 늘 다릅니다.
+const barsNeeded = barsPrevious > 0 ? Math.round(barsPrevious * 0.9) : 3000;
+
+if (barsToday < barsNeeded) {
+  console.log("");
+  console.log(`=== ${day} 일봉이 아직 다 안 들어왔습니다 ===`);
+  console.log("");
+  console.log(`  오늘 ${barsToday}종목 · 지난 장 ${barsPrevious}종목 · 문턱 ${barsNeeded}`);
+  console.log("  후보를 0건으로 기록하지 않고 넘깁니다. 다음 시각에 다시 돕니다.");
+  console.log("");
+  process.exit(75);
+}
+
 console.log("");
 console.log(`=== ${day} 국내장 정리 ===`);
 console.log("");
