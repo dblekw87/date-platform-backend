@@ -43,7 +43,8 @@
     "kr:close-bet": "node scripts/calibrate-close-bet.mjs",
     "kr:daily-bars": "node scripts/backfill-kr-daily-bars.mjs",
     "kr:limit-pair": "node scripts/calibrate-limit-pair.mjs",
-    "kr:close-bet-log": "node scripts/close-bet-log.mjs"
+    "kr:close-bet-log": "node scripts/close-bet-log.mjs",
+    "kr:close-bet-card": "node scripts/close-bet-card.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"
