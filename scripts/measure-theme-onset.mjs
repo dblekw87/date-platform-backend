@@ -199,6 +199,41 @@ if (caught.length > 0) {
 console.log("\n[실시간] 09:30에 통과한 테마를 그 자리에서 골랐다면\n");
 
 const live = [];
+/*
+ * 순위를 무엇으로 매길 것인가.
+ *
+ * 회원 수로 세면 2차전지·원자력발전처럼 회원이 많은 테마가 매일 1위가 됩니다 --
+ * 실제로 12개 장에서 1위가 정답이었던 날이 하루뿐이었고 그 1위가 거의 늘
+ * 저 둘이었습니다. 큰 테마의 이점을 없앤 순위들을 나란히 재봅니다.
+ */
+const variants = { both: [], count: [], mean: [], share: [] };
+
+function pick(day, chosen, state, last) {
+  if (!chosen) return null;
+
+  const forward = (rows) => {
+    const moves = rows.map((row) => {
+      const end = last.get(row.symbol);
+
+      return end === undefined ? null : ((100 + end) / (100 + row.rate) - 1) * 100;
+    }).filter((value) => value !== null);
+
+    return moves.length > 0 ? moves.reduce((a, b) => a + b, 0) / moves.length : null;
+  };
+  const drift = [...state].map(([symbol, rate]) => {
+    const end = last.get(symbol);
+
+    return end === undefined ? null : ((100 + end) / (100 + rate) - 1) * 100;
+  }).filter((value) => value !== null);
+  const answer = results.find((row) => row.day === day)?.leader?.theme ?? null;
+
+  return {
+    ambient: drift.length > 0 ? drift.reduce((a, b) => a + b, 0) / drift.length : 0,
+    forward: forward(chosen.rows),
+    hit: answer === chosen.theme,
+    theme: chosen.theme
+  };
+}
 
 for (const [day, minutes] of [...byDay].sort()) {
   const times = [...minutes.keys()].sort();
@@ -236,6 +271,15 @@ for (const [day, minutes] of [...byDay].sort()) {
   if (passing.length === 0) continue;
 
   passing.sort((a, b) => (b.hot === a.hot ? b.mean - a.mean : b.hot - a.hot));
+  variants.count.push(pick(day, passing[0], state, last));
+  // 비율: 회원 수가 아니라 **몇 %가 달리는가**. 큰 테마의 이점을 없앱니다.
+  variants.share.push(pick(day, [...passing].sort((a, b) =>
+    b.hot / b.rows.length - a.hot / a.rows.length)[0], state, last));
+  // 평균 등락: 얼마나 세게 달리는가.
+  variants.mean.push(pick(day, [...passing].sort((a, b) => b.mean - a.mean)[0], state, last));
+  // 비율 × 세기. 둘 다 요구합니다.
+  variants.both.push(pick(day, [...passing].sort((a, b) =>
+    (b.hot / b.rows.length) * b.mean - (a.hot / a.rows.length) * a.mean)[0], state, last));
 
   const forward = (rows) => {
     const moves = rows.map((row) => {
@@ -273,6 +317,22 @@ if (live.length > 0) {
   ${live.length}개 장 · 통과 테마 평균 ${mean("passing").toFixed(1)}개`);
   console.log(`  1위가 정답이었던 날 ${hit}/${live.length}`);
   console.log(`  1위를 샀다면 마감까지 ${pct(mean("top"))} · 대조군 ${pct(mean("ambient"))}`);
+}
+
+console.log("\n[순위 규칙별] 09:30에 1위를 샀다면\n");
+
+for (const [key, label] of [["count", "회원 수"], ["share", "회원 비율"],
+  ["mean", "평균 등락"], ["both", "비율 × 세기"]]) {
+  const list = variants[key].filter(Boolean).filter((row) => row.forward !== null);
+
+  if (list.length === 0) continue;
+
+  const mean = (name) => list.reduce((a, b) => a + b[name], 0) / list.length;
+  const hits = list.filter((row) => row.hit).length;
+
+  console.log(`  ${label.padEnd(10)} 정답 적중 ${hits}/${list.length}` +
+    ` · 이후 ${pct(mean("forward")).padStart(7)} · 대조군 ${pct(mean("ambient")).padStart(7)}` +
+    ` · 초과 ${pct(mean("forward") - mean("ambient")).padStart(7)}`);
 }
 
 console.log("");
