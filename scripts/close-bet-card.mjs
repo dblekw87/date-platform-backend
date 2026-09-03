@@ -113,7 +113,22 @@ const themeOf = new Map(themes.map((row) => [`${row.d}|${row.symbol}`, row]));
  * 이미 20% 넘게 올라 있었으면 초과가 +0.00%p였습니다. 한 숫자로 뭉치면 "재료가
  * 있었다"가 "장 끝나고 기사가 났다"와 구분되지 않습니다.
  */
+/*
+ * 같은 기사를 여러 매체가 냅니다. 국내 코퍼스의 14.1%가 그렇고 한 건이 열 번까지
+ * 들어옵니다. 세 줄 자리에 같은 문장을 두 번 쓰면 읽을 것이 하나 줄어듭니다.
+ * 구두점과 공백을 걷어낸 제목으로 하루 안에서 한 번만 남깁니다.
+ */
 const { rows: news } = await query(config, `
+  WITH one AS (
+    SELECT DISTINCT ON ((published_at AT TIME ZONE 'Asia/Seoul')::date,
+                        regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'))
+           headline, published_at, related_symbols
+      FROM market_news_items
+     WHERE region = 'KR'
+     ORDER BY (published_at AT TIME ZONE 'Asia/Seoul')::date,
+              regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'),
+              published_at
+  )
   SELECT (published_at AT TIME ZONE 'Asia/Seoul')::date::text AS d, s AS symbol,
          count(*) FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20') AS before,
          count(*) FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time > '15:20') AS after,
@@ -121,7 +136,7 @@ const { rows: news } = await query(config, `
             to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') || ' ' || headline
             ORDER BY published_at)
            FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20')) AS lines
-    FROM market_news_items, unnest(related_symbols) AS s
+    FROM one, unnest(related_symbols) AS s
    WHERE s = ANY($1::text[]) AND (published_at AT TIME ZONE 'Asia/Seoul')::date = ANY($2::date[])
    GROUP BY 1, 2
 `, [symbols, days]);
