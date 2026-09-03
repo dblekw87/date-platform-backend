@@ -28,10 +28,11 @@ const pct = (value, digits = 2) =>
 const { rows } = await query(config, `
   WITH market AS (
     SELECT session_date, avg(open / nullif(prev, 0) - 1) * 100 AS gap
-      FROM (SELECT symbol, session_date, open,
+      FROM (SELECT symbol, session_date, open, close, volume,
                    lag(close) OVER (PARTITION BY symbol ORDER BY session_date) AS prev
               FROM kr_daily_bars) t
-     WHERE prev > 0 GROUP BY session_date HAVING count(*) >= 50
+     WHERE prev > 0 AND close * volume >= 500000000
+     GROUP BY session_date HAVING count(*) >= 50
   ),
   days AS (
     SELECT DISTINCT session_date FROM kr_signal_outcomes WHERE kind = 'close_bet'

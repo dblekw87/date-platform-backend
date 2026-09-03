@@ -62,14 +62,23 @@ export async function calibrateCloseBet(config, { log = () => {} } = {}) {
   const { rows } = await query(config, `
     WITH candidates AS (${closeBetCandidateSql()}),
     universe AS (
-      SELECT symbol, session_date, close,
+      SELECT symbol, session_date, close, volume,
              lead(open) OVER (PARTITION BY symbol ORDER BY session_date) AS next_open
         FROM kr_daily_bars
     ),
+    /*
+     * 기준선의 모집단을 후보와 맞춥니다.
+     *
+     * 전 종목 평균이었습니다. 거래가 거의 없는 종목의 갭하락이 기준선을 끌어내려
+     * 초과가 부풀고, 그 편향이 **장세에 따라 커집니다** -- 2026-06 0.14%p,
+     * 08월 0.99%p, 09월 1.68%p. 거래대금이 마를수록 비유동 종목이 크게 밀리기
+     * 때문이고, 그대로 두면 장이 나쁠수록 성적이 좋아 보입니다. 405밤 평균으로는
+     * 0.247%p이므로 누적 성적표는 그만큼 낮아집니다.
+     */
     nights AS (
       SELECT session_date, avg((next_open / close - 1) * 100) AS night_gap
         FROM universe
-       WHERE next_open IS NOT NULL AND close > 0
+       WHERE next_open IS NOT NULL AND close > 0 AND close * volume >= 500000000
        GROUP BY session_date
       HAVING count(*) >= 50
     )

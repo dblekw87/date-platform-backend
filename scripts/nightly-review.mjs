@@ -137,10 +137,11 @@ async function score() {
     ),
     market AS (
       SELECT session_date, avg(open / nullif(prev, 0) - 1) * 100 AS gap
-        FROM (SELECT symbol, session_date, open,
+        FROM (SELECT symbol, session_date, open, close, volume,
                      lag(close) OVER (PARTITION BY symbol ORDER BY session_date) AS prev
                 FROM kr_daily_bars) t
-       WHERE prev > 0 GROUP BY session_date HAVING count(*) >= 50
+       WHERE prev > 0 AND close * volume >= 500000000
+       GROUP BY session_date HAVING count(*) >= 50
     )
     UPDATE kr_signal_outcomes o
        SET session_low = i.low, session_high = i.high, session_close = i.close,
@@ -289,10 +290,11 @@ const summary = await query(config, `
 const closeBet = await query(config, `
   WITH market AS (
     SELECT session_date, avg(open / nullif(prev, 0) - 1) * 100 AS gap
-      FROM (SELECT symbol, session_date, open,
+      FROM (SELECT symbol, session_date, open, close, volume,
                    lag(close) OVER (PARTITION BY symbol ORDER BY session_date) AS prev
               FROM kr_daily_bars) t
-     WHERE prev > 0 GROUP BY session_date HAVING count(*) >= 50
+     WHERE prev > 0 AND close * volume >= 500000000
+     GROUP BY session_date HAVING count(*) >= 50
   )
   SELECT o.tier, count(*) AS n,
          round(avg((o.next_open / b.close - 1) * 100 - m.gap)::numeric, 3) AS excess,
