@@ -68,12 +68,28 @@ const { rows } = await query(config, `
      WHERE b.prev_close > 0 AND b.close > 0 AND b.next_open > 0
        AND b.session_date >= '2026-08-14'
   ),
+  /*
+   * 같은 기사를 여러 매체가 냅니다 -- 국내 코퍼스의 14.1%가 중복이고 한 건이 열 번까지
+   * 들어옵니다. 그냥 세면 "기사 2건"이 사실은 **같은 기사 두 번**일 수 있고, 그러면
+   * 구간이 화제성이 아니라 배포 채널 수를 재게 됩니다. 구두점을 걷은 제목으로
+   * 하루 안에서 한 번만 남기고, 몇 매체가 받았는지는 따로 셉니다.
+   */
+  unique_news AS (
+    SELECT DISTINCT ON ((published_at AT TIME ZONE 'Asia/Seoul')::date,
+                        regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'))
+           headline, published_at, related_symbols,
+           count(*) OVER (PARTITION BY (published_at AT TIME ZONE 'Asia/Seoul')::date,
+                          regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g')) AS pickups
+      FROM market_news_items WHERE region = 'KR'
+     ORDER BY (published_at AT TIME ZONE 'Asia/Seoul')::date,
+              regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'), published_at
+  ),
   -- 장 마감 뒤부터 다음 장 시작 전까지. 종가에 사는 사람이 읽을 수 있는 구간입니다.
   evening AS (
-    SELECT n.symbol, n.session_date, count(*) AS articles
+    SELECT n.symbol, n.session_date, count(*) AS articles, max(i.pickups) AS pickups
       FROM nights n
-      JOIN market_news_items i
-        ON i.region = 'KR' AND n.symbol = ANY(i.related_symbols)
+      JOIN unique_news i
+        ON n.symbol = ANY(i.related_symbols)
        AND i.published_at AT TIME ZONE 'Asia/Seoul'
              > (n.session_date + interval '15 hours 30 minutes')
        AND i.published_at AT TIME ZONE 'Asia/Seoul'
@@ -82,7 +98,8 @@ const { rows } = await query(config, `
      GROUP BY n.symbol, n.session_date
   )
   SELECT n.symbol, n.session_date::text AS d, n.day_move, n.turnover,
-         n.gap_excess, n.day2_excess, coalesce(e.articles, 0) AS articles
+         n.gap_excess, n.day2_excess, coalesce(e.articles, 0) AS articles,
+         coalesce(e.pickups, 0) AS pickups
     FROM nights n LEFT JOIN evening e USING (symbol, session_date)
    WHERE n.gap_excess IS NOT NULL AND n.turnover >= 500000000
 `);
@@ -90,6 +107,7 @@ const { rows } = await query(config, `
 const num = (value) => Number(value);
 const all = rows.map((row) => ({
   articles: num(row.articles),
+  pickups: num(row.pickups),
   day2: num(row.day2_excess),
   excess: num(row.gap_excess),
   move: num(row.day_move),
@@ -149,7 +167,19 @@ for (const [low, high, label] of [
     row.articles >= 2 && row.move >= low && row.move < high));
 }
 
-console.log("\n[5] 다음 날 종가까지 들고 가면 (기사 2건 이상)");
+/*
+ * 몇 매체가 받았는가. 같은 기사가 열 곳에 실리는 것은 기사 **수**와 다른 축입니다 --
+ * 하나의 사건이 얼마나 퍼졌는가이고, 그게 화제성일 수 있습니다.
+ */
+console.log("\n[5] 한 기사를 몇 매체가 받았는가 (기사 1건 이상)");
+
+const withNews = all.filter((row) => row.articles >= 1);
+
+for (const [low, high, label] of [[1, 2, "1곳"], [2, 4, "2~3곳"], [4, 100, "4곳 이상"]]) {
+  report(`  ${label}`, withNews.filter((row) => row.pickups >= low && row.pickups < high));
+}
+
+console.log("\n[6] 다음 날 종가까지 들고 가면 (기사 2건 이상)");
 report("보합", quiet.filter((row) => row.articles >= 2), "day2");
 report("당일 5%↑", ran.filter((row) => row.articles >= 2), "day2");
 
