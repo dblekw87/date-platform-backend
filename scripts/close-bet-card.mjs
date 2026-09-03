@@ -117,10 +117,10 @@ const { rows: news } = await query(config, `
   SELECT (published_at AT TIME ZONE 'Asia/Seoul')::date::text AS d, s AS symbol,
          count(*) FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20') AS before,
          count(*) FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time > '15:20') AS after,
-         (array_agg(headline ORDER BY published_at DESC)
-           FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20'))[1] AS latest,
-         to_char(max(published_at) FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20')
-                 AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+         (array_agg(
+            to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') || ' ' || headline
+            ORDER BY published_at)
+           FILTER (WHERE (published_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20')) AS lines
     FROM market_news_items, unnest(related_symbols) AS s
    WHERE s = ANY($1::text[]) AND (published_at AT TIME ZONE 'Asia/Seoul')::date = ANY($2::date[])
    GROUP BY 1, 2
@@ -132,10 +132,10 @@ const { rows: filings } = await query(config, `
   SELECT (filed_at AT TIME ZONE 'Asia/Seoul')::date::text AS d, symbol,
          count(*) FILTER (WHERE (filed_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20') AS before,
          count(*) FILTER (WHERE (filed_at AT TIME ZONE 'Asia/Seoul')::time > '15:20') AS after,
-         (array_agg(title ORDER BY filed_at DESC)
-           FILTER (WHERE (filed_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20'))[1] AS latest,
-         to_char(max(filed_at) FILTER (WHERE (filed_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20')
-                 AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+         (array_agg(
+            to_char(filed_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') || ' ' || title
+            ORDER BY filed_at)
+           FILTER (WHERE (filed_at AT TIME ZONE 'Asia/Seoul')::time <= '15:20')) AS lines
     FROM market_disclosures
    WHERE symbol = ANY($1::text[]) AND (filed_at AT TIME ZONE 'Asia/Seoul')::date = ANY($2::date[])
    GROUP BY 1, 2
@@ -220,18 +220,28 @@ for (const pick of picks) {
 
   const material = [];
 
-  if (article && Number(article.before) > 0) {
-    material.push(`뉴스 ${article.before}건 (${article.at} "${String(article.latest).slice(0, 32)}")`);
-  }
-
-  if (filing && Number(filing.before) > 0) {
-    material.push(`공시 ${filing.before}건 (${filing.at} "${String(filing.latest).slice(0, 24)}")`);
-  }
-
   const late = Number(article?.after ?? 0) + Number(filing?.after ?? 0);
+
+  if (article && Number(article.before) > 0) material.push(`뉴스 ${article.before}건`);
+  if (filing && Number(filing.before) > 0) material.push(`공시 ${filing.before}건`);
 
   console.log(`    재료     ${material.length > 0 ? material.join(" · ") : "15:20까지 없음"}` +
     (late > 0 ? `  [장 끝난 뒤 ${late}건 — 판단에는 못 쓴 것]` : ""));
+
+  /*
+   * 헤드라인을 **여러 줄** 적습니다. 한 건만, 그것도 최신 것으로 보여줬더니
+   * 2026-09-03 신스틸에서 14:52 드라마 기사가 뜨고 진짜 재료였던
+   * "트럼프 알래스카 LNG 파이프라인 발언에 상한가 직행"이 가려졌습니다.
+   * 어느 것이 재료인지는 사람이 고르는 편이 낫고, 고르려면 보여야 합니다.
+   * 이른 것부터 적는 것은 방아쇠가 대개 앞에 있기 때문입니다.
+   */
+  for (const line of (article?.lines ?? []).slice(0, 3)) {
+    console.log(`             ${String(line).slice(0, 62)}`);
+  }
+
+  for (const line of (filing?.lines ?? []).slice(0, 2)) {
+    console.log(`             [공시] ${String(line).slice(0, 56)}`);
+  }
 
   if (flow.length > 0) {
     const say = (row) => `${row.d.slice(5)} 기관 ${pct(null) === "-" ? "" : ""}${Math.round(Number(row.institution_amount ?? 0) / 100).toLocaleString("ko-KR")}억` +

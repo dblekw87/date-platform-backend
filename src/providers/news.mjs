@@ -689,12 +689,31 @@ function uniqueBy(items, keyOf) {
 // the same reason - lowercased, MRNA is the molecule, and a Tempus AI story
 // about an mRNA melanoma trial was being tagged as Moderna and shown on
 // Moderna's row. Names stay case-insensitive; headlines are inconsistent
-// about those. Korean has no boundaries to find, so it is matched whole.
+// about those.
 function textIncludesTerm(text, term, { matchCase = false } = {}) {
   if (/^\d+$/.test(term)) return text.includes(term);
-  if (!/[A-Za-z]/.test(term)) return text.includes(term);
-
-  return new RegExp(`(^|[^A-Za-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9]|$)`, matchCase ? "" : "i").test(text);
+  /*
+   * 한글 이름은 **낱말 경계를 봐야 합니다.**
+   *
+   * `text.includes(term)`이었고 주석은 "Korean has no boundaries to find"라고
+   * 적혀 있었는데, 경계가 없는 게 아니라 찾기 어려운 것뿐입니다. 짧은 이름은
+   * 언제나 더 긴 낱말의 부분 문자열이라 -- 2026-09-03에 신스틸이 상한가로 후보에
+   * 올랐고 거기 붙은 기사가 "신서형, '재벌X형사2' 출연...'신스틸러' 기대되는
+   * 드라마 데뷔"였습니다. 배우 기사가 철강주의 재료로 화면에 올라왔습니다.
+   *
+   * 같은 파일의 `nameAppears`가 이미 그 판단을 합니다(앞 글자가 한글이면 더 긴
+   * 낱말의 꼬리, 뒷 글자는 조사만 허용). 전 종목 태깅 경로는 그걸 쓰는데 주도주
+   * 경로만 안 쓰고 있었습니다. **같은 질문에 규칙이 두 벌이면 한쪽만 고쳐집니다.**
+   */
+  /*
+   * 알파벳 이름도 같은 함수로 보냅니다. 여기 정규식은 앞뒤가 영숫자가 아니기만
+   * 하면 통과시켜서 `SK하닉`의 SK가 지주사 SK로 붙었습니다 -- 한글은 영숫자가
+   * 아니니까요. `nameAppears`는 한글 경계까지 같이 봅니다.
+   *
+   * 대소문자는 여기서만 정합니다. 이름은 헤드라인이 제각각이라 무시하고, 티커는
+   * matchCase로 지킵니다.
+   */
+  return matchCase ? nameAppears(text, term) : nameAppears(text.toLowerCase(), term.toLowerCase());
 }
 
 export function attachLeaderNewsTags(headlines, leaders) {
