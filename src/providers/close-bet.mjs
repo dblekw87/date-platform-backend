@@ -274,6 +274,68 @@ export function closeBetCandidateSql({ day = null, since = null, upperShadow = m
      AND volume / nullif(share_count, 0) * 100 >= ${minimumTurnoverRatio}`;
 }
 
+/*
+ * 후보로 뽑힌 종목의 재료. **진입 전에 나온 기사만** 붙입니다.
+ *
+ * 이 매매는 15:00~15:20에 재료를 확인하고 종가에 삽니다. 그 뒤 기사는 판단에 쓸
+ * 수 없었던 것이고 대개 결과 보도입니다 -- 실측에서도 기사 시점에 이미 20% 넘게
+ * 올라 있었으면 초과가 +0.00%p였습니다. 2026-09-03 신스틸이 그 예로, 붙은 기사
+ * 아홉 건 중 앞쪽 셋이 09:16·09:32의 "상한가" 보도였습니다.
+ *
+ * **창은 그날 시작부터 진입 시점까지**입니다. 시각을 고정하지 않는 이유는 진입
+ * 시점이 하나가 아니기 때문입니다 -- 확정 목록은 종가(15:30)에 정해지고, 장중
+ * 목록은 지금 이 순간이며, NXT 애프터마켓까지 가는 변형은 20:00까지 열려 있습니다.
+ * 15:30으로 못박으면 장중 15:20에 보는 목록에 15:25 기사가 섞이고, 애프터 진입에는
+ * 정규장에서 이어진 재료가 빠집니다. 사용자가 짚은 그대로입니다 -- "정규장 때부터
+ * 이어서 올 수도 있지 않냐".
+ *
+ * 같은 기사를 여러 매체가 냅니다(국내 코퍼스의 14.1%). 구두점을 걷은 제목으로
+ * 하루 안에서 한 번만 남기지 않으면 세 줄이 같은 문장으로 찹니다.
+ */
+async function loadEntryNews(config, rows, { until = null } = {}) {
+  const symbols = [...new Set(rows.map((row) => row.symbol))];
+
+  if (symbols.length === 0) return new Map();
+
+  const days = [...new Set(rows.map((row) => row.session_day).filter(Boolean))];
+
+  if (days.length === 0) return new Map();
+
+  const { rows: found } = await query(config, `
+    WITH one AS (
+      SELECT DISTINCT ON ((published_at AT TIME ZONE 'Asia/Seoul')::date,
+                          regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'))
+             headline, published_at, original_url, related_symbols
+        FROM market_news_items
+       WHERE region = 'KR'
+         AND (published_at AT TIME ZONE 'Asia/Seoul')::date = ANY($2::date[])
+         AND (published_at AT TIME ZONE 'Asia/Seoul')::time <= $3::time
+       ORDER BY (published_at AT TIME ZONE 'Asia/Seoul')::date,
+                regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'),
+                published_at
+    )
+    SELECT s AS symbol,
+           to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at,
+           headline, original_url
+      FROM one, unnest(related_symbols) AS s
+     WHERE s = ANY($1::text[])
+     ORDER BY published_at
+  `, [symbols, days, until ?? "15:30"]);
+
+  const grouped = new Map();
+
+  for (const row of found) {
+    const held = grouped.get(row.symbol) ?? [];
+
+    // 이른 것부터 셋. 방아쇠는 대개 앞에 있습니다.
+    if (held.length < 3) held.push({ at: row.at, headline: row.headline, url: row.original_url });
+
+    grouped.set(row.symbol, held);
+  }
+
+  return grouped;
+}
+
 async function loadCalibration(config) {
   const result = await query(
     config,
@@ -411,6 +473,15 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
   // 아닙니다.
   const tradable = result.rows.filter((row) => !row.trade_halted);
   const nightTriggers = await loadNightTriggers(config, tradable.map((row) => row.symbol));
+  /*
+   * 진입 시점까지만. 장중 목록이면 지금 이 순간이 진입 시점이고, 확정 목록이면
+   * 종가입니다. 그래야 화면에 뜬 근거가 그 시점에 실제로 볼 수 있었던 것과 같습니다.
+   */
+  const cutoff = provisional
+    ? new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Seoul" })
+      .format(new Date())
+    : "15:30";
+  const evidence = await loadEntryNews(config, tradable, { until: cutoff });
 
   return tradable
     .map((row) => {
@@ -423,6 +494,7 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
 
       return {
         breakMargin: Number(Number(row.break_margin).toFixed(2)),
+        evidence: evidence.get(row.symbol) ?? [],
         changeRateValue: Number(dayMove.toFixed(2)),
         closePrice: Number(row.close),
         id: `close-bet-${row.symbol}`,
