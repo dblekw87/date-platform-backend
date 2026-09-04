@@ -7,6 +7,7 @@ import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { calibrateCloseBet, calibrateLimitPair } from "./providers/calibration.mjs";
 import { collectKrDailyBars } from "./providers/kr-daily-bars.mjs";
+import { recordKrListings } from "./providers/kr-listings.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
@@ -778,6 +779,16 @@ function startUniverseSample(config, minute) {
     console.log(`collector: ${saved} universe rows · ${rows.filter((row) => row.tradeHalted).length} halted · ${day}`);
 
     if (saved === 0) console.warn(`collector: universe stored nothing for ${day}`);
+
+    /*
+     * 오늘 처음 보인 종목을 상장으로 기록합니다.
+     *
+     * 우주 스냅샷 **직후**여야 합니다 -- 상장 당일에 그 표로 들어오고, 그걸 읽어야
+     * 첫 등장일이 상장일이 됩니다. 신규 상장주는 일봉이 없어 다른 어떤 조건도
+     * 걸리지 않으므로, 이 기록이 그 종목에 대해 우리가 가진 유일한 사실입니다.
+     */
+    await recordKrListings(config, { log: (message) => console.log(`collector: ${message}`) })
+      .catch((error) => console.warn("collector: listings failed", error instanceof Error ? error.message : error));
 
     // 종가배팅 후보는 일봉에서 나오므로 오늘 봉이 들어온 뒤에 다시 재야 합니다.
     // 등급별 성적표까지 같이 갱신되어, 표본이 하루치씩 늘어납니다.
