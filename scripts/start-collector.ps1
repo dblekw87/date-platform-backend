@@ -41,6 +41,9 @@ $serverLog = Join-Path $logDir "server-$stamp.log"
 $serverErrorLog = Join-Path $logDir "server-$stamp.err.log"
 $backendPort = 4010
 $databasePort = 5432
+# Null until Measure-NewsGap has run. See the function for why the answer
+# has to be taken before the backend starts rather than asked for later.
+$script:newsGapDays = $null
 
 if (-not (Test-Path $logDir)) {
   New-Item -ItemType Directory -Path $logDir | Out-Null
@@ -53,6 +56,38 @@ function Write-Line {
 
   Add-Content -Path $runLog -Value $line
   Write-Output $line
+}
+
+<#
+  한 번에 하나만 돕니다.
+
+  이 스크립트는 두 곳에서 불립니다 - 시작프로그램 폴더의 start-collector.cmd와
+  작업 스케줄러의 "DATE market collector". 로그온하면 둘이 거의 같은 순간에 뜨고,
+  그때는 :4010도 도커도 아직 없으므로 **포트 가드가 둘 다 통과시킵니다.** 그
+  결과가 2026-09-06에 실제로 났습니다: 23:16:31과 23:16:52 두 실행이 Docker
+  Desktop을 각각 띄워 엔진이 500을 뱉는 상태로 엉켰고(Docker Desktop 프로세스 3개,
+  com.docker.backend 2개), 백업은 컨테이너 안 /tmp/backup.dump를 서로 밀어내
+  "could not open file"로 죽었습니다.
+
+  포트 가드는 이미 뜬 백엔드를 두 번 띄우지 않게 하는 것이지, 두 실행이 겹치는
+  것을 막지는 못합니다. 겹침은 여기서 막습니다.
+
+  뮤텍스는 프로세스가 끝나면 OS가 놓아주므로 따로 반납하지 않습니다. 앞선 실행이
+  비정상 종료해 남긴 것은 AbandonedMutexException으로 오는데, 그것은 잡은 것으로
+  칩니다 - 주인이 없다는 뜻이니까요.
+#>
+$runLock = New-Object System.Threading.Mutex($false, "Global\DATE-start-collector")
+$holdsLock = $false
+
+try {
+  $holdsLock = $runLock.WaitOne(20000)
+} catch [System.Threading.AbandonedMutexException] {
+  $holdsLock = $true
+}
+
+if (-not $holdsLock) {
+  Write-Line "another start-collector is running - nothing to do"
+  exit 0
 }
 
 function Test-Port {
@@ -155,9 +190,58 @@ function Invoke-NewsBackfill {
 
   if (-not $node) { return }
 
+  $arguments = @((Join-Path $PSScriptRoot "backfill-news.mjs"))
+
+  # Measured before the backend came up, on the cold path. Without it the script
+  # measures its own live collection and always finds nothing to do.
+  if ($null -ne $script:newsGapDays) {
+    $arguments += @("--days", "$script:newsGapDays")
+  }
+
   Push-Location $root
   try {
-    & $node (Join-Path $PSScriptRoot "backfill-news.mjs") 2>&1 | ForEach-Object { Write-Line "  news: $_" }
+    & $node $arguments 2>&1 | ForEach-Object { Write-Line "  news: $_" }
+  } finally {
+    Pop-Location
+  }
+}
+
+<#
+  How big the news hole is, asked before anything can fill it.
+
+  backfill-news.mjs sizes the hole as the age of the newest Korean article, and
+  that reading is only true while the collector is still down. The cold path
+  starts the backend, whose first news tick lands within seconds, and then spends
+  55 seconds on the database dump before getting here - so every backfill on this
+  path read a fresh article and exited. Measured on 2026-09-06: 35 hours off the
+  air, and the log said the newest article was under six hours old. The weekend
+  the machine was off is exactly the weekend this was written to recover.
+
+  So the reading is taken here, between postgres answering and the server being
+  launched, and carried to the call as --days.
+
+  Push-Location for the reason given above Invoke-NewsBackfill: config.mjs reads
+  the .env relative to the caller's directory.
+
+  A failure is not worth stopping the morning for: leaving $newsGapDays null puts
+  the backfill back on its own measurement, which is where it was before.
+#>
+function Measure-NewsGap {
+  param([string] $NodePath)
+
+  Push-Location $root
+  try {
+    $measured = & $NodePath (Join-Path $PSScriptRoot "backfill-news.mjs") "--measure" 2>&1
+    $parsed = 0
+
+    if ([int]::TryParse(($measured | Select-Object -Last 1), [ref] $parsed)) {
+      $script:newsGapDays = $parsed
+      Write-Line "news gap measured before start: $parsed day(s)"
+    } else {
+      Write-Line "could not measure the news gap - backfill will measure it itself"
+    }
+  } catch {
+    Write-Line "could not measure the news gap - backfill will measure it itself"
   } finally {
     Pop-Location
   }
@@ -222,6 +306,8 @@ if (-not (Test-Path $node)) {
   Write-Line "node not found"
   exit 1
 }
+
+Measure-NewsGap -NodePath $node
 
 # Start-Process truncates its redirect targets, so a second start on the same
 # day silently erases the first one's output - which is how the morning of the

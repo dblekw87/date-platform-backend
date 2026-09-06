@@ -60,6 +60,21 @@ async function gapDays() {
   return Math.min(14, Math.max(2, Math.ceil(hours / 24) + 1));
 }
 
+/*
+ * --measure는 재기만 하고 끝냅니다.
+ *
+ * gapDays()는 **마지막 기사가 몇 시간 전인가**로 구멍을 잽니다. 그래서 라이브
+ * 수집이 이미 한 번 돌고 난 뒤에 물어보면 언제나 "구멍 없음"이 나옵니다 --
+ * 방금 들어온 기사가 최신이니까요. start-collector.ps1이 백엔드를 띄우고
+ * 55초짜리 백업을 돌린 다음에 백필을 부르는 바람에, 컴퓨터를 껐다 켠 주말마다
+ * 여기서 조용히 0이 나왔습니다(2026-09-06 실측: 35시간이 비었는데 6시간 안쪽이라고
+ * 답했습니다). 재는 시점을 백엔드보다 앞으로 옮기려고 낸 문입니다.
+ */
+if (args.includes("--measure")) {
+  console.log(String(await gapDays()));
+  process.exit(0);
+}
+
 const days = at >= 0 && args[at + 1] ? Number(args[at + 1]) : await gapDays();
 
 if (days === 0) {
