@@ -16,6 +16,7 @@ import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
+import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
@@ -49,20 +50,24 @@ const openMinute = 8 * 60;
 const openBellMinute = 9 * 60;
 const timeZone = "Asia/Seoul";
 
-// News moves in hours, not minutes, and each board build fans out to a dozen
-// feeds. Sampling it at the price cadence would spend the day re-reading the
-// same headlines.
-const newsIntervalMs = 10 * 60_000;
-// Off hours the feeds still publish but nothing is trading on it yet, so the
-// gap can be wide without losing a story: the same headline is still in the
-// feed three quarters of an hour later.
-//
-// Forty-five rather than thirty is a quota decision. Each sample costs one
-// NewsAPI call against a free tier of a hundred a day, and the machine is now
-// meant to stay on around the clock so the overnight US feed lands — which at
-// half-hour spacing spends seventy-nine of them. This gives eleven back. The
-// larger share is the in-session cadence, and that one is not spare.
-const offHoursNewsIntervalMs = 45 * 60_000;
+/*
+ * 뉴스 수집 주기.
+ *
+ * 10분·45분이었습니다. 45분은 쿼터 계산이었는데 -- 한 번 받을 때마다 NewsAPI를
+ * 한 번 부르고 무료 티어가 하루 100회 -- 그 계산은 이제 틀렸습니다. NewsAPI는
+ * news.mjs 안에서 **자기 시계(2시간)**로 따로 돌아 수집 주기와 무관하고, 나머지
+ * 소스(구글 RSS·네이버 API Hub·언론사 피드)는 한도가 없습니다.
+ *
+ * 당긴 이유는 알림입니다. 기사가 들어와야 재료·특징주 알림이 그것을 보는데,
+ * 10분 주기면 09:04 기사를 09:10에 받아 09:1x에 보냅니다 -- 그 사이에 소형주는
+ * 상한가에 잠깁니다(24%에서 잠기기까지 중앙값 5분). 장 밖 10분은 아침 프리마켓
+ * 전(08:00 이전)과 밤에 나온 재료를 놓치지 않을 만큼입니다.
+ *
+ * 한 번 받는 데 피드 열두 개를 부르므로 3분 아래로는 내리지 않습니다 -- 같은
+ * 헤드라인을 다시 읽는 데 하루를 쓰게 됩니다.
+ */
+const newsIntervalMs = 3 * 60_000;
+const offHoursNewsIntervalMs = 10 * 60_000;
 const idleIntervalMs = 60_000;
 
 /*
@@ -752,6 +757,17 @@ function startLimitUpAlert(config) {
     .catch((error) => console.warn("collector: limit up alert failed", error instanceof Error ? error.message : error));
 }
 
+/*
+ * 특징주 전달. 재료 알림처럼 시각을 가리지 않습니다 -- 장 밖에는 드물어 저절로
+ * 조용합니다. 간격은 provider가 봅니다(5분).
+ */
+function startFeaturedAlert(config) {
+  if (!featuredAlertDue()) return;
+
+  notifyFeatured(config, { day: sessionDate("KR"), url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: featured alert failed", error instanceof Error ? error.message : error));
+}
+
 const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
@@ -938,6 +954,15 @@ function startDisclosureSample(config, { full = false } = {}) {
     stopWhenKnown: !full,
     timePages: full ? 8 : 1
   })
+    .then((result) => {
+      // 새 공시가 들어온 자리에서 재료 알림을 봅니다. 뉴스 쪽과 같은 이유입니다 --
+      // 5분 타이머를 기다리면 공시와 알림 사이가 벌어지고, 공시는 그 자체가 재료라
+      // 기사보다 빨리 움직입니다. running 플래그가 있어 타이머 실행과 겹쳐도 한 번만 갑니다.
+      if ((result?.saved ?? 0) > 0) {
+        notifyNewMaterial(config, { url: config.publicSiteUrl })
+          .catch((error) => console.warn("collector: material alert failed", error instanceof Error ? error.message : error));
+      }
+    })
     .catch((error) => {
       // 공시는 지나가면 사라지는 것이 아니라 DART에 남아 있으므로, 한 번 실패는 다음
       // 폴링이나 저녁 전체 훑기가 메웁니다.
@@ -1266,7 +1291,24 @@ export function startMarketCollector(config) {
       lastNewsAt = Date.now();
 
       sampleNews(config)
-        .then((saved) => { if (saved > 0) console.log(`collector: ${saved} news items`); })
+        .then((saved) => {
+          if (saved <= 0) return;
+
+          console.log(`collector: ${saved} news items`);
+
+          /*
+           * 새 기사가 들어온 **그 자리에서** 알림을 봅니다.
+           *
+           * 재료·특징주 알림은 5분 타이머로도 돌지만, 그것은 뉴스가 안 들어왔을 때의
+           * 뒷받침입니다. 들어온 직후에 타이머를 기다리면 기사와 알림 사이가 최대
+           * 5분 벌어지고, 소형주는 그 사이에 잠깁니다. 둘 다 running 플래그가 있어
+           * 타이머 실행과 겹쳐도 두 번 가지 않습니다.
+           */
+          notifyNewMaterial(config, { url: config.publicSiteUrl })
+            .catch((error) => console.warn("collector: material alert failed", error instanceof Error ? error.message : error));
+          notifyFeatured(config, { day: sessionDate("KR"), force: true, url: config.publicSiteUrl })
+            .catch((error) => console.warn("collector: featured alert failed", error instanceof Error ? error.message : error));
+        })
         .catch((error) => console.warn("collector: news sample failed", error instanceof Error ? error.message : error))
         .finally(() => { newsRunning = false; });
     }
@@ -1355,6 +1397,7 @@ export function startMarketCollector(config) {
 
     // 시각을 가리지 않는 알림. 구간 구분은 provider가 합니다.
     startMaterialAlert(config);
+    startFeaturedAlert(config);
 
     /*
      * 다음 틱은 **지금** 시각으로 다시 계산합니다.
