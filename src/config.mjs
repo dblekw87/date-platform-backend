@@ -22,6 +22,13 @@ export function readConfig() {
       clientSecret: process.env.KAKAO_CLIENT_SECRET,
       refreshToken: process.env.KAKAO_REFRESH_TOKEN
     },
+    telegram: {
+      // 재료 알림용. 카카오와 달리 토큰 만료가 없어 켜 두면 계속 갑니다.
+      // BotFather로 봇을 만들고, 그 봇에게 아무 말이나 건 뒤
+      // https://api.telegram.org/bot<토큰>/getUpdates 에서 chat id를 봅니다.
+      botToken: process.env.TELEGRAM_BOT_TOKEN,
+      chatId: process.env.TELEGRAM_CHAT_ID
+    },
     port: Number(process.env.PORT ?? 4010),
     frontendOrigins,
     databaseUrl: process.env.DATABASE_URL,

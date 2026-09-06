@@ -16,6 +16,7 @@ import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
+import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
@@ -703,6 +704,23 @@ function startUsSurgeAlert(config) {
     .catch((error) => console.warn("collector: us surge alert failed", error instanceof Error ? error.message : error));
 }
 
+/*
+ * 재료 알림.
+ *
+ * 다른 알림들과 달리 시각을 가리지 않습니다 -- 재료는 하루 종일 나오고, 장중에
+ * 나오면 그날, 마감 뒤에 나오면 애프터마켓이나 다음날 아침에 살 자리가 있습니다.
+ * 어느 구간에서 잡혔는지는 provider가 kind에 남깁니다(장중은 아직 검증 전).
+ *
+ * 5분인 것은 뉴스 수집이 장중 10분·장 외 45분이고 공시가 5분마다 돌기 때문입니다 --
+ * 더 자주 물어봐야 새로 들어온 것이 없습니다.
+ */
+function startMaterialAlert(config) {
+  if (!materialAlertDue()) return;
+
+  notifyNewMaterial(config, { url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: material alert failed", error instanceof Error ? error.message : error));
+}
+
 const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
@@ -1297,6 +1315,9 @@ export function startMarketCollector(config) {
     // Independent of every sampling window: the deployed site should never be
     // more than ten minutes behind, whichever market happens to be open.
     startSnapshotPublish(config);
+
+    // 시각을 가리지 않는 알림. 구간 구분은 provider가 합니다.
+    startMaterialAlert(config);
 
     /*
      * 다음 틱은 **지금** 시각으로 다시 계산합니다.
