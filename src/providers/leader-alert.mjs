@@ -1,5 +1,5 @@
 import { query } from "../db/client.mjs";
-import { sendKakaoMemo, kakaoConfigured } from "./kakao.mjs";
+import { notify, notifyConfigured } from "./notify.mjs";
 
 /**
  * 오늘의 주도 섹터와 그 안의 주도주를 카톡으로.
@@ -169,7 +169,7 @@ function line(group, rank, at) {
 
 /** 절대 던지지 않습니다 -- 알림 때문에 수집 틱이 멈추면 그 분의 분봉을 잃습니다. */
 export async function notifyLeaders(config, { day, minute, url } = {}) {
-  if (running || !kakaoConfigured(config) || minute < startMinute) return 0;
+  if (running || !notifyConfigured(config) || minute < startMinute) return 0;
 
   running = true;
 
@@ -194,14 +194,14 @@ export async function notifyLeaders(config, { day, minute, url } = {}) {
     let posted = 0;
 
     for (const [rank, group] of groups.entries()) {
-      if (await sendKakaoMemo(config, { text: line(group, rank, at), url })) posted += 1;
+      if (await notify(config, { text: line(group, rank, at), url })) posted += 1;
     }
 
     // 한 통이라도 나갔으면 보낸 것으로 칩니다. 전부 실패했을 때만 다시 시도합니다.
     if (posted === 0) return 0;
 
     sentKey = key;
-    console.log(`kakao: 주도 섹터 ${posted}통 · ${groups.map((group) => group.sector).join(" > ")}`);
+    console.log(`알림: 주도 섹터 ${posted}통 · ${groups.map((group) => group.sector).join(" > ")}`);
 
     return posted;
   } catch (error) {

@@ -1,5 +1,5 @@
 import { loadLimitPairCandidates } from "./limit-pair.mjs";
-import { sendKakaoMemo, kakaoConfigured } from "./kakao.mjs";
+import { notify, notifyConfigured } from "./notify.mjs";
 
 /**
  * 짝꿍이 새로 뜨면 카톡 한 통.
@@ -89,7 +89,7 @@ function line(pair) {
  * 멈추면 그 분의 분봉을 잃고, 그것은 다시 받을 수 없습니다.
  */
 export async function notifyNewPairs(config, { day, url } = {}) {
-  if (running || !kakaoConfigured(config)) return 0;
+  if (running || !notifyConfigured(config)) return 0;
 
   running = true;
 
@@ -133,14 +133,14 @@ export async function notifyNewPairs(config, { day, url } = {}) {
       // 같은 짝이 같은 등급 이하로 다시 오면 조용히 넘깁니다.
       if ((sent.get(key) ?? 0) >= rank) continue;
 
-      const ok = await sendKakaoMemo(config, { text: line(pair), url });
+      const ok = await notify(config, { text: line(pair), url });
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
       if (!ok) continue;
 
       sent.set(key, rank);
       posted += 1;
-      console.log(`kakao: 짝꿍 알림 · ${pair.leader.name} → ${pair.second.name} [${pair.tier}]`);
+      console.log(`알림: 짝꿍 알림 · ${pair.leader.name} → ${pair.second.name} [${pair.tier}]`);
     }
 
     return posted;

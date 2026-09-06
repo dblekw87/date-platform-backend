@@ -15,6 +15,7 @@ import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./pr
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
+import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
@@ -721,6 +722,18 @@ function startMaterialAlert(config) {
     .catch((error) => console.warn("collector: material alert failed", error instanceof Error ? error.message : error));
 }
 
+/*
+ * 종가배팅 알림.
+ *
+ * 간격을 두지 않습니다 -- provider가 하루 한 번만 보내도록 스스로 잠그고, 창이
+ * 15:20~15:32로 좁아 틱마다 물어봐도 하루에 열두 번을 넘지 않습니다. 여기서
+ * 간격을 또 두면 그 창을 통째로 건너뛸 수 있습니다.
+ */
+function startCloseBetAlert(config, minute) {
+  notifyCloseBet(config, { minute, url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: close bet alert failed", error instanceof Error ? error.message : error));
+}
+
 const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
@@ -1170,6 +1183,7 @@ export function startMarketCollector(config) {
         startUniverseSample(config, minute);
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
+        startCloseBetAlert(config, minute);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
         startThemeRefresh(config);

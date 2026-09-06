@@ -11,13 +11,13 @@ import { classifyDisclosure, classifyHeadline } from "./overnight-classify.mjs";
 
 export async function collectCandidates(config, window) {
   const news = await query(config, `
-    SELECT s AS symbol, published_at, headline, source
+    SELECT s AS symbol, published_at, headline, source, original_url
       FROM market_news_items, LATERAL unnest(related_symbols) s
      WHERE region = 'KR' AND published_at >= $1 AND published_at < $2`,
     [window.from, window.to]);
 
   const filings = await query(config, `
-    SELECT symbol, filed_at, report_name, title
+    SELECT symbol, filed_at, report_name, title, original_url
       FROM market_disclosures
      WHERE market = 'KR' AND symbol IS NOT NULL
        AND filed_at >= $1 AND filed_at < $2`,

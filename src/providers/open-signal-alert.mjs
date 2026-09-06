@@ -1,5 +1,5 @@
 import { loadUsPremarketMovers } from "./premarket.mjs";
-import { sendKakaoMemo, kakaoConfigured } from "./kakao.mjs";
+import { notify, notifyConfigured } from "./notify.mjs";
 
 /**
  * 미국 개장 조건이 맞으면 카톡 한 통.
@@ -42,7 +42,7 @@ function line(mover) {
 
 /** 절대 던지지 않습니다 -- 알림 때문에 수집 틱이 멈추면 그 분의 분봉을 잃습니다. */
 export async function notifyOpenSignals(config, { day, url } = {}) {
-  if (running || !kakaoConfigured(config)) return 0;
+  if (running || !notifyConfigured(config)) return 0;
 
   running = true;
 
@@ -59,11 +59,11 @@ export async function notifyOpenSignals(config, { day, url } = {}) {
       if (!Number.isFinite(Number(mover.openPrice))) continue;
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
-      if (!await sendKakaoMemo(config, { text: line(mover), url })) continue;
+      if (!await notify(config, { text: line(mover), url })) continue;
 
       sent.add(mover.symbol);
       posted += 1;
-      console.log(`kakao: 미국 개장 신호 · ${mover.symbol} 프리 +${(mover.preGain * 100).toFixed(0)}%`);
+      console.log(`알림: 미국 개장 신호 · ${mover.symbol} 프리 +${(mover.preGain * 100).toFixed(0)}%`);
     }
 
     return posted;

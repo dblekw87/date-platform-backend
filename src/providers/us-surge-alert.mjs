@@ -1,5 +1,5 @@
 import { loadUsMarketGainers } from "./us-market-gainers.mjs";
-import { sendKakaoMemo, kakaoConfigured } from "./kakao.mjs";
+import { notify, notifyConfigured } from "./notify.mjs";
 import { usMarketPhase } from "./premarket.mjs";
 
 /**
@@ -51,7 +51,7 @@ function line(row) {
  * 그것은 다시 받을 수 없습니다.
  */
 export async function notifyUsSurges(config, { day, url } = {}) {
-  if (running || !kakaoConfigured(config)) return 0;
+  if (running || !notifyConfigured(config)) return 0;
   // 정규장에만. percentchange가 정규장 기준이라 장 밖에서는 직전 세션 값이
   // 그대로 나오고, 그것을 오늘 급등으로 읽으면 매일 아침 같은 종목이 옵니다.
   if (usMarketPhase() !== "regular") return 0;
@@ -75,11 +75,11 @@ export async function notifyUsSurges(config, { day, url } = {}) {
       if (row.changePercent < minChangePercent || row.turnover < minTurnover) continue;
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
-      if (!await sendKakaoMemo(config, { text: line(row), url })) continue;
+      if (!await notify(config, { text: line(row), url })) continue;
 
       sent.add(row.symbol);
       posted += 1;
-      console.log(`kakao: 미국 급등 · ${row.symbol} +${row.changePercent.toFixed(0)}% · 거래대금 $${(row.turnover / 1e6).toFixed(0)}M`);
+      console.log(`알림: 미국 급등 · ${row.symbol} +${row.changePercent.toFixed(0)}% · 거래대금 $${(row.turnover / 1e6).toFixed(0)}M`);
     }
 
     return posted;

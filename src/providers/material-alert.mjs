@@ -59,7 +59,7 @@ export async function notifyNewMaterial(config, { url } = {}) {
 
     const sent = await sendTelegram(config, { text: message(fresh, window, phase, url) });
 
-    if (sent) console.log(`telegram: 재료 알림 · ${fresh.map((pick) => pick.listing.name).join(", ")}`);
+    if (sent) console.log(`알림: 재료 · ${fresh.map((pick) => pick.listing.name).join(", ")}`);
 
     return sent ? fresh.length : 0;
   } catch (error) {
@@ -118,12 +118,19 @@ function message(picks, window, phase, url) {
       + ` 거래대금 ${(listing.turnover / 1e8).toFixed(0)}억`
     );
 
+    /* 원문 주소를 같이 보냅니다. 제목만으로는 재료의 크기를 알 수 없고 -- 수주
+     * 한 건이 300억인지 3,000억인지가 제목에서 빠지는 일이 흔합니다 -- 알림을
+     * 받은 자리에서 바로 확인할 수 없으면 결국 다시 검색하게 됩니다. */
     for (const filing of pick.good.slice(0, 2)) {
       lines.push(`  공시 ${filing.title.split("·").pop().trim()}`);
+
+      if (filing.original_url) lines.push(`       ${filing.original_url}`);
     }
 
     for (const article of pick.material.slice(0, 2)) {
       lines.push(`  뉴스 ${article.headline}`);
+
+      if (article.original_url) lines.push(`       ${article.original_url}`);
     }
 
     if (pick.sourceCount > 1) lines.push(`  매체 ${pick.sourceCount}곳`);
