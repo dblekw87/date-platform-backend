@@ -40,15 +40,18 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
     // 그게 맞고 알림에는 아닙니다 -- 짝꿍이 2026-08-28에 겪은 자리와 같습니다.
     const today = candidates.filter((row) => row.sessionDate === day);
 
-    // 조건을 넘은 것이 없으면 보내지 않습니다. "오늘은 없습니다"를 매일 보내면
-    // 알림을 읽지 않게 되고, 정작 있는 날을 놓칩니다.
-    if (!today.length) {
-      sentDay = day;
+    /*
+     * 조건을 넘은 것이 없으면 보내지 않습니다. "오늘은 없습니다"를 매일 보내면
+     * 알림을 읽지 않게 되고, 정작 있는 날을 놓칩니다.
+     *
+     * **여기서 날을 잠그지 않습니다.** 잠그면 15:20에 아직 조건을 못 넘은 종목이
+     * 15:25에 넘어도 알림이 안 갑니다 -- 조건은 장중 표본으로 계산하는 잠정값이라
+     * 그 10분 사이에 바뀌는 것이 정상입니다. 창이 15:32에 닫히므로 잠그지 않아도
+     * 시도는 열두 번을 넘지 않고, 없는 날은 그냥 아무것도 안 간 채 끝납니다.
+     */
+    if (!today.length) return 0;
 
-      return 0;
-    }
-
-    const ok = await notify(config, { text: message(today, day), url });
+    const ok = await notify(config, { text: closeBetMessage(today, day), url });
 
     if (!ok) return 0;
 
@@ -72,7 +75,7 @@ const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
  * 수만큼 반복되고, 정작 종목마다 다른 숫자가 그 사이에 파묻힙니다. 화면이
  * groupByTier로 하는 일과 같습니다.
  */
-function message(candidates, day) {
+export function closeBetMessage(candidates, day) {
   const lines = [`[종가배팅] ${day} · 후보 ${candidates.length}종목`, ""];
   const byTier = new Map();
 
@@ -84,9 +87,15 @@ function message(candidates, day) {
   for (const [tier, rows] of byTier) {
     const measured = rows[0].measured;
 
+    /* beatRate·gapUpRate는 비율(0.684)이고 excessMean은 이미 %p입니다. 화면이
+     * 쓰는 것과 같은 변환을 씁니다 -- 알림과 보드가 다른 숫자를 말하면 어느 쪽이
+     * 맞는지 확인하는 데 시간이 듭니다. */
     lines.push(measured
-      ? `${tier} · 상회 ${measured.beatRate}% · 초과 ${measured.excessMean}%p · ${measured.nights}일`
-      : `${tier}`);
+      ? `${tier} · 상회 ${Math.round(measured.beatRate * 100)}%`
+        + ` · 갭상승 ${Math.round(measured.gapUpRate * 100)}%`
+        + ` · 초과 ${measured.excessMean >= 0 ? "+" : ""}${measured.excessMean.toFixed(2)}%p`
+        + ` · ${measured.nights}일`
+      : tier);
 
     for (const row of rows) {
       lines.push(
