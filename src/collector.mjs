@@ -17,6 +17,7 @@ import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
+import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
@@ -734,6 +735,23 @@ function startCloseBetAlert(config, minute) {
     .catch((error) => console.warn("collector: close bet alert failed", error instanceof Error ? error.message : error));
 }
 
+/*
+ * 상한가 알림.
+ *
+ * 정규장에만. 가격제한폭은 KRX에만 있고 NXT 프리·애프터마켓에는 걸리는 방식이
+ * 달라 조건 자체가 성립하지 않습니다 -- 짝꿍이 같은 이유로 정규장에만 도는 것과
+ * 같은 자리입니다.
+ *
+ * 간격은 provider가 봅니다(5분). 잠긴 것을 세는 일이라 더 자주 물어도 답이
+ * 같습니다.
+ */
+function startLimitUpAlert(config) {
+  if (!isRegularSession("KR")) return;
+
+  notifyLimitUps(config, { url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: limit up alert failed", error instanceof Error ? error.message : error));
+}
+
 const pairAlertIntervalMs = 2 * 60_000;
 let pairAlertAt = 0;
 
@@ -1177,6 +1195,10 @@ export function startMarketCollector(config) {
         if (afterHours && reportedDay !== sessionDate("KR")) {
           reportedDay = sessionDate("KR");
           await writeThemeReport(config, reportedDay);
+          // 그날 잠겼던 것을 남깁니다. "상한가가 다음 날 어떻게 됐나"는 나중에
+          // 물어볼 수 있는 질문이고, 남기지 않으면 물어볼 수 없습니다.
+          await recordLimitUps(config, reportedDay)
+            .catch((error) => console.warn("collector: limit up record failed", error instanceof Error ? error.message : error));
         }
 
         startInvestorFlow(config, minute);
@@ -1184,6 +1206,7 @@ export function startMarketCollector(config) {
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
         startCloseBetAlert(config, minute);
+        startLimitUpAlert(config);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
         startThemeRefresh(config);
