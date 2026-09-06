@@ -76,7 +76,7 @@ const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
  * groupByTier로 하는 일과 같습니다.
  */
 export function closeBetMessage(candidates, day) {
-  const lines = [`[종가배팅] ${day} · 후보 ${candidates.length}종목`, ""];
+  const lines = [`[종가배팅] ${day} · 후보 ${candidates.length}종목 · 오늘 종가에 사는 것`, ""];
   const byTier = new Map();
 
   for (const row of candidates) {

@@ -104,9 +104,16 @@ const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
  * 알 수 없습니다.
  */
 function message(picks, window, phase, url) {
+  /*
+   * 첫 줄에 **어떤 알림인지**를 적습니다.
+   *
+   * 알림이 여섯 종류라 내용을 읽기 전에 종류부터 알아야 합니다 -- 종가배팅은
+   * 오늘 종가에 사는 것이고, 다음 장 후보는 내일 아침에 판단하는 것이고, 둘이
+   * 같은 얼굴로 오면 오늘 살 것을 내일로 미루거나 그 반대가 됩니다.
+   */
   const heading = phase === "intraday"
-    ? `[재료·장중] 새 후보 ${picks.length}종목`
-    : `[재료] ${window.previous} 장 마감 이후 · 새 후보 ${picks.length}종목`;
+    ? `[장중 재료] 새 후보 ${picks.length}종목 · 오늘 장중에 나온 재료`
+    : `[다음 장 후보] 새 후보 ${picks.length}종목 · ${window.previous} 마감 뒤 나온 재료`;
   const lines = [heading, ""];
 
   for (const pick of picks) {

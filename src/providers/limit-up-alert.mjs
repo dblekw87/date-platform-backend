@@ -195,7 +195,7 @@ function evidenceLines(lock, evidence) {
 
 function firstMessage(lock, evidence) {
   return [
-    `[상한가] ${lock.name} ${lock.symbol} · ${lock.size} · ${lock.market ?? "KR"}`,
+    `[상한가 잠김] ${lock.name} ${lock.symbol} · ${lock.size} · ${lock.market ?? "KR"}`,
     `${won(lock.close_price)}원 · ${lock.minutes}분째 · 거래대금 ${(Number(lock.turnover ?? 0) / 1e8).toFixed(0)}억`,
     lock.theme && lock.theme !== "미분류" ? `테마 ${lock.theme}` : "",
     "",
@@ -205,7 +205,7 @@ function firstMessage(lock, evidence) {
 
 function nearMessage(stock, evidence) {
   return [
-    `[상한가 근접] ${stock.name} ${stock.symbol} · ${stock.size} · ${stock.market ?? "KR"}`,
+    `[상한가 직전] ${stock.name} ${stock.symbol} · ${stock.size} · ${stock.market ?? "KR"}`,
     `+${stock.top_rate.toFixed(1)}% · 상한가까지 ${stock.gap}%p · 거래대금 ${(Number(stock.turnover ?? 0) / 1e8).toFixed(0)}억`,
     stock.theme && stock.theme !== "미분류" ? `테마 ${stock.theme}` : "",
     "",

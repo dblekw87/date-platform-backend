@@ -76,7 +76,7 @@ function line(pair) {
   const gap = Number(pair.leadGap);
 
   return [
-    `[${pair.tier}] ${pair.theme}${themeNote(pair)}`,
+    `[짝꿍 · ${pair.tier}] ${pair.theme}${themeNote(pair)}`,
     `1등주 ${pair.leader.name} +${Number(pair.leader.changeRateValue).toFixed(2)}%`,
     `2등주 ${pair.second.name} +${Number(pair.second.changeRateValue).toFixed(2)}%`,
     `간격 ${gap.toFixed(2)}%p`,
