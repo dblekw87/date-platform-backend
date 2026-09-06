@@ -23,6 +23,20 @@ export async function collectCandidates(config, window) {
        AND filed_at >= $1 AND filed_at < $2`,
     [window.from, window.to]);
 
+  /*
+   * 직전 장중에 이미 다뤄진 종목.
+   *
+   * 창 안의 기사와 따로 셉니다. 같은 종목에 마감 뒤 기사가 붙었더라도, 낮에 이미
+   * 열 건이 돌던 종목이면 그것은 새로 나온 사실이 아니라 하던 얘기의 연장입니다.
+   * 그 둘이 다음 장에서 반대로 움직입니다 -- measure-overnight-news.mjs 참고.
+   */
+  const covered = await query(config, `
+    SELECT DISTINCT s AS symbol
+      FROM market_news_items, LATERAL unnest(related_symbols) s
+     WHERE region = 'KR' AND published_at >= $1 AND published_at < $2`,
+    [window.sessionFrom, window.sessionTo]);
+
+  const coveredInSession = new Set(covered.rows.map((row) => row.symbol));
   const candidates = new Map();
   const of = (symbol) => {
     if (!candidates.has(symbol)) {
@@ -33,6 +47,7 @@ export async function collectCandidates(config, window) {
         good: [],
         dilution: [],
         bad: [],
+        coveredInSession: coveredInSession.has(symbol),
         sources: new Set()
       });
     }

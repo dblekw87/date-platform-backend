@@ -54,6 +54,23 @@ export function rankPicks(candidates, universe) {
  * 모르는 목록은 다음 주에 규칙을 고칠 때 아무것도 알려주지 않습니다. */
 export function blockReason(entry, listing) {
   if (entry.recap > 0) return `복기 기사 ${entry.recap}건`;
+
+  /*
+   * 낮에 이미 다뤄진 종목은 뉴스만으로는 후보가 아닙니다.
+   *
+   * 재료 뉴스가 붙은 129건을 둘로 갈라 재면 방향이 반대입니다.
+   *
+   *   처음 나온 것   64건   장중 +1.43%p   승률 59%
+   *   이어진 것      65건   장중 -0.48%p   승률 46%   (뉴스 대조군 45%와 같음)
+   *
+   * 조건의 값이 전부 앞쪽에 있습니다. 뒤쪽은 아무 뉴스나 붙은 종목과 구별되지
+   * 않으므로, 그것을 후보에 올리는 것은 목록을 두 배로 늘리고 값을 절반으로
+   * 나누는 일입니다.
+   *
+   * **공시가 있으면 걸지 않습니다.** 공시는 그 자체가 새 사실이라 낮에 기사가
+   * 돌았는지와 무관하고, 실제로 갈라 재도 +0.62 대 +0.50으로 거의 같습니다.
+   */
+  if (entry.coveredInSession && !entry.good.length) return "직전 장중에 이미 다뤄짐";
   if (entry.dilution.length) return `희석 공시 ${entry.dilution.length}건`;
   if (entry.bad.length) return `악재 공시 ${entry.bad.length}건`;
   if (listing.halted || listing.managed) return "거래정지·관리종목";

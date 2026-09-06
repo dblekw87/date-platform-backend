@@ -69,7 +69,11 @@ function windowFor(day) {
   return {
     from: new Date(`${sessions[index - 1]}T15:40:00+09:00`),
     to: new Date(`${day}T08:50:00+09:00`),
-    previous: sessions[index - 1]
+    previous: sessions[index - 1],
+    /* 직전 장이 열려 있던 동안. 그 사이에 이미 기사가 돌던 종목은, 마감 뒤에
+     * 나온 기사가 새 사실이 아니라 낮에 하던 얘기의 연장일 수 있습니다. */
+    sessionFrom: new Date(`${sessions[index - 1]}T09:00:00+09:00`),
+    sessionTo: new Date(`${sessions[index - 1]}T15:40:00+09:00`)
   };
 }
 
@@ -123,6 +127,14 @@ for (const day of sessions) {
    * 움직이는 종목을 고르는 조건이라, 좋은 공시의 값을 보려면 나쁜 공시가 아니라
    * 공시 전체와 견줘야 합니다. 뉴스도 같습니다. [[us-short-volume-verdict]]에서
    * 수준이 아니라 기준선 대비 변화만 살아남은 것과 같은 자리입니다. */
+  const coveredInSession = new Set();
+
+  for (const item of news) {
+    if (item.published_at >= window.sessionFrom && item.published_at < window.sessionTo) {
+      coveredInSession.add(item.symbol);
+    }
+  }
+
   for (const item of news) {
     if (item.published_at < window.from || item.published_at >= window.to) continue;
 
@@ -168,6 +180,23 @@ for (const day of sessions) {
     if (labels.has("filing:good") && !labels.has("news:recap")) {
       record("호재공시·복기없음", day, row.symbol, excess.gap, excess.intraday, excess.total);
     }
+
+    /*
+     * 낮에 이미 다뤄진 종목인가.
+     *
+     * 재료가 아직 거래되지 않은 것을 찾는 자리이므로, 직전 장중에 이미 기사가
+     * 돌던 종목은 그만큼 덜 새롭습니다. 2026-09-06 주말 후보 18종목 중 11종목이
+     * 여기 해당했습니다 -- 그 구분이 값을 갖는지 재는 줄입니다.
+     */
+    const first = coveredInSession.has(row.symbol) ? "이어진" : "처음";
+
+    if (labels.has("news:material") && !labels.has("news:recap")) {
+      record(`재료·${first} 나온 것`, day, row.symbol, excess.gap, excess.intraday, excess.total);
+    }
+
+    if (labels.has("filing:good") && !labels.has("news:recap")) {
+      record(`호재공시·${first} 나온 것`, day, row.symbol, excess.gap, excess.intraday, excess.total);
+    }
   }
 }
 
@@ -199,7 +228,7 @@ console.log("");
 console.log("세션별 장중 초과수익 (%p)");
 console.log("");
 
-const watched = ["공시 있음(대조군)", "filing:good", "news:recap", "news:material만(복기 없음)"];
+const watched = ["공시 있음(대조군)", "filing:good", "news:recap", "news:material만(복기 없음)", "재료·처음 나온 것", "재료·이어진 나온 것", "호재공시·처음 나온 것", "호재공시·이어진 나온 것"];
 const days = [...marketByDay.keys()].sort();
 
 console.log("조건".padEnd(24) + days.map((d) => d.slice(5).padStart(7)).join(""));

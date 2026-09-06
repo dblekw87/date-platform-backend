@@ -32,6 +32,11 @@ export function upcomingWindow(sessions, now = new Date()) {
   return {
     previous,
     from: new Date(`${previous}T15:40:00+09:00`),
-    to: now
+    to: now,
+    /* 직전 장이 열려 있던 동안. 그때 이미 기사가 돌던 종목인지 보려고 같이
+     * 돌려줍니다 -- 마감 뒤 기사가 새 사실인지 낮에 하던 얘기의 연장인지가
+     * 여기서 갈립니다. */
+    sessionFrom: new Date(`${previous}T09:00:00+09:00`),
+    sessionTo: new Date(`${previous}T15:40:00+09:00`)
   };
 }
