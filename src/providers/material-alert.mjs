@@ -49,19 +49,28 @@ export async function notifyNewMaterial(config, { url } = {}) {
     const universe = await tradableUniverse(config, window.previous, minTurnover);
     const picks = rankPicks(candidates, universe);
     const phase = materialPhase();
-    const fresh = [];
-
-    for (const pick of picks) {
-      if (await record(config, window.previous, phase, pick)) fresh.push(pick);
-    }
+    const fresh = await unsent(config, window.previous, phase, picks);
 
     if (!fresh.length) return 0;
 
+    /*
+     * **보낸 뒤에 기록합니다.**
+     *
+     * 처음엔 기록이 먼저였습니다 -- 유일 제약이 중복을 걸러 주니 INSERT가 들어간
+     * 것만 보내면 된다는 계산이었는데, 발송이 실패하면 이미 기록된 채라 다음
+     * 틱에 "이미 보낸 것"으로 건너뜁니다. 텔레그램이 한 번 삐끗하면 그 후보는
+     * 영영 안 갑니다. 같은 프로세스 안의 중복은 running 플래그가 막으므로 순서를
+     * 바꿔도 두 번 가지 않습니다.
+     */
     const sent = await sendTelegram(config, { text: message(fresh, window, phase, url) });
 
-    if (sent) console.log(`알림: 재료 · ${fresh.map((pick) => pick.listing.name).join(", ")}`);
+    if (!sent) return 0;
 
-    return sent ? fresh.length : 0;
+    for (const pick of fresh) await record(config, window.previous, phase, pick);
+
+    console.log(`알림: 재료 · ${fresh.map((pick) => pick.listing.name).join(", ")}`);
+
+    return fresh.length;
   } catch (error) {
     console.warn("material alert failed", error instanceof Error ? error.message : error);
 
@@ -75,8 +84,21 @@ export async function notifyNewMaterial(config, { url } = {}) {
 // 나가지 않습니다. [[leader-pool-filters]]
 const minTurnover = 1_000_000_000;
 
+/** 아직 기록에 없는 것만. 기록은 보낸 뒤에 하므로 "기록 없음"이 곧 "안 보냈음"입니다. */
+async function unsent(config, sessionDate, phase, picks) {
+  if (!picks.length) return [];
+
+  const { rows } = await query(config, `
+    SELECT symbol FROM kr_signal_outcomes
+     WHERE kind = $1 AND session_date = $2::date AND symbol = ANY($3)`,
+    [`${phase}_material`, sessionDate, picks.map((pick) => pick.symbol)]);
+  const seen = new Set(rows.map((row) => row.symbol));
+
+  return picks.filter((pick) => !seen.has(pick.symbol));
+}
+
 /*
- * 들어갔으면 true. 이미 있으면 false -- 그것이 곧 "이미 보냈다"는 뜻입니다.
+ * 남깁니다. 유일 제약은 그대로 두어 재시작 직후 같은 것을 두 번 넣지 않게 합니다.
  *
  * kind에 구간을 넣는 것은 나중에 갈라 재기 위해서입니다. 유일 제약이
  * (kind, session_date, symbol)이므로 같은 종목이 장중에 한 번, 마감 뒤에 한 번
