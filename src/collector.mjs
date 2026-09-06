@@ -742,8 +742,8 @@ function startCloseBetAlert(config, minute) {
  * 달라 조건 자체가 성립하지 않습니다 -- 짝꿍이 같은 이유로 정규장에만 도는 것과
  * 같은 자리입니다.
  *
- * 간격은 provider가 봅니다(5분). 잠긴 것을 세는 일이라 더 자주 물어도 답이
- * 같습니다.
+ * 간격은 provider가 봅니다(1분). 소형주는 24%에서 잠기기까지 중앙값 5분이라
+ * 더 드물게 물으면 잠긴 뒤에 봅니다.
  */
 function startLimitUpAlert(config) {
   if (!isRegularSession("KR")) return;

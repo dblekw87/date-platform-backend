@@ -19,7 +19,12 @@ import { sessionDate } from "./market-session.mjs";
  * 빼고.
  */
 
-const alertIntervalMs = 5 * 60_000;
+/*
+ * 1분. 다른 알림은 2~5분인데 여기만 1분인 이유는 소형주가 그만큼 빠르기 때문입니다
+ * -- 24%에서 잠기기까지 중앙값 5분, 27%에서는 1분. 5분 간격이면 문턱을 아무리
+ * 내려도 잠긴 뒤에 봅니다. 비용은 그룹 쿼리 하나라 매 틱 물어도 됩니다.
+ */
+const alertIntervalMs = 60_000;
 
 let lastRunAt = 0;
 let running = false;

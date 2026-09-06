@@ -54,7 +54,7 @@ for (const lock of locks) {
 const near = await loadNearLimitUps(config, day);
 
 console.log("");
-console.log(`상한가 근접(27% 이상, 아직 미잠김) ${near.length}종목`);
+console.log(`상한가 직전(소·중형 24%, 대형 27% 이상 · 아직 미잠김) ${near.length}종목`);
 
 for (const stock of near) {
   const evidence = await loadLimitUpEvidence(config, stock, day);
