@@ -947,6 +947,7 @@ export async function loadNewsHeadlines(config) {
 
 const hangulChar = (ch) => ch !== undefined && /[가-힣]/.test(ch);
 const latinChar = (ch) => ch !== undefined && /[A-Za-z0-9]/.test(ch);
+const alphabetChar = (ch) => ch !== undefined && /[A-Za-z]/.test(ch);
 
 // 회사명 뒤에 붙을 수 있는 조사. 이게 아닌 한글이 이어지면 다른 단어입니다 --
 // 태양광의 `태양`, 디스플레이의 `레이`, 하이닉스의 `이닉스`가 전부 그렇게 걸립니다.
@@ -964,6 +965,7 @@ const koreanParticles = new Set([
  */
 function nameAppears(text, name) {
   const isLatin = /^[A-Za-z0-9.&\- ]+$/.test(name);
+  const hasHangul = /[가-힣]/.test(name);
 
   for (let from = 0;;) {
     const at = text.indexOf(name, from);
@@ -976,8 +978,20 @@ function nameAppears(text, name) {
     // 붙습니다 -- 기사는 SK하이닉스 얘기인데 다른 종목에 태그가 갑니다.
     const koreanClear = !hangulChar(before) && (!hangulChar(after) || koreanParticles.has(after));
     const latinClear = !isLatin || (!latinChar(before) && !latinChar(after));
+    /*
+     * 한글 이름 옆에 붙은 **알파벳**도 경계입니다.
+     *
+     * 위 두 줄이 못 보던 자리입니다. `원익` 뒤의 `I`는 한글이 아니라 koreanClear를
+     * 통과하고, `원익`은 라틴 이름이 아니라 latinClear도 통과합니다. 그래서
+     * 2026-09-04에 "원익IPS, 임시주총서 사외이사 선임" 기사가 종목 `원익`에
+     * 붙었습니다 -- 원익은 그날 상한가 근접이었고, 화면에는 그 기사가 이유로
+     * 올라왔습니다. `신스틸`/`신스틸러`와 같은 종류이고 방향만 다릅니다.
+     *
+     * 숫자는 허용합니다. `삼성전자3분기`의 3까지 막으면 멀쩡한 태그가 빠집니다.
+     */
+    const alphabetClear = !hasHangul || (!alphabetChar(before) && !alphabetChar(after));
 
-    if (koreanClear && latinClear) return true;
+    if (koreanClear && latinClear && alphabetClear) return true;
 
     from = at + 1;
   }

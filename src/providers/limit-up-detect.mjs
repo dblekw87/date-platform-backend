@@ -21,6 +21,9 @@ const limitRate = 29;
 const newListingRate = 30.5;
 // 3분. 1~2분짜리는 상한가를 스친 것이지 잠긴 것이 아닙니다.
 const minimumMinutes = 3;
+// 상한가까지 2~3%p 남은 자리. 27은 이미 이 저장소가 쓰는 값입니다
+// (calibration.mjs가 잠긴 것과 아닌 것을 29와 27로 가릅니다).
+const nearRate = 27;
 
 const sizeOf = (cap) => {
   if (!(cap > 0)) return "소형";
@@ -54,5 +57,50 @@ export async function loadLockedLimitUps(config, day) {
     ...row,
     size: sizeOf(row.market_cap),
     name: row.name ?? row.symbol
+  }));
+}
+
+/**
+ * 아직 안 잠겼지만 상한가까지 2~3%p 남은 종목.
+ *
+ * 잠긴 뒤에는 살 수 없습니다 -- 매도호가가 비어 있으니까요. 그래서 잠기기 전을
+ * 따로 봅니다.
+ *
+ * **오늘 최고가가 아직 29% 아래인 것만** 돌려줍니다. 29를 넘긴 것은 잠김 쪽이
+ * 맡으므로, 이렇게 나누면 한 종목이 두 경로에서 동시에 나오지 않습니다.
+ *
+ * 잠김과 달리 지속 시간을 요구하지 않습니다. 여기서 값은 **빠른 것**이고, 3분을
+ * 기다리면 그 사이에 잠깁니다 -- 2026-09-02~04 실측에서 09시대에 27%를 넘긴
+ * 종목들은 대개 몇 분 안에 상한가까지 갔습니다.
+ *
+ * 대신 근거를 요구합니다(부르는 쪽에서). 하루 7~14종목이 27%에 닿는데 그 시각까지
+ * 공시나 기사가 있는 것은 4종목쯤이라, 근거를 안 걸면 알림이 세 배가 되고 그중
+ * 대부분은 왜 오르는지 말해주지 못합니다.
+ */
+export async function loadNearLimitUps(config, day) {
+  const { rows } = await query(config, `
+    SELECT s.symbol,
+           max(u.name) AS name,
+           max(u.market) AS market,
+           max(s.theme) AS theme,
+           max(u.market_cap)::float8 AS market_cap,
+           max(u.close_price)::float8 AS close_price,
+           max(s.turnover)::float8 AS turnover,
+           max(s.change_rate)::float8 AS top_rate,
+           min(s.observed_at) FILTER (WHERE s.change_rate >= $2) AS reached_at
+      FROM market_price_samples s
+      LEFT JOIN kr_daily_universe u ON u.symbol = s.symbol AND u.session_date = s.session_date
+     WHERE s.market = 'KR' AND s.source LIKE 'kis:krx%' AND s.session_date = $1::date
+     GROUP BY s.symbol
+    HAVING max(s.change_rate) >= $2 AND max(s.change_rate) < $3
+     ORDER BY max(s.change_rate) DESC`,
+    [day, nearRate, limitRate]);
+
+  return rows.map((row) => ({
+    ...row,
+    size: sizeOf(row.market_cap),
+    name: row.name ?? row.symbol,
+    // 상한가까지 남은 거리. 국내 제한폭은 ±30%입니다.
+    gap: Number((30 - row.top_rate).toFixed(1))
   }));
 }

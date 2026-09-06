@@ -1,5 +1,5 @@
 import { loadLimitUpEvidence } from "./limit-up-evidence.mjs";
-import { loadLockedLimitUps } from "./limit-up-detect.mjs";
+import { loadLockedLimitUps, loadNearLimitUps } from "./limit-up-detect.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
 import { sessionDate } from "./market-session.mjs";
@@ -10,10 +10,13 @@ import { sessionDate } from "./market-session.mjs";
  * 규모를 가리지 않습니다 -- 대형이든 소형이든 상한가는 그날 시장이 가장 세게
  * 답한 자리입니다. 실측하면 하루 6~16종목이라 알림이 넘치지 않습니다.
  *
- * **두 번 보낼 수 있습니다.** 잠긴 사실은 시각이 값이라 바로 보내야 하는데,
- * 이유가 되는 기사는 대개 뒤에 나옵니다(TPC로보틱스 09:15 잠김 / 10:26 기사).
- * 그래서 이유 없이 나간 종목은 목록에 남겨 두고, 나중에 이유가 잡히면 그것만
- * 짧게 한 번 더 보냅니다. 세 번은 없습니다.
+ * **이유가 있을 때만 보냅니다.** 잠겼다는 사실만으로는 보내지 않고, 공시나 기사가
+ * 붙을 때까지 기다립니다. 이유를 설명하는 기사는 대개 잠긴 뒤에 나오므로
+ * (TPC로보틱스 09:15 잠김 / 10:26 기사) 5분마다 다시 봅니다. 한 종목에 한 통입니다.
+ *
+ * 잠기기 전(27~29%)도 같은 규칙으로 한 통 보냅니다. 그쪽은 아직 살 수 있는
+ * 자리라 근거를 더 좁게 봅니다 -- 공시나 그 종목을 지목한 기사만, 테마 추정은
+ * 빼고.
  */
 
 const alertIntervalMs = 5 * 60_000;
@@ -22,6 +25,7 @@ let lastRunAt = 0;
 let running = false;
 let sentDay = null;
 const sent = new Set();
+const sentNear = new Set();
 const awaitingReason = new Map();
 
 export function limitUpAlertDue(now = Date.now()) {
@@ -41,6 +45,7 @@ export async function notifyLimitUps(config, { url } = {}) {
     if (sentDay !== day) {
       sentDay = day;
       sent.clear();
+      sentNear.clear();
       awaitingReason.clear();
     }
 
@@ -52,18 +57,33 @@ export async function notifyLimitUps(config, { url } = {}) {
 
       const evidence = await loadLimitUpEvidence(config, lock, day);
 
+      /*
+       * 이유가 없으면 보내지 않습니다.
+       *
+       * 잠겼다는 사실만으로도 알림을 보내던 것을 바꿨습니다. 상한가는 하루 6~16건인데
+       * 그중 절반쯤은 그 시각까지 공시도 기사도 없습니다 -- "왜인지 모르겠습니다"가
+       * 절반인 알림은 읽히지 않게 되고, 그러면 이유가 있는 나머지 절반도 같이
+       * 안 읽힙니다.
+       *
+       * 버리는 것이 아니라 미루는 것입니다. 목록에 남겨 두고 5분마다 다시 보다가
+       * 공시나 기사가 붙으면 그때 보냅니다 -- 이유를 설명하는 기사는 대개 잠긴
+       * 뒤에 나오므로(TPC로보틱스 09:15 잠김 / 10:26 기사) 대부분 몇십 분 안에
+       * 나갑니다.
+       */
+      if (evidence.kind === "none") {
+        awaitingReason.set(lock.symbol, lock);
+        continue;
+      }
+
       if (!await notify(config, { text: firstMessage(lock, evidence), url })) continue;
 
       sent.add(lock.symbol);
       posted += 1;
-
-      // 이유 없이 나간 것만 다시 볼 목록에 올립니다.
-      if (evidence.kind === "none") awaitingReason.set(lock.symbol, lock);
-
       console.log(`알림: 상한가 · ${lock.name} ${lock.minutes}분 · 근거 ${evidence.kind}`);
     }
 
     posted += await followUp(config, day, url);
+    posted += await nearPass(config, day, url);
 
     return posted;
   } catch (error) {
@@ -75,7 +95,47 @@ export async function notifyLimitUps(config, { url } = {}) {
   }
 }
 
-/** 이유 없이 나간 종목에 뒤늦게 기사가 붙었는지. 붙으면 그것만 한 번 더. */
+/*
+ * 잠기기 전에 한 번.
+ *
+ * 잠긴 뒤에는 매도호가가 비어 살 수 없으므로, 값은 **잠기기 전**에 있습니다.
+ * 27%를 넘긴 종목 중 아직 29%에 못 간 것만 봅니다 -- 넘긴 것은 잠김 쪽이 맡습니다.
+ *
+ * **근거 없이는 보내지 않고, 근거는 공시나 그 종목을 지목한 기사여야 합니다.**
+ * 하루 7~14종목이 27%에 닿는데 그 시각까지 근거가 있는 것은 4종목쯤입니다
+ * (2026-09-02~04 실측). 나머지는 기사가 나오기도 전에 올라간 것들이라, 같이
+ * 보내면 알림이 세 배가 되고 그중 대부분은 왜 오르는지 말하지 못합니다.
+ *
+ * 같은 테마 추정은 여기서 빼둡니다. 잠긴 뒤에는 "왜 올랐나"를 설명하는 자리라
+ * 약한 근거도 값이 있지만, 여기는 **지금 살까**를 묻는 자리입니다.
+ */
+async function nearPass(config, day, url) {
+  const near = await loadNearLimitUps(config, day);
+  let posted = 0;
+
+  for (const stock of near) {
+    if (sentNear.has(stock.symbol) || sent.has(stock.symbol)) continue;
+
+    const evidence = await loadLimitUpEvidence(config, stock, day);
+
+    if (evidence.kind !== "filing" && evidence.kind !== "direct") continue;
+
+    if (!await notify(config, { text: nearMessage(stock, evidence), url })) continue;
+
+    sentNear.add(stock.symbol);
+    posted += 1;
+    console.log(`알림: 상한가 근접 · ${stock.name} +${stock.top_rate.toFixed(1)}% · 근거 ${evidence.kind}`);
+  }
+
+  return posted;
+}
+
+/*
+ * 이유가 없어 미뤄둔 종목에 기사·공시가 붙었는지 다시 봅니다.
+ *
+ * 이것이 그 종목의 **첫 통**입니다 -- 잠겼을 때는 아무것도 안 보냈으니까요.
+ * 그래서 잠긴 사실까지 같이 적는 firstMessage를 씁니다.
+ */
 async function followUp(config, day, url) {
   let posted = 0;
 
@@ -86,7 +146,13 @@ async function followUp(config, day, url) {
 
     awaitingReason.delete(symbol);
 
-    if (await notify(config, { text: laterMessage(lock, evidence), url })) posted += 1;
+    // 첫 통을 안 보냈으므로 이것이 그 종목의 첫 통입니다 -- 잠긴 사실까지 같이
+    // 적어야 합니다.
+    if (await notify(config, { text: firstMessage(lock, evidence), url })) {
+      sent.add(symbol);
+      posted += 1;
+      console.log(`알림: 상한가(이유 확인) · ${lock.name} · 근거 ${evidence.kind}`);
+    }
   }
 
   return posted;
@@ -122,7 +188,6 @@ function evidenceLines(lock, evidence) {
     lines.push(`  주의 ${caution.at} ${(caution.report_name ?? caution.title ?? "").slice(0, 60)}`);
   }
 
-  if (evidence.kind === "none") lines.push("  이유로 볼 만한 공시·기사가 아직 없습니다.");
   if (evidence.kind === "theme") lines.push(`  ※ 이 종목을 지목한 기사가 아니라 같은 테마(${lock.theme})에서 같이 오른 종목의 기사입니다.`);
 
   return lines;
@@ -138,12 +203,14 @@ function firstMessage(lock, evidence) {
   ].filter(Boolean).join("\n");
 }
 
-function laterMessage(lock, evidence) {
+function nearMessage(stock, evidence) {
   return [
-    `[상한가·이유] ${lock.name} ${lock.symbol}`,
+    `[상한가 근접] ${stock.name} ${stock.symbol} · ${stock.size} · ${stock.market ?? "KR"}`,
+    `+${stock.top_rate.toFixed(1)}% · 상한가까지 ${stock.gap}%p · 거래대금 ${(Number(stock.turnover ?? 0) / 1e8).toFixed(0)}억`,
+    stock.theme && stock.theme !== "미분류" ? `테마 ${stock.theme}` : "",
     "",
-    ...evidenceLines(lock, evidence)
-  ].join("\n");
+    ...evidenceLines(stock, evidence)
+  ].filter(Boolean).join("\n");
 }
 
 /** 하루가 끝나면 남깁니다. "상한가가 다음 날 어떻게 됐나"는 나중에 잴 수 있는 질문입니다. */
