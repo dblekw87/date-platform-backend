@@ -1,3 +1,4 @@
+import { isUsMarketHoliday } from "./us-holidays.mjs";
 /**
  * Regular trading hours per market.
  *
@@ -193,6 +194,8 @@ export function isRegularSession(market, now = new Date()) {
   const { minute, weekday } = localParts(session.timeZone, now);
 
   if (weekday === "Sat" || weekday === "Sun") return false;
+  // 미국은 휴장일도 봅니다. 주말만 보다가 노동절에 하루치 금요일 값을 적었습니다.
+  if (market === "US" && isUsMarketHoliday(now)) return false;
 
   return minute >= session.openMinute && minute < session.closeMinute;
 }

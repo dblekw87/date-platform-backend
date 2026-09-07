@@ -1,3 +1,4 @@
+import { isUsMarketHoliday } from "./us-holidays.mjs";
 import { readThroughCache } from "../cache.mjs";
 import { fetchJson } from "../http.mjs";
 import { loadMarketData } from "./market.mjs";
@@ -63,6 +64,9 @@ export function usMarketPhase(now = new Date()) {
   const minute = (Number(value("hour")) % 24) * 60 + Number(value("minute"));
 
   if (["Sat", "Sun"].includes(value("weekday"))) return "closed";
+  // 휴장일은 프리·애프터도 없습니다. 2026-09-07 노동절에 프리마켓 5.6만 행이
+  // 금요일 값으로 찍힌 자리입니다.
+  if (isUsMarketHoliday(now)) return "closed";
   if (minute >= 4 * 60 && minute < 9 * 60 + 30) return "pre";
   if (minute < 16 * 60) return "regular";
   if (minute < 20 * 60) return "post";
