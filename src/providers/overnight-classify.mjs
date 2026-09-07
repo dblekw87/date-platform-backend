@@ -75,6 +75,15 @@ export function classifyDisclosure(reportName, title) {
 
   if (name.startsWith("[기재정정]")) return null;
 
+  /*
+   * 되돌리는 공시는 호재 낱말을 그대로 들고 옵니다.
+   *
+   * "자기주식취득신탁계약해지결정"은 자기주식취득으로 시작하지만 뜻은 반대입니다 --
+   * 사던 것을 그만두는 것입니다. 2026-09-07 SK디스커버리가 이것으로 다음 장 후보에
+   * 올라갔습니다. 해지·취소·철회·중단이 붙으면 아래 호재 판정으로 내려보내지 않습니다.
+   */
+  if (/해지|취소|철회|중단|미이행/.test(text)) return null;
+
   if (/불성실공시법인지정|관리종목|상장폐지|거래정지|횡령|배임|감사의견/.test(text)) return "bad";
 
   if (/전환사채권발행결정|신주인수권부사채|교환사채/.test(text)) return "dilution";
