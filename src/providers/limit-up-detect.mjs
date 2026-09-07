@@ -37,6 +37,11 @@ const minimumMinutes = 3;
 const nearRateBySize = { 대형: 27, 중형: 24, 소형: 24 };
 const nearRateFloor = Math.min(...Object.values(nearRateBySize));
 
+/*
+ * 이름·시총은 **가장 최근 유니버스 행**에서 옵니다. 오늘 날짜로 조인하면 15:50에
+ * 그날 행이 생기기 전까지 전부 비어서, 장중 알림이 "082850 71분째"처럼 코드만
+ * 들고 나갔습니다(2026-09-07 실측). 어제 시총이면 규모 판정에 충분합니다.
+ */
 const sizeOf = (cap) => {
   if (!(cap > 0)) return "소형";
   if (cap >= 1_000_000_000_000) return "대형";
@@ -57,7 +62,10 @@ export async function loadLockedLimitUps(config, day) {
            count(*)::int AS minutes,
            min(s.observed_at) AS locked_at
       FROM market_price_samples s
-      LEFT JOIN kr_daily_universe u ON u.symbol = s.symbol AND u.session_date = s.session_date
+      LEFT JOIN LATERAL (
+        SELECT name, market, market_cap, close_price FROM kr_daily_universe
+         WHERE symbol = s.symbol ORDER BY session_date DESC LIMIT 1
+      ) u ON true
      WHERE s.market = 'KR' AND s.source LIKE 'kis:krx%' AND s.session_date = $1::date
        AND s.change_rate BETWEEN $2 AND $3
      GROUP BY s.symbol
@@ -100,7 +108,10 @@ export async function loadNearLimitUps(config, day) {
            max(s.turnover)::float8 AS turnover,
            max(s.change_rate)::float8 AS top_rate
       FROM market_price_samples s
-      LEFT JOIN kr_daily_universe u ON u.symbol = s.symbol AND u.session_date = s.session_date
+      LEFT JOIN LATERAL (
+        SELECT name, market, market_cap, close_price FROM kr_daily_universe
+         WHERE symbol = s.symbol ORDER BY session_date DESC LIMIT 1
+      ) u ON true
      WHERE s.market = 'KR' AND s.source LIKE 'kis:krx%' AND s.session_date = $1::date
      GROUP BY s.symbol
     HAVING max(s.change_rate) >= $2 AND max(s.change_rate) < $3

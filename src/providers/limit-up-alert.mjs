@@ -83,6 +83,10 @@ export async function notifyLimitUps(config, { url } = {}) {
       if (!await notify(config, { text: firstMessage(lock, evidence), url })) continue;
 
       sent.add(lock.symbol);
+      // 앞선 틱에 이유가 없어 대기 목록에 올라 있었을 수 있습니다. 여기서 안 지우면
+      // 바로 아래 followUp이 같은 종목을 한 번 더 보냅니다 -- 2026-09-07 082850이
+      // 그렇게 두 통 갔습니다.
+      awaitingReason.delete(lock.symbol);
       posted += 1;
       console.log(`알림: 상한가 · ${lock.name} ${lock.minutes}분 · 근거 ${evidence.kind}`);
     }
@@ -145,6 +149,12 @@ async function followUp(config, day, url) {
   let posted = 0;
 
   for (const [symbol, lock] of [...awaitingReason]) {
+    // 본 루프가 이번 틱에 이미 보냈으면 여기서 또 볼 것이 없습니다.
+    if (sent.has(symbol)) {
+      awaitingReason.delete(symbol);
+      continue;
+    }
+
     const evidence = await loadLimitUpEvidence(config, lock, day);
 
     if (evidence.kind === "none") continue;
