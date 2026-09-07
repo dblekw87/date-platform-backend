@@ -41,6 +41,11 @@ const nearRateFloor = Math.min(...Object.values(nearRateBySize));
  * 이름·시총은 **가장 최근 유니버스 행**에서 옵니다. 오늘 날짜로 조인하면 15:50에
  * 그날 행이 생기기 전까지 전부 비어서, 장중 알림이 "082850 71분째"처럼 코드만
  * 들고 나갔습니다(2026-09-07 실측). 어제 시총이면 규모 판정에 충분합니다.
+ *
+ * 유니버스에 아예 없는 종목도 있습니다 -- 신규상장은 15:50 전량 수집에 잡히기
+ * 전까지 행이 없습니다. 스카이랩스(386380)가 상장 이틀째인 2026-09-07에
+ * "386380 386380"으로 나갔습니다. 시세 표본 자체가 이름을 들고 있으므로 그것이
+ * 마지막 대안입니다.
  */
 const sizeOf = (cap) => {
   if (!(cap > 0)) return "소형";
@@ -53,7 +58,7 @@ const sizeOf = (cap) => {
 export async function loadLockedLimitUps(config, day) {
   const { rows } = await query(config, `
     SELECT s.symbol,
-           max(u.name) AS name,
+           coalesce(max(u.name), max(s.name)) AS name,
            max(u.market) AS market,
            max(s.theme) AS theme,
            max(u.market_cap)::float8 AS market_cap,
@@ -100,7 +105,7 @@ export async function loadLockedLimitUps(config, day) {
 export async function loadNearLimitUps(config, day) {
   const { rows } = await query(config, `
     SELECT s.symbol,
-           max(u.name) AS name,
+           coalesce(max(u.name), max(s.name)) AS name,
            max(u.market) AS market,
            max(s.theme) AS theme,
            max(u.market_cap)::float8 AS market_cap,
