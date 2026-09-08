@@ -49,6 +49,15 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
       seen.clear();
     }
 
+    /*
+     * 창은 **저장 시각**(observed_at)으로 자릅니다. 발행 시각이 아닙니다.
+     *
+     * 발행 시각으로 잘랐더니 2026-09-08에 특징주 88건 중 1건만 나갔습니다. 기사는
+     * 발행되고 몇 분 뒤에 우리 DB에 들어오는데(수집 3분 주기 + 피드 지연), "지난
+     * 5분에 발행된 것"을 물으면 그 사이에 이미 저장까지 된 기사가 거의 없습니다.
+     * 저장 시각으로 물으면 "지난 5분에 들어온 것"이 되어 빠지는 게 없고, 같은
+     * 기사가 두 번 오는 것은 seen이 막습니다.
+     */
     const until = new Date();
     const { rows } = await query(config, `
       SELECT DISTINCT ON (key) key, symbol, headline, original_url, published_at,
@@ -58,7 +67,7 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
                  s AS symbol, n.headline, n.original_url, n.published_at
             FROM market_news_items n, LATERAL unnest(n.related_symbols) s
            WHERE n.region = 'KR' AND n.headline LIKE '%특징주%'
-             AND n.published_at > $1 AND n.published_at <= $2
+             AND n.observed_at > $1 AND n.observed_at <= $2
         ) t
        ORDER BY key, published_at`,
       [since, until]);
