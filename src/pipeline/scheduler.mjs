@@ -1,5 +1,6 @@
 import { fetchShortInterest, loadStoredSettlements, saveShortInterest, settlementCandidates } from "../providers/short-interest.mjs";
 import { loadShortVolume, saveShortVolume, storedShortVolumeDates } from "../providers/short-volume.mjs";
+import { fillFilingItems, recentItemTargets } from "./us-filing-items.mjs";
 import { fillUsIntraday, loadRecentTargets } from "./us-intraday.mjs";
 import { isUniverseStale, newestUniverseDate, refreshUsUniverse, universeSnapshotDate } from "./us-reference.mjs";
 import { isKrFineWindow, krFineWindows, sessionDate } from "../providers/market-session.mjs";
@@ -154,6 +155,24 @@ async function refreshReference(config) {
   }
 }
 
+/*
+ * 최근 8-K의 항목 코드를 매시 채웁니다.
+ *
+ * 매일 파이프라인 앞에 두고 due 여부와 무관하게 돕니다 -- 3.01(상장유지요건 미달)
+ * 통지는 접수 뒤 한 시간 안에 보여야 하고, 그것을 받은 종목의 13%가 60일 안에
+ * 급등합니다. 최근 3일치 중 빈 것만이라 한 시간에 수십 CIK, 초당 8건이면 몇 초입니다.
+ * 2026-09-09까지는 손 스크립트가 CIK를 한 번씩만 훑어 2주가 밀려 있었습니다.
+ */
+async function refreshFilingItems(config) {
+  const ciks = await recentItemTargets(config, { days: 3, limit: 400 });
+
+  if (!ciks.length) return;
+
+  const result = await fillFilingItems(config, ciks, { log: (message) => console.log("filing items · " + message) });
+
+  if (result.filled > 0) console.log(`filing items · 최근 3일 8-K ${result.filled}건 항목 채움 (CIK ${result.done}, 실패 ${result.failed})`);
+}
+
 async function tick(config) {
   if (running) return;
   if (isKrOpeningWindow()) return;
@@ -172,6 +191,7 @@ async function tick(config) {
 
     await refreshReference(config);
     await fillIntraday(config);
+    await refreshFilingItems(config);
 
     if (!await isUsPipelineDue(config)) return;
 
