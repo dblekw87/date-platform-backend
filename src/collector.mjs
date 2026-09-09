@@ -21,6 +21,7 @@ import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadAfterHoursWatchlist } from "./providers/after-hours-watch.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
+import { notifyNewDelistNotices } from "./providers/us-delist-notice-alert.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
@@ -1406,6 +1407,9 @@ export function startMarketCollector(config) {
     // 시각을 가리지 않는 알림. 구간 구분은 provider가 합니다.
     startMaterialAlert(config);
     startFeaturedAlert(config);
+    // 아침 07:30 한 번. 창과 하루 잠금은 provider가 봅니다.
+    notifyNewDelistNotices(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: delist notice alert failed", error instanceof Error ? error.message : error));
 
     /*
      * 다음 틱은 **지금** 시각으로 다시 계산합니다.

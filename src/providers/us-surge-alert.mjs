@@ -1,3 +1,4 @@
+import { loadDelistRisk, riskLine } from "./us-delist-risk.mjs";
 import { loadUsMarketGainers } from "./us-market-gainers.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { usMarketPhase } from "./premarket.mjs";
@@ -35,14 +36,20 @@ let sentDay = null;
 const sent = new Set();
 let running = false;
 
-function line(row) {
+/*
+ * 상폐 위험 표식을 같이 적습니다. 급등 6,893건 중 24%가 상장유지 미달 통지를 받은
+ * 종목이었고(전체는 3%), 그것이 "왜 튀는가"의 절반을 설명합니다 -- us-delist-risk.mjs.
+ * 표식이 있다고 사지 말라는 뜻도 사라는 뜻도 아닙니다. 다만 그 급등의 성격이 다릅니다.
+ */
+function line(row, risk) {
   const cap = row.marketCap ? `$${(row.marketCap / 1e6).toFixed(1)}M` : "시총 미상";
 
   return [
     `[미국 급등] ${row.symbol}`,
     row.name === row.symbol ? null : row.name,
     `+${row.changePercent.toFixed(1)}% · $${row.price.toFixed(2)}`,
-    `거래대금 $${(row.turnover / 1e6).toFixed(1)}M · 시총 ${cap}`
+    `거래대금 $${(row.turnover / 1e6).toFixed(1)}M · 시총 ${cap}`,
+    riskLine(risk) || null
   ].filter(Boolean).join("\n");
 }
 
@@ -62,6 +69,7 @@ export async function notifyUsSurges(config, { day, url } = {}) {
     if (sentDay !== day) { sentDay = day; sent.clear(); }
 
     const rows = await loadUsMarketGainers(config, { minPercent: 20 });
+    const risks = await loadDelistRisk(config, rows.map((row) => row.symbol)).catch(() => new Map());
 
     // 걸린 것만이 아니라 후보 전부를 남깁니다. 문턱을 실측으로 다시 정하려면
     // 안 걸린 쪽이 있어야 합니다.
@@ -75,7 +83,7 @@ export async function notifyUsSurges(config, { day, url } = {}) {
       if (row.changePercent < minChangePercent || row.turnover < minTurnover) continue;
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
-      if (!await notify(config, { text: line(row), url })) continue;
+      if (!await notify(config, { text: line(row, risks.get(row.symbol)), url })) continue;
 
       sent.add(row.symbol);
       posted += 1;
