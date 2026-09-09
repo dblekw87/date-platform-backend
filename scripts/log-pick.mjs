@@ -44,7 +44,7 @@ if (!found.rows.length) {
 const { symbol, name } = found.rows[0];
 
 const bar = await query(config, `
-  SELECT close::float8 AS close, change_rate::float8 AS rate FROM kr_daily_universe
+  SELECT close_price::float8 AS close, change_rate::float8 AS rate FROM kr_daily_universe
    WHERE symbol = $1 AND session_date = $2::date`, [symbol, day]);
 
 const result = await query(config, `
