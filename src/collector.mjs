@@ -16,6 +16,7 @@ import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
+import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
@@ -1231,6 +1232,9 @@ export function startMarketCollector(config) {
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
         startCloseBetAlert(config, minute);
+        // 종가배팅과 같은 창(15:20~15:32), 같은 이유. provider가 하루 한 번을 잠급니다.
+        notifySectorFollowers(config, { minute, url: config.publicSiteUrl })
+          .catch((error) => console.warn("collector: sector follower alert failed", error instanceof Error ? error.message : error));
         startLimitUpAlert(config);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
