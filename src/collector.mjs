@@ -19,6 +19,7 @@ import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
+import { loadAfterHoursWatchlist } from "./providers/after-hours-watch.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
@@ -455,7 +456,10 @@ function startSeenSample(config) {
 async function sampleAfterHours(config) {
   const day = sessionDate("KR");
   const recorded = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
-  const symbols = recorded.filter((symbol) => (nxtSilentUntil.get(symbol) ?? 0) < Date.now());
+  // 낮 순위에 없어도 저녁 재료가 붙은 종목과 그 가족은 봅니다. after-hours-watch.mjs 참고.
+  const watched = await loadAfterHoursWatchlist(config, day).catch(() => []);
+  const symbols = [...new Set([...recorded, ...watched])]
+    .filter((symbol) => (nxtSilentUntil.get(symbol) ?? 0) < Date.now());
 
   if (symbols.length === 0) return 0;
 

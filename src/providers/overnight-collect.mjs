@@ -31,12 +31,25 @@ export async function collectCandidates(config, window) {
    * 그 둘이 다음 장에서 반대로 움직입니다 -- measure-overnight-news.mjs 참고.
    */
   const covered = await query(config, `
-    SELECT DISTINCT s AS symbol
+    SELECT s AS symbol, headline
       FROM market_news_items, LATERAL unnest(related_symbols) s
      WHERE region = 'KR' AND published_at >= $1 AND published_at < $2`,
     [window.sessionFrom, window.sessionTo]);
 
+  /*
+   * 낮에 무엇이 다뤄졌는지를 **낱말로** 남깁니다. 종목 단위 참/거짓이었는데, 그러면
+   * 2026-09-08 한화오션이 막힙니다 -- 낮 기사는 VLGC 수주·소송이었고 18:55 기사는
+   * 태국 호위함 확정이라 다른 재료인데, 같은 종목이라 "이어진 것"으로 묶였습니다.
+   * 그날 밤 그 기사가 그 주의 가장 큰 재료였습니다. 낱말을 들고 있으면 rank 쪽이
+   * "같은 얘기인가"를 물을 수 있습니다.
+   */
   const coveredInSession = new Set(covered.rows.map((row) => row.symbol));
+  const coveredTokens = new Map();
+
+  for (const row of covered.rows) {
+    if (!coveredTokens.has(row.symbol)) coveredTokens.set(row.symbol, new Set());
+    for (const token of storyTokens(row.headline)) coveredTokens.get(row.symbol).add(token);
+  }
   const candidates = new Map();
   const of = (symbol) => {
     if (!candidates.has(symbol)) {
@@ -48,6 +61,7 @@ export async function collectCandidates(config, window) {
         dilution: [],
         bad: [],
         coveredInSession: coveredInSession.has(symbol),
+        coveredTokens: coveredTokens.get(symbol) ?? new Set(),
         sources: new Set()
       });
     }
@@ -96,4 +110,17 @@ export async function tradableUniverse(config, sessionDate, minTurnover) {
     [sessionDate, minTurnover]);
 
   return new Map(rows.map((row) => [row.symbol, row]));
+}
+
+/*
+ * 기사 제목의 낱말. 두 글자 이상, 한글·영숫자만. "같은 얘기인가"를 재는 데 쓰므로
+ * 숫자나 단위 같은 것은 빼고, 회사 이름은 부르는 쪽에서 뺍니다.
+ */
+export function storyTokens(headline) {
+  return new Set(
+    String(headline ?? "")
+      .split(/[^가-힣A-Za-z0-9]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 2 && !/^\d+$/.test(token))
+  );
 }

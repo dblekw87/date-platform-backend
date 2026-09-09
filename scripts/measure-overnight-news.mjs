@@ -1,6 +1,7 @@
 import { readConfig } from "../src/config.mjs";
 import { query } from "../src/db/client.mjs";
 import { classifyHeadline, classifyDisclosure } from "../src/providers/overnight-classify.mjs";
+import { storyTokens } from "../src/providers/overnight-collect.mjs";
 
 /**
  * 장 마감 뒤에 나온 재료가 다음 장에서 돈이 되는가.
@@ -127,13 +128,35 @@ for (const day of sessions) {
    * 움직이는 종목을 고르는 조건이라, 좋은 공시의 값을 보려면 나쁜 공시가 아니라
    * 공시 전체와 견줘야 합니다. 뉴스도 같습니다. [[us-short-volume-verdict]]에서
    * 수준이 아니라 기준선 대비 변화만 살아남은 것과 같은 자리입니다. */
-  const coveredInSession = new Set();
+  /* 낮에 다뤄졌는가를 낱말로 봅니다 -- 고르는 쪽(overnight-rank.mjs)과 같은 규칙.
+   * 종목 단위 참/거짓이었을 때 64 대 65로 갈렸는데, 같은 종목이라도 다른 얘기면
+   * "처음"으로 치는 규칙이 되었으니 잰 것도 그 규칙이어야 합니다. */
+  const coveredTokens = new Map();
+  const nightMaterial = new Map();
 
   for (const item of news) {
     if (item.published_at >= window.sessionFrom && item.published_at < window.sessionTo) {
-      coveredInSession.add(item.symbol);
+      if (!coveredTokens.has(item.symbol)) coveredTokens.set(item.symbol, new Set());
+      for (const token of storyTokens(item.headline)) coveredTokens.get(item.symbol).add(token);
+    }
+
+    if (item.published_at >= window.from && item.published_at < window.to && classifyHeadline(item.headline) === "material") {
+      if (!nightMaterial.has(item.symbol)) nightMaterial.set(item.symbol, []);
+      nightMaterial.get(item.symbol).push(item.headline);
     }
   }
+
+  const isNewStory = (symbol) => {
+    const day = coveredTokens.get(symbol);
+
+    if (!day || !day.size) return true;
+
+    return (nightMaterial.get(symbol) ?? []).some((headline) => {
+      const shared = [...storyTokens(headline)].filter((token) => day.has(token)).length;
+
+      return shared < 2;
+    });
+  };
 
   for (const item of news) {
     if (item.published_at < window.from || item.published_at >= window.to) continue;
@@ -188,7 +211,7 @@ for (const day of sessions) {
      * 돌던 종목은 그만큼 덜 새롭습니다. 2026-09-06 주말 후보 18종목 중 11종목이
      * 여기 해당했습니다 -- 그 구분이 값을 갖는지 재는 줄입니다.
      */
-    const first = coveredInSession.has(row.symbol) ? "이어진" : "처음";
+    const first = isNewStory(row.symbol) ? "처음" : "이어진";
 
     if (labels.has("news:material") && !labels.has("news:recap")) {
       record(`재료·${first} 나온 것`, day, row.symbol, excess.gap, excess.intraday, excess.total);

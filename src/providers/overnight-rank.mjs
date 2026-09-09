@@ -22,6 +22,8 @@
 
 /* 상한가는 다음 날 사는 자리가 아닙니다. [[leader-trade-verdict]]에서 상승률
  * 상위의 +5.6%p가 전부 상한가라 못 사는 값이었던 것과 같은 이유입니다. */
+import { storyTokens } from "./overnight-collect.mjs";
+
 const limitUpRate = 29;
 
 export function rankPicks(candidates, universe) {
@@ -70,7 +72,7 @@ export function blockReason(entry, listing) {
    * **공시가 있으면 걸지 않습니다.** 공시는 그 자체가 새 사실이라 낮에 기사가
    * 돌았는지와 무관하고, 실제로 갈라 재도 +0.62 대 +0.50으로 거의 같습니다.
    */
-  if (entry.coveredInSession && !entry.good.length) return "직전 장중에 이미 다뤄짐";
+  if (entry.coveredInSession && !entry.good.length && !hasNewStory(entry, listing)) return "직전 장중에 이미 다뤄짐";
   if (entry.dilution.length) return `희석 공시 ${entry.dilution.length}건`;
   if (entry.bad.length) return `악재 공시 ${entry.bad.length}건`;
   if (listing.halted || listing.managed) return "거래정지·관리종목";
@@ -98,4 +100,26 @@ export function tierOf(pick) {
   if (pick.good.length || pick.sourceCount >= 4) return "B";
 
   return "C";
+}
+
+/*
+ * 마감 뒤 기사 중 낮에 없던 얘기가 하나라도 있는가.
+ *
+ * 낮 헤드라인의 낱말과 겹치는 게 하나도 없으면 새 얘기입니다. 회사 이름 낱말은
+ * 빼고 봅니다 -- 그건 늘 겹치니까요. 2026-09-08 한화오션: 낮 {VLGC, 수주, 소송…},
+ * 저녁 {태국, 호위함, 확정, 6800억…} -- "수주"가 겹칠 수 있어 문턱을 "겹침 2개 미만"
+ * 으로 둡니다. 한 낱말 겹침은 같은 업종이면 흔합니다.
+ */
+function hasNewStory(entry, listing) {
+  const ownName = storyTokens(listing?.name ?? "");
+  const day = new Set([...entry.coveredTokens].filter((token) => !ownName.has(token)));
+
+  if (!day.size) return true;
+
+  return entry.material.some((article) => {
+    const tokens = [...storyTokens(article.headline)].filter((token) => !ownName.has(token));
+    const shared = tokens.filter((token) => day.has(token)).length;
+
+    return shared < 2;
+  });
 }
