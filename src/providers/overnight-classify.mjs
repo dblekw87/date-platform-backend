@@ -46,6 +46,20 @@ const speculativePattern = /기대|전망|관측|가능성|임박|촉각|주목|
  */
 const dilutionPattern = /주주배정|일반공모|유상증자|전환사채|신주인수권|CB\s*발행|BW\s*발행|무상감자|감자\s*결정|출자전환/;
 
+/*
+ * 재료 낱말이 들어 있는가 -- 복기 판정과 별개로.
+ *
+ * classifyHeadline은 복기를 먼저 보고 끝냅니다. 그것이 다음 장 후보에는 맞습니다
+ * (복기는 승률 40%로 반증된 조건이라 재료 낱말이 섞여 있어도 그 조건에 넣으면 안
+ * 됩니다). 그런데 상한가 "이유" 찾기는 다른 질문입니다 -- "RF머트리얼즈, 美 광통신주
+ * 강세에 19%↑…자사주 소각도"는 복기 모양이지만 이유(자사주 소각)를 들고 있고,
+ * 2026-09-09에 그 기사가 버려져 상한가 직전 알림이 안 갔습니다. 그쪽은 이 함수로
+ * 재료 낱말만 따로 묻습니다.
+ */
+export function mentionsMaterial(headline) {
+  return materialPattern.test(String(headline ?? ""));
+}
+
 export function classifyHeadline(headline) {
   const text = String(headline ?? "");
 

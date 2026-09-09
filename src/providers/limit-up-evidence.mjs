@@ -1,4 +1,4 @@
-import { classifyDisclosure, classifyHeadline } from "./overnight-classify.mjs";
+import { classifyDisclosure, classifyHeadline, mentionsMaterial } from "./overnight-classify.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -30,9 +30,16 @@ import { query } from "../db/client.mjs";
 
 const peerMinimumMove = 5;
 
-// 복기 기사는 이유가 아닙니다 -- "주가 13.39% 상승"은 오른 것을 다시 쓴 것이지
-// 왜 올랐는지가 아닙니다. [[overnight-material-verdict]]
-const isReason = (headline) => classifyHeadline(headline) !== "recap";
+/*
+ * 복기 기사는 이유가 아닙니다 -- "주가 13.39% 상승"은 오른 것을 다시 쓴 것이지
+ * 왜 올랐는지가 아닙니다. [[overnight-material-verdict]]
+ *
+ * 단, 복기 모양이라도 **재료 낱말을 들고 있으면** 살립니다. 직접 태깅된 기사는
+ * 종목이 지목됐다는 사실이 이미 근거이고, "강세에 19%↑…자사주 소각도"에서 앞을
+ * 보고 뒤를 버리면 이유를 손에 쥐고 놓치는 것입니다(2026-09-09 RF머트리얼즈).
+ * 다음 장 후보의 규칙은 그대로입니다 -- 거기서는 복기가 반증된 조건입니다.
+ */
+const isReason = (headline) => classifyHeadline(headline) !== "recap" || mentionsMaterial(headline);
 
 export async function loadLimitUpEvidence(config, lock, day) {
   const from = new Date(`${day}T08:00:00+09:00`);
