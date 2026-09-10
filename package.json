@@ -10,6 +10,7 @@
     "db:migrate": "node scripts/migrate.mjs",
     "dev": "node --watch src/server.mjs",
     "find": "node scripts/find-symbol.mjs",
+    "kr:aliases": "node scripts/backfill-kr-aliases.mjs",
     "kr:flags": "node scripts/backfill-kr-symbol-flags.mjs",
     "kr:industry": "node scripts/backfill-kr-industry.mjs",
     "kr:investor-flow": "node scripts/backfill-kr-investor-flow.mjs",
