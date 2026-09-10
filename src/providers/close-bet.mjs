@@ -211,7 +211,7 @@ function symbolPrefilter(day, upperShadow) {
  * 측정 스크립트가 넓은 값을 넘겨 예전 비교를 언제든 재현할 수 있게 열어 둡니다.
  * 운영 경로는 인자를 안 주므로 동작이 달라지지 않습니다.
  */
-export function closeBetCandidateSql({ day = null, since = null, upperShadow = maximumUpperShadow } = {}) {
+export function closeBetCandidateSql({ breakout = true, day = null, since = null, upperShadow = maximumUpperShadow } = {}) {
   // 내부에서 만든 날짜만 들어오지만, 문자열로 끼우는 이상 모양은 확인합니다.
   const oneDay = day && datePattern.test(day) ? day : null;
   const bounds = [
@@ -267,8 +267,10 @@ export function closeBetCandidateSql({ day = null, since = null, upperShadow = m
      AND prior_high IS NOT NULL AND prior_high_yesterday IS NOT NULL
      AND close * volume >= ${minimumTurnover}
      AND close > open
-     AND close > prior_high
-     AND prev_close <= prior_high_yesterday
+     ${breakout
+       ? `AND close > prior_high
+     AND prev_close <= prior_high_yesterday`
+       : "AND close <= prior_high"}
      AND (high - close) / nullif(high - low, 0) < ${upperShadow}
      AND (close / prev_close - 1) * 100 >= (CASE ${sizeCase("minDayMove")} END)
      AND volume / nullif(share_count, 0) * 100 >= ${minimumTurnoverRatio}`;
@@ -292,7 +294,7 @@ export function closeBetCandidateSql({ day = null, since = null, upperShadow = m
  * 같은 기사를 여러 매체가 냅니다(국내 코퍼스의 14.1%). 구두점을 걷은 제목으로
  * 하루 안에서 한 번만 남기지 않으면 세 줄이 같은 문장으로 찹니다.
  */
-async function loadEntryNews(config, rows, { until = null } = {}) {
+export async function loadEntryNews(config, rows, { perSymbol = 3, until = null } = {}) {
   const symbols = [...new Set(rows.map((row) => row.symbol))];
 
   if (symbols.length === 0) return new Map();
@@ -327,8 +329,9 @@ async function loadEntryNews(config, rows, { until = null } = {}) {
   for (const row of found) {
     const held = grouped.get(row.symbol) ?? [];
 
-    // 이른 것부터 셋. 방아쇠는 대개 앞에 있습니다.
-    if (held.length < 3) held.push({ at: row.at, headline: row.headline, url: row.original_url });
+    // 이른 것부터 셋. 방아쇠는 대개 앞에 있습니다. 부르는 쪽이 더 달라고 하면
+    // 더 줍니다 -- 복기 기사를 걸러내고 나면 진짜 재료가 네 번째일 수 있습니다.
+    if (held.length < perSymbol) held.push({ at: row.at, headline: row.headline, url: row.original_url });
 
     grouped.set(row.symbol, held);
   }
@@ -372,7 +375,7 @@ async function loadCalibration(config) {
  * 쓸 수 없습니다. 조건이 당일 10%↑에 회전율 5%↑라 그 바깥에 있을 종목은 드물지만,
  * 없다고는 못 합니다.
  */
-const liveCandidateSql = `
+export const liveCandidateSql = ({ breakout = true } = {}) => `
   WITH context AS (
     SELECT symbol,
            max(close) FILTER (WHERE rn <= ${lookback}) AS prior_high,
@@ -426,9 +429,12 @@ const liveCandidateSql = `
      AND t.change_rate >= (CASE ${sizeCase("minDayMove").replace(/coalesce\(cap, 0\)/g, "coalesce(t.market_cap, 0)")} END)
      AND t.turnover >= ${minimumTurnover}
      AND t.volume / nullif(t.market_cap / nullif(c.prev_close * (1 + t.cap_rate / 100), 0), 0) * 100 >= ${minimumTurnoverRatio}
-     -- 돌파 직후. 어제 종가가 이미 고점 위였다면 이어가는 자리입니다.
+     ${breakout
+       ? `-- 돌파 직후. 어제 종가가 이미 고점 위였다면 이어가는 자리입니다.
      AND c.prev_close * (1 + t.change_rate / 100) > c.prior_high
-     AND c.prev_close <= c.prior_high_yesterday
+     AND c.prev_close <= c.prior_high_yesterday`
+       : `-- 미돌파 쪽. 두 목록이 겹치지 않아야 각각을 따로 잴 수 있습니다.
+     AND c.prev_close * (1 + t.change_rate / 100) <= c.prior_high`}
      AND coalesce((t.high_rate - t.change_rate) / nullif(t.high_rate - t.low_rate, 0), 0) < ${maximumUpperShadow}
    ORDER BY t.turnover DESC
    LIMIT $2
@@ -457,7 +463,7 @@ export async function loadCloseBetCandidates(config, { limit = 12, sessionDate }
   // 오늘 봉이 아직 없으면 장중입니다. 그때는 표본으로 같은 조건을 계산합니다.
   const provisional = Boolean(sampleDay && barDay && sampleDay > barDay);
   const result = provisional
-    ? await query(config, liveCandidateSql, [sampleDay, limit])
+    ? await query(config, liveCandidateSql(), [sampleDay, limit])
     : await query(config, `
       WITH candidates AS (${closeBetCandidateSql({ day: barDay, since: historyBoundFor(barDay) })})
       SELECT c.*, c.session_date::text AS session_day, u.name, u.market, u.market_cap, u.trade_halted

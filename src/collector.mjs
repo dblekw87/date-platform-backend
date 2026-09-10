@@ -17,11 +17,13 @@ import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
+import { notifyOffHighCloseBet } from "./providers/offhigh-close-bet.mjs";
 import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadAfterHoursWatchlist } from "./providers/after-hours-watch.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
 import { notifyNewDelistNotices } from "./providers/us-delist-notice-alert.mjs";
+import { notifyMorningFeedback } from "./providers/morning-feedback.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
@@ -1240,6 +1242,10 @@ export function startMarketCollector(config) {
         // 종가배팅과 같은 창(15:20~15:32), 같은 이유. provider가 하루 한 번을 잠급니다.
         notifySectorFollowers(config, { minute, url: config.publicSiteUrl })
           .catch((error) => console.warn("collector: sector follower alert failed", error instanceof Error ? error.message : error));
+        // 같은 창. 종가배팅 조건에서 60일 신고점 하나만 못 맞춘 것들이고,
+        // 그중 재료가 있는 것만 보냅니다. 412세션 실측 초과 +1.37%p.
+        notifyOffHighCloseBet(config, { minute, url: config.publicSiteUrl })
+          .catch((error) => console.warn("collector: offhigh close bet alert failed", error instanceof Error ? error.message : error));
         startLimitUpAlert(config);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
@@ -1410,6 +1416,9 @@ export function startMarketCollector(config) {
     // 아침 07:30 한 번. 창과 하루 잠금은 provider가 봅니다.
     notifyNewDelistNotices(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: delist notice alert failed", error instanceof Error ? error.message : error));
+    // 아침 07:00 한 번. 어제 들어간 것과 그저께 판단의 채점. 창과 하루 잠금은 provider가 봅니다.
+    notifyMorningFeedback(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: morning feedback failed", error instanceof Error ? error.message : error));
 
     /*
      * 다음 틱은 **지금** 시각으로 다시 계산합니다.

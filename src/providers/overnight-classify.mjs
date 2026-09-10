@@ -112,3 +112,24 @@ export function classifyDisclosure(reportName, title) {
 
   return null;
 }
+
+/**
+ * 이 기사가 **오른 이유가 될 수 있는가.**
+ *
+ * `classifyHeadline`은 세 갈래로 답합니다 -- recap(복기), material(재료 낱말이
+ * 잡힌 것), null(모르겠다). 재료로 쓸 때 `=== "material"`만 받으면 사전에 없는
+ * 재료가 통째로 빠집니다: 2026-09-10 "S2W, 오픈AI '데이브레이크' 합류"는
+ * 오픈AI 보안 이니셔티브 참여인데 '합류'도 '이니셔티브'도 낱말 목록에 없어
+ * null이었습니다. 그날 그 종목은 +11.9%로 마감했습니다.
+ *
+ * 그래서 묻는 방향을 뒤집습니다 -- **복기가 아니면 이유가 될 수 있다.** 낱말
+ * 목록은 "재료를 찾는 그물"이 아니라 "복기를 걸러내는 체"로 씁니다. 복기 기사라도
+ * 재료 낱말이 들어 있으면 통과시킵니다("샘표, 자사주 30% 소각 결정에 상한가"는
+ * '상한가' 때문에 복기로 잡히지만 소각이 진짜 이유입니다).
+ *
+ * 이 판단은 원래 `limit-up-evidence.mjs` 안에 있었습니다. 종가배팅 쪽에서 같은
+ * 질문을 하게 되면서 이리로 옮겼습니다 -- 규칙이 두 벌이면 한쪽만 고쳐집니다.
+ */
+export function isReasonHeadline(headline) {
+  return classifyHeadline(headline) !== "recap" || mentionsMaterial(headline);
+}

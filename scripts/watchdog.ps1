@@ -8,6 +8,13 @@
 # 응답 여부로 판정합니다. 프로세스가 살아 있는지만 보면 멈춘 채 살아 있는 경우를
 # 놓칩니다.
 #
+# 백엔드를 띄우는 일은 직접 하지 않고 start-collector.ps1에 맡깁니다. 같은 일을 하는
+# 코드가 둘이면 로그 위치가 갈리고(여기는 collector.log, 저기는 logs/server-<날짜>.log),
+# 무엇보다 로그온 직후 스케줄러의 start-collector와 이 스크립트가 같은 초에 백엔드를
+# 하나씩 띄웠습니다(2026-09-09, 진 쪽은 EADDRINUSE). start-collector가 뮤텍스로
+# 한 번에 하나만 돌게 하므로 이쪽은 그걸 부르기만 하면 됩니다. 뮤텍스가 잡혀 있으면
+# 누군가 지금 띄우는 중이라는 뜻이니 죽이지도 띄우지도 않고 다음 바퀴를 기다립니다.
+#
 # 로그온할 때 자동으로 뜹니다(HKCU\...\Run의 "DATE watchdog"). 수동으로 돌리려면:
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\watchdog.ps1
@@ -35,6 +42,26 @@ function Test-Database {
     $state = docker inspect $container --format '{{.State.Running}}' 2>$null
     return $state -eq "true"
   } catch { return $false }
+}
+
+# start-collector.ps1이 잡는 뮤텍스입니다. 잡을 수 있으면 아무도 백엔드를 띄우는
+# 중이 아닙니다 -- 곧바로 놓아서 start-collector 쪽이 잡게 둡니다.
+function Test-StartInProgress {
+  $lock = New-Object System.Threading.Mutex($false, "Global\DateCollectorStart")
+
+  try {
+    if ($lock.WaitOne(0)) {
+      $lock.ReleaseMutex()
+      return $false
+    }
+
+    return $true
+  } catch [System.Threading.AbandonedMutexException] {
+    $lock.ReleaseMutex()
+    return $false
+  } finally {
+    $lock.Dispose()
+  }
 }
 
 # 로그온 시 자동 실행이라 손으로 한 번 더 돌리면 둘이 겹칩니다. 서로 상대를
@@ -67,14 +94,19 @@ while ($true) {
 
   # 백엔드 먼저. 프론트가 이걸 부르므로 순서가 중요합니다.
   if (-not (Test-Endpoint "http://localhost:4010/api/market-board" 120)) {
-    Write-Line "backend down - restarting"
+    if (Test-StartInProgress) {
+      Write-Line "backend down but a start-collector is running - leaving it to that"
+      Start-Sleep -Seconds 30
+      continue
+    }
+
+    Write-Line "backend down - restarting through start-collector"
     Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
       Where-Object { $_.CommandLine -like "*src/server.mjs*" } |
       ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     Start-Sleep -Seconds 3
-    Start-Process -FilePath "node" -ArgumentList "src/server.mjs" -WorkingDirectory $backend `
-      -RedirectStandardOutput "$backend\collector.log" -RedirectStandardError "$backend\collector.err.log" `
-      -WindowStyle Hidden
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+      -File "$backend\scripts\start-collector.ps1" | Out-Null
     Start-Sleep -Seconds 20
   }
 

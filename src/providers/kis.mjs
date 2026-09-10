@@ -296,7 +296,13 @@ async function loadFluctuationPage(config, token, venue, board) {
     fid_input_iscd: board,
     fid_rank_sort_cls_code: "0",
     fid_input_cnt_1: "0",
-    fid_prc_cls_code: "0",
+    // "1" ranks by the move from the previous close; "0" ranks by the move
+    // from the day's low. Measured 2026-09-10 11:30 with "0": the KOSPI page
+    // carried rows at -11.96% while 샘표 (007540), locked at +29.99% since the
+    // open, was absent - a stock that gaps straight to the limit has moved
+    // nothing from its low. That is the one kind of riser this ranking exists
+    // to find. With "1" the page is the top thirty by 등락률, in order.
+    fid_prc_cls_code: "1",
     fid_input_price_1: "",
     fid_input_price_2: "",
     fid_vol_cnt: "",

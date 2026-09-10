@@ -155,8 +155,17 @@ export function themeForIndustryCode(code) {
 
 export async function loadCorpIndex(config) {
   const cached = await corpIndex.read();
+  /*
+   * 영문 상호가 없는 캐시는 낡은 것으로 봅니다.
+   *
+   * 이 캐시는 30일짜리라, 새 필드를 붙여도 그 사이에 저장된 사본이 만료될
+   * 때까지는 필드 없는 값이 계속 나옵니다. 부르는 쪽에서는 "DART에 영문명이
+   * 없는 종목"과 구별되지 않아 조용히 빈 결과가 됩니다. 모양이 바뀌었으면
+   * 다시 받는 편이 3.6MB 한 번으로 끝납니다.
+   */
+  const hasEnglish = Object.values(cached.byStockCode).some((entry) => entry?.englishName !== undefined);
 
-  if (Object.keys(cached.byStockCode).length > 0 && Date.now() - cached.fetchedAt < corpIndexTtlMs) {
+  if (hasEnglish && Object.keys(cached.byStockCode).length > 0 && Date.now() - cached.fetchedAt < corpIndexTtlMs) {
     return cached.byStockCode;
   }
 
@@ -175,10 +184,17 @@ export async function loadCorpIndex(config) {
     const stockCode = entry.match(/<stock_code>\s*([^<\s]+)\s*<\/stock_code>/)?.[1];
     const corpCode = entry.match(/<corp_code>\s*([^<\s]+)\s*<\/corp_code>/)?.[1];
     const corpName = entry.match(/<corp_name>\s*([\s\S]*?)\s*<\/corp_name>/)?.[1];
+    // 영문 상호. 기사가 한글 상호를 안 쓰는 종목을 태깅하는 유일한 실마리입니다
+    // -- S2W처럼요. 상장 3,990종목 중 3,987종목에 들어 있습니다.
+    const englishName = entry.match(/<corp_eng_name>\s*([\s\S]*?)\s*<\/corp_eng_name>/)?.[1];
 
     // Most rows are unlisted companies, which carry no stock code.
     if (stockCode && corpCode) {
-      byStockCode[stockCode] = { corpCode, corpName: corpName ? decodeXmlText(corpName) : null };
+      byStockCode[stockCode] = {
+        corpCode,
+        corpName: corpName ? decodeXmlText(corpName) : null,
+        englishName: englishName ? decodeXmlText(englishName) : null
+      };
     }
   }
 

@@ -249,6 +249,29 @@ function Measure-NewsGap {
 
 Write-Line "--- start-collector ---"
 
+# Three things can call this within the same few seconds of a logon: the
+# scheduled task, the watchdog, and anyone running it by hand. The port guard
+# below only covers the instant it runs; between it and Start-Process sit the
+# Docker wait, the postgres wait and the news-gap measurement, which is exactly
+# where the watchdog's own start landed on 2026-09-09 (23:51:27 against this
+# script's 23:51:29, and the loser died on EADDRINUSE). A named mutex makes the
+# whole run single-instance, and Test-Port is asked once more right before the
+# launch for whatever slipped past the mutex. An abandoned mutex - the previous
+# holder died mid-run - counts as acquired, since there is nobody left to wait for.
+$startLock = New-Object System.Threading.Mutex($false, "Global\DateCollectorStart")
+$lockHeld = $false
+
+try {
+  $lockHeld = $startLock.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+  $lockHeld = $true
+}
+
+if (-not $lockHeld) {
+  Write-Line "another start-collector is already running - exiting"
+  exit 0
+}
+
 # A dev window already holding :4010 is the normal case when someone is working.
 # Starting a second listener would only fail on EADDRINUSE and leave a confusing
 # error in the log, so treat it as done.
@@ -308,6 +331,16 @@ if (-not (Test-Path $node)) {
 }
 
 Measure-NewsGap -NodePath $node
+
+# Second look at the port: the waits above can span minutes, and a backend that
+# came up meanwhile must not be joined by a second one.
+if (Test-Port -Port $backendPort) {
+  Write-Line "backend came up on :$backendPort while waiting - nothing to start"
+  Invoke-DailyBackup
+  Invoke-DailyAnalysis
+  Invoke-NewsBackfill
+  exit 0
+}
 
 # Start-Process truncates its redirect targets, so a second start on the same
 # day silently erases the first one's output - which is how the morning of the

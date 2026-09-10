@@ -1,3 +1,4 @@
+import { aliasAppears } from "./symbol-alias.mjs";
 import { readThroughCache } from "../cache.mjs";
 import { query } from "../db/client.mjs";
 import { fetchJson, fetchText } from "../http.mjs";
@@ -1073,7 +1074,9 @@ export function attachKrUniverseTags(headlines, nameIndex, { limit = 4 } = {}) {
 
     for (const entry of nameIndex) {
       if (already.includes(entry.symbol) || found.includes(entry.symbol)) continue;
-      if (!nameAppears(text, entry.name)) continue;
+      // 영문 별칭은 규칙이 다릅니다 -- 뒤에 영문 낱말이 이어지면 다른 회사입니다
+      // ("NANO Nuclear"는 나노가 아닙니다). symbol-alias.mjs에 실측을 적었습니다.
+      if (!(entry.isAlias ? aliasAppears(text, entry.name) : nameAppears(text, entry.name))) continue;
 
       found.push(entry.symbol);
       // 맞춘 이름은 지웁니다. 안 지우면 삼성전자를 맞춘 자리에서 삼성전기까지

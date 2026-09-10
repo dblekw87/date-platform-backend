@@ -263,13 +263,22 @@ export async function loadKrNameIndex(config) {
   if (!config.databaseUrl) return [];
   if (nameIndex.rows.length > 0 && Date.now() - nameIndex.at < nameIndexTtlMs) return nameIndex.rows;
 
+  /*
+   * 한글 상호에 **영문 별칭**을 얹습니다.
+   *
+   * 기사가 한글 상호를 안 쓰면 그 종목은 재료가 없는 것으로 처리됩니다 --
+   * 2026-09-10 에스투더블유가 그랬습니다(기사 여섯 중 다섯이 "S2W"). 별칭은
+   * `kr_symbol_aliases`에 있고, 무엇이 걸리는지 표에서 볼 수 있습니다.
+   */
   const result = await query(config, `
-    SELECT symbol, name FROM kr_daily_universe
+    SELECT symbol, name, false AS is_alias FROM kr_daily_universe
      WHERE session_date = (SELECT max(session_date) FROM kr_daily_universe)
        AND length(name) >= 2
+     UNION ALL
+    SELECT symbol, alias AS name, true AS is_alias FROM kr_symbol_aliases
   `);
   const rows = result.rows
-    .map((row) => ({ name: row.name, symbol: row.symbol }))
+    .map((row) => ({ isAlias: row.is_alias, name: row.name, symbol: row.symbol }))
     .sort((left, right) => right.name.length - left.name.length);
 
   nameIndex = { at: Date.now(), rows };
