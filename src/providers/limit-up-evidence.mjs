@@ -1,4 +1,4 @@
-import { classifyDisclosure, classifyHeadline, mentionsMaterial } from "./overnight-classify.mjs";
+import { classifyDisclosure, classifyHeadline, isReasonHeadline } from "./overnight-classify.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -39,7 +39,7 @@ const peerMinimumMove = 5;
  * 보고 뒤를 버리면 이유를 손에 쥐고 놓치는 것입니다(2026-09-09 RF머트리얼즈).
  * 다음 장 후보의 규칙은 그대로입니다 -- 거기서는 복기가 반증된 조건입니다.
  */
-const isReason = (headline) => isReasonHeadline(headline);
+const isReason = isReasonHeadline;
 
 export async function loadLimitUpEvidence(config, lock, day) {
   const from = new Date(`${day}T08:00:00+09:00`);
