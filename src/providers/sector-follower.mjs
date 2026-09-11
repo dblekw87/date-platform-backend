@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadKrQuotes } from "./kis.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -192,7 +193,6 @@ export async function recordSectorFollowers(config, day, picks) {
 const alertMinute = 15 * 60 + 20;
 const stopMinute = 15 * 60 + 32;
 
-let sentDay = null;
 let running = false;
 
 export async function notifySectorFollowers(config, { minute, url } = {}) {
@@ -201,11 +201,13 @@ export async function notifySectorFollowers(config, { minute, url } = {}) {
 
   const day = sessionDate("KR");
 
-  if (sentDay === day) return 0;
-
   running = true;
 
   try {
+    // 하루 한 번. 기록(kr_signal_outcomes)은 ON CONFLICT라 다시 돌아도 안 늘지만,
+    // 알림은 그렇지 않으므로 끝낸 날을 저장소에 남깁니다.
+    if ((await loadAlertSent(config, "sector_follower", day)).has("done")) return 0;
+
     const picks = await loadSectorFollowers(config, day, { live: true });
 
     if (!picks.length) return 0;
@@ -214,10 +216,9 @@ export async function notifySectorFollowers(config, { minute, url } = {}) {
     const saved = await recordSectorFollowers(config, day, picks);
     const worthSending = picks.filter((pick) => Number.isFinite(pick.leader.rate) && pick.leader.rate >= alertLeaderMinimumRate);
 
-    sentDay = day;
-
     // 대장이 오른 날이 없으면 조용히. 기록은 이미 남았습니다.
     if (!worthSending.length) {
+      await markAlertSent(config, "sector_follower", day, "done", { note: `기록 ${saved}건, 알림 없음` });
       console.log(`섹터 2등주 · 기록 ${saved}건, 알림 없음(대장 +${alertLeaderMinimumRate}% 이상 없음)`);
 
       return 0;
@@ -225,6 +226,7 @@ export async function notifySectorFollowers(config, { minute, url } = {}) {
 
     if (!await notify(config, { text: message(worthSending, day), url })) return 0;
 
+    await markAlertSent(config, "sector_follower", day, "done", { note: worthSending.map((pick) => pick.follower.name).join(", ").slice(0, 200) });
     console.log(`알림: 섹터 2등주 · ${worthSending.map((pick) => pick.follower.name).join(", ")} (기록 ${saved})`);
 
     return worthSending.length;

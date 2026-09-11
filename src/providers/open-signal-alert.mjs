@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadUsPremarketMovers } from "./premarket.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 
@@ -24,8 +25,6 @@ import { notify, notifyConfigured } from "./notify.mjs";
 const minPreGain = 0.5;
 const maxPreGain = 1.5;
 
-let sentDay = null;
-const sent = new Set();
 let running = false;
 
 function line(mover) {
@@ -47,8 +46,7 @@ export async function notifyOpenSignals(config, { day, url } = {}) {
   running = true;
 
   try {
-    if (sentDay !== day) { sentDay = day; sent.clear(); }
-
+    const sent = new Set((await loadAlertSent(config, "us_open_signal", day)).keys());
     const { movers } = await loadUsPremarketMovers(config);
     let posted = 0;
 
@@ -61,6 +59,7 @@ export async function notifyOpenSignals(config, { day, url } = {}) {
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
       if (!await notify(config, { text: line(mover), url })) continue;
 
+      await markAlertSent(config, "us_open_signal", day, mover.symbol, { note: `프리 +${(mover.preGain * 100).toFixed(0)}%` });
       sent.add(mover.symbol);
       posted += 1;
       console.log(`알림: 미국 개장 신호 · ${mover.symbol} 프리 +${(mover.preGain * 100).toFixed(0)}%`);

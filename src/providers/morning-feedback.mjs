@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { query } from "../db/client.mjs";
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { sessionDate } from "./market-session.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -39,7 +40,6 @@ const kinds = [
 // 종가에 실제로 사는 셋은 종목까지 적고, 나머지는 건수와 평균만 적습니다.
 const listedKinds = new Set(["close_bet", "offhigh_close_bet", "sector_follower", "user_close_bet"]);
 
-let sentDay = null;
 let running = false;
 
 export async function notifyMorningFeedback(config, { minute, url } = {}) {
@@ -48,24 +48,24 @@ export async function notifyMorningFeedback(config, { minute, url } = {}) {
 
   const day = sessionDate("KR");
 
-  if (sentDay === day) return 0;
-
   running = true;
 
   try {
+    // 하루 한 통. 끝낸 날은 저장소에 남아 창 안에서 재기동해도 또 가지 않습니다.
+    if ((await loadAlertSent(config, "morning_feedback", day)).has("done")) return 0;
+
     // 휴장일 아침에는 새로 들어간 것도 채점된 것도 없습니다.
     if (!await isKrMarketOpen(config)) {
-      sentDay = day;
+      await markAlertSent(config, "morning_feedback", day, "done", { note: "휴장" });
 
       return 0;
     }
 
     const text = await buildMorningFeedback(config, { day });
 
-    sentDay = day;
-
     if (!await notify(config, { text, url })) return 0;
 
+    await markAlertSent(config, "morning_feedback", day, "done");
     console.log(`알림: 아침 피드백 · ${day}`);
 
     return 1;

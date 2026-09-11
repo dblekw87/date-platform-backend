@@ -1,4 +1,5 @@
 import { query } from "../db/client.mjs";
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 
 /**
@@ -54,8 +55,6 @@ const maximumLeadCap = 20e12;
 // 섹터가 아닌 라벨. 이것으로 묶으면 "미분류가 오늘의 주도 섹터"가 됩니다.
 const notSectors = new Set(["ETF", "미분류", "개별 이슈", "거래대금 급증", "소형주 급등"]);
 
-let sentDay = null;
-let sentKey = "";
 let running = false;
 
 const eok = (won) => `${Math.round(Number(won) / 1e8).toLocaleString("ko-KR")}억`;
@@ -174,8 +173,8 @@ export async function notifyLeaders(config, { day, minute, url } = {}) {
   running = true;
 
   try {
-    if (sentDay !== day) { sentDay = day; sentKey = ""; }
-
+    // 오늘 마지막으로 보낸 섹터 순서. 재기동해도 남아야 같은 순서를 또 보내지 않습니다.
+    const sentKey = (await loadAlertSent(config, "leader_sector", day)).get("ranking")?.note ?? "";
     const groups = bySector(await snapshot(config, day));
 
     if (groups.length === 0) return 0;
@@ -200,7 +199,7 @@ export async function notifyLeaders(config, { day, minute, url } = {}) {
     // 한 통이라도 나갔으면 보낸 것으로 칩니다. 전부 실패했을 때만 다시 시도합니다.
     if (posted === 0) return 0;
 
-    sentKey = key;
+    await markAlertSent(config, "leader_sector", day, "ranking", { note: key });
     console.log(`알림: 주도 섹터 ${posted}통 · ${groups.map((group) => group.sector).join(" > ")}`);
 
     return posted;

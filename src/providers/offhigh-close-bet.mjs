@@ -1,6 +1,7 @@
 import { closeBetCandidateSql, historyBoundFor, liveCandidateSql, loadEntryNews } from "./close-bet.mjs";
 import { isReasonHeadline } from "./overnight-classify.mjs";
 import { isEtfLike, isNonOperatingEquity } from "./themes.mjs";
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
 import { sessionDate } from "./market-session.mjs";
@@ -39,7 +40,6 @@ const stopMinute = 15 * 60 + 32;
 // 한 통에 들어갈 만큼만. 재료가 있는 것만 보내므로 대개 두세 종목입니다.
 const alertLimit = 8;
 
-let sentDay = null;
 let running = false;
 
 export async function notifyOffHighCloseBet(config, { minute, url } = {}) {
@@ -48,18 +48,19 @@ export async function notifyOffHighCloseBet(config, { minute, url } = {}) {
 
   const day = sessionDate("KR");
 
-  if (sentDay === day) return 0;
-
   running = true;
 
   try {
+    // 하루 한 번. 기록은 ON CONFLICT라 다시 돌아도 안 늘지만 알림은 그렇지 않으므로
+    // 끝낸 날을 저장소에 남깁니다 -- 창 안에서 재기동해도 또 가지 않습니다.
+    if ((await loadAlertSent(config, "offhigh_close_bet", day)).has("done")) return 0;
+
     const candidates = await loadOffHighCandidates(config, { day });
     const saved = await recordOffHighCloseBet(config, day, candidates);
     const withMaterial = candidates.filter((row) => row.material).slice(0, alertLimit);
 
-    sentDay = day;
-
     if (withMaterial.length === 0) {
+      await markAlertSent(config, "offhigh_close_bet", day, "done", { note: `기록 ${saved}건, 알림 없음` });
       console.log(`미돌파 종가배팅 · 기록 ${saved}건, 알림 없음(재료 있는 종목 없음)`);
 
       return 0;
@@ -67,6 +68,7 @@ export async function notifyOffHighCloseBet(config, { minute, url } = {}) {
 
     if (!await notify(config, { text: message(withMaterial, day, candidates.length), url })) return 0;
 
+    await markAlertSent(config, "offhigh_close_bet", day, "done", { note: withMaterial.map((row) => row.name ?? row.symbol).join(", ").slice(0, 200) });
     console.log(`알림: 미돌파 종가배팅 · ${withMaterial.map((row) => row.name ?? row.symbol).join(", ")} (기록 ${saved})`);
 
     return withMaterial.length;

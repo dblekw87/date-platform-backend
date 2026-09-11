@@ -1,4 +1,4 @@
-import { query } from "../db/client.mjs";
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitPairCandidates } from "./limit-pair.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 
@@ -15,9 +15,9 @@ import { notify, notifyConfigured } from "./notify.mjs";
  * 등급이 올라갈 때는 다시 보냅니다. "상한가 진행중"과 "실제로 잠김"은 다른 사건이고,
  * 실측에서 성적이 갈리는 지점도 거기입니다(잠기는 순간 +2.58%p로 뜀).
  *
- * **보낸 기록은 프로세스가 아니라 저장소에 둡니다.** 메모리 Map이던 시절, 2026-09-11
- * 11:15 장중 재기동 한 번에 오전 짝 여섯 통이 같은 등급으로 다시 나갔습니다. 표는
- * 날짜·짝 단위라 자정에 비울 것도 없습니다 -- 어제 행은 오늘 조회에 걸리지 않습니다.
+ * **보낸 기록은 프로세스가 아니라 저장소에 둡니다** (alert-sent.mjs). 메모리 Map이던
+ * 시절, 2026-09-11 11:15 장중 재기동 한 번에 오전 짝 여섯 통이 같은 등급으로 다시
+ * 나갔습니다.
  */
 
 const tierRank = { "상한가 진행중": 1, "상한가·여유": 2, "상한가": 2, "상한가·밀착": 3 };
@@ -31,27 +31,6 @@ function rankOf(tier) {
 /** 짝의 신원. 순서와 무관합니다 -- 이유는 notifyNewPairs 안의 주석에. */
 export function pairKey(pair) {
   return [pair.leader.symbol, pair.second.symbol].sort().join("|");
-}
-
-/** 오늘 이미 보낸 짝과 그 등급. 틱마다 한 번 읽습니다. */
-export async function loadSentRanks(config, day) {
-  const { rows } = await query(config, `
-    SELECT pair_key, rank FROM kr_pair_alert_sent WHERE session_date = $1::date`, [day]);
-
-  return new Map(rows.map((row) => [row.pair_key, Number(row.rank)]));
-}
-
-/**
- * 보낸 뒤에 적습니다. 같은 짝이 더 높은 등급으로 다시 나가면 등급만 올립니다 --
- * 낮은 등급으로 덮어쓰면 다음 틱에 같은 알림이 또 갑니다.
- */
-export async function recordSent(config, day, key, tier, rank) {
-  await query(config, `
-    INSERT INTO kr_pair_alert_sent (session_date, pair_key, rank, tier)
-    VALUES ($1::date, $2, $3, $4)
-    ON CONFLICT (session_date, pair_key) DO UPDATE
-      SET rank = EXCLUDED.rank, tier = EXCLUDED.tier, sent_at = now()
-      WHERE kr_pair_alert_sent.rank < EXCLUDED.rank`, [day, key, rank, tier]);
 }
 
 /*
@@ -123,7 +102,8 @@ export async function notifyNewPairs(config, { day, url } = {}) {
 
   try {
     const pairs = await loadLimitPairCandidates(config);
-    const sent = await loadSentRanks(config, day);
+    // 짝 → 오늘 보낸 가장 높은 등급.
+    const sent = new Map([...await loadAlertSent(config, "limit_pair", day)].map(([key, row]) => [key, row.rank]));
     let posted = 0;
 
     for (const pair of pairs) {
@@ -165,7 +145,7 @@ export async function notifyNewPairs(config, { day, url } = {}) {
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
       if (!ok) continue;
 
-      await recordSent(config, day, key, pair.tier, rank);
+      await markAlertSent(config, "limit_pair", day, key, { note: pair.tier, rank });
       sent.set(key, rank);
       posted += 1;
       console.log(`알림: 짝꿍 알림 · ${pair.leader.name} → ${pair.second.name} [${pair.tier}]`);

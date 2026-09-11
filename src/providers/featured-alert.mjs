@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
 
@@ -22,10 +23,14 @@ const alertIntervalMs = 5 * 60_000;
 
 let lastRunAt = 0;
 let running = false;
-// 켠 시각부터. 재시작할 때 그날 것을 전부 다시 보내지 않게 합니다.
+/*
+ * 창의 아래쪽. 처음엔 켠 시각입니다 -- 재시작할 때 그날 것을 전부 다시 보내지
+ * 않게. 다만 오늘 이미 보낸 기록이 있으면 그 마지막 발송 시각부터 봅니다 -- 꺼져
+ * 있던 사이에 들어온 기사를 건너뛰지 않으려고요. 같은 기사가 두 번 가는 것은
+ * 보낸 키 기록(alert-sent.mjs)이 막습니다.
+ */
 let since = new Date();
-let seenDay = null;
-const seen = new Set();
+let sinceDay = null;
 
 export function featuredAlertDue(now = Date.now()) {
   return now - lastRunAt >= alertIntervalMs;
@@ -44,9 +49,14 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
   lastRunAt = Date.now();
 
   try {
-    if (seenDay !== day) {
-      seenDay = day;
-      seen.clear();
+    const seen = await loadAlertSent(config, "featured", day);
+
+    if (sinceDay !== day) {
+      sinceDay = day;
+
+      const lastSentAt = [...seen.values()].reduce((latest, row) => (row.sentAt > latest ? row.sentAt : latest), null);
+
+      if (lastSentAt && lastSentAt < since) since = lastSentAt;
     }
 
     /*
@@ -84,7 +94,7 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
 
     if (!await notify(config, { text })) return 0;
 
-    for (const row of fresh) seen.add(row.key);
+    for (const row of fresh) await markAlertSent(config, "featured", day, row.key, { note: row.symbol });
 
     console.log(`알림: 특징주 ${fresh.length}건`);
 

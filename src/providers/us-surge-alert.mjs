@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadDelistRisk, riskLine } from "./us-delist-risk.mjs";
 import { loadUsMarketGainers } from "./us-market-gainers.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -32,8 +33,6 @@ const minTurnover = 20_000_000;
 // 하루 상한. 조건이 잘못 잡혀 있어도 밤새 스무 통이 오는 일은 없어야 합니다.
 const maxPerSession = 5;
 
-let sentDay = null;
-const sent = new Set();
 let running = false;
 
 /*
@@ -66,8 +65,7 @@ export async function notifyUsSurges(config, { day, url } = {}) {
   running = true;
 
   try {
-    if (sentDay !== day) { sentDay = day; sent.clear(); }
-
+    const sent = new Set((await loadAlertSent(config, "us_surge", day)).keys());
     const rows = await loadUsMarketGainers(config, { minPercent: 20 });
     const risks = await loadDelistRisk(config, rows.map((row) => row.symbol)).catch(() => new Map());
 
@@ -85,6 +83,7 @@ export async function notifyUsSurges(config, { day, url } = {}) {
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
       if (!await notify(config, { text: line(row, risks.get(row.symbol)), url })) continue;
 
+      await markAlertSent(config, "us_surge", day, row.symbol, { note: `+${row.changePercent.toFixed(0)}%` });
       sent.add(row.symbol);
       posted += 1;
       console.log(`알림: 미국 급등 · ${row.symbol} +${row.changePercent.toFixed(0)}% · 거래대금 $${(row.turnover / 1e6).toFixed(0)}M`);

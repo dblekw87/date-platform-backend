@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadNewDelistNotices } from "./us-delist-risk.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { sessionDate } from "./market-session.mjs";
@@ -16,7 +17,6 @@ import { sessionDate } from "./market-session.mjs";
 const alertMinute = 7 * 60 + 30;
 const stopMinute = 7 * 60 + 45;
 
-let sentDay = null;
 let running = false;
 
 export async function notifyNewDelistNotices(config, { minute, url } = {}) {
@@ -25,16 +25,19 @@ export async function notifyNewDelistNotices(config, { minute, url } = {}) {
 
   const day = sessionDate("KR");
 
-  if (sentDay === day) return 0;
-
   running = true;
 
   try {
+    // 하루 한 통. 끝낸 날은 저장소에 남아 창 안에서 재기동해도 또 가지 않습니다.
+    if ((await loadAlertSent(config, "us_delist_notice", day)).has("done")) return 0;
+
     const rows = await loadNewDelistNotices(config, { sinceDays: 2, limit: 12 });
 
-    sentDay = day;
+    if (!rows.length) {
+      await markAlertSent(config, "us_delist_notice", day, "done", { note: "새 통지 없음" });
 
-    if (!rows.length) return 0;
+      return 0;
+    }
 
     const lines = [`[미국 상폐위험] 새 상장유지 미달 통지 ${rows.length}종목 · 최근 2일 접수`, ""];
 
@@ -52,6 +55,7 @@ export async function notifyNewDelistNotices(config, { minute, url } = {}) {
 
     if (!await notify(config, { text: lines.join("\n"), url: null })) return 0;
 
+    await markAlertSent(config, "us_delist_notice", day, "done", { note: rows.map((row) => row.symbol).join(", ").slice(0, 200) });
     console.log(`알림: 미국 상폐위험 ${rows.length}종목`);
 
     return rows.length;

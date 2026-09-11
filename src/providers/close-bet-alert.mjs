@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadCloseBetCandidates } from "./close-bet.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { sessionDate } from "./market-session.mjs";
@@ -20,11 +21,10 @@ import { sessionDate } from "./market-session.mjs";
 const alertMinute = 15 * 60 + 20;
 const stopMinute = 15 * 60 + 32;
 
-let sentDay = null;
 let running = false;
 
 export function closeBetAlertDue(minute) {
-  return minute >= alertMinute && minute < stopMinute && sentDay !== sessionDate("KR");
+  return minute >= alertMinute && minute < stopMinute;
 }
 
 export async function notifyCloseBet(config, { minute, url } = {}) {
@@ -35,6 +35,10 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 
   try {
     const day = sessionDate("KR");
+
+    // 하루 한 통. 기록이 저장소에 있어 15:25에 재기동해도 15:20 것을 또 보내지 않습니다.
+    if ((await loadAlertSent(config, "close_bet", day)).has("sent")) return 0;
+
     const candidates = await loadCloseBetCandidates(config, { limit: 10 });
     // 오늘 것만. 장이 열리기 전이면 확정 경로가 어제 목록을 돌려주는데, 화면에는
     // 그게 맞고 알림에는 아닙니다 -- 짝꿍이 2026-08-28에 겪은 자리와 같습니다.
@@ -55,7 +59,7 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 
     if (!ok) return 0;
 
-    sentDay = day;
+    await markAlertSent(config, "close_bet", day, "sent", { note: today.map((row) => row.name).join(", ").slice(0, 200) });
     console.log(`알림: 종가배팅 · ${today.map((row) => row.name).join(", ")}`);
 
     return today.length;

@@ -1,3 +1,4 @@
+import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitUpEvidence } from "./limit-up-evidence.mjs";
 import { loadLockedLimitUps, loadNearLimitUps } from "./limit-up-detect.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -28,9 +29,12 @@ const alertIntervalMs = 60_000;
 
 let lastRunAt = 0;
 let running = false;
-let sentDay = null;
-const sent = new Set();
-const sentNear = new Set();
+let awaitingDay = null;
+/*
+ * 이유가 없어 미뤄둔 잠김. 이것만 메모리에 둡니다 -- 보낸 기록이 아니라 "아직
+ * 안 보낸" 목록이고, 잠긴 채인 종목은 다음 틱의 본 루프가 다시 집어 올립니다.
+ * 보낸 기록(sent·sentNear)은 alert-sent.mjs에 있어 재기동해도 남습니다.
+ */
 const awaitingReason = new Map();
 
 export function limitUpAlertDue(now = Date.now()) {
@@ -47,13 +51,13 @@ export async function notifyLimitUps(config, { url } = {}) {
   try {
     const day = sessionDate("KR");
 
-    if (sentDay !== day) {
-      sentDay = day;
-      sent.clear();
-      sentNear.clear();
+    if (awaitingDay !== day) {
+      awaitingDay = day;
       awaitingReason.clear();
     }
 
+    const sent = new Set((await loadAlertSent(config, "limit_up", day)).keys());
+    const sentNear = new Set((await loadAlertSent(config, "limit_up_near", day)).keys());
     const locks = await loadLockedLimitUps(config, day);
     let posted = 0;
 
@@ -82,6 +86,7 @@ export async function notifyLimitUps(config, { url } = {}) {
 
       if (!await notify(config, { text: firstMessage(lock, evidence), url })) continue;
 
+      await markAlertSent(config, "limit_up", day, lock.symbol, { note: evidence.kind });
       sent.add(lock.symbol);
       // 앞선 틱에 이유가 없어 대기 목록에 올라 있었을 수 있습니다. 여기서 안 지우면
       // 바로 아래 followUp이 같은 종목을 한 번 더 보냅니다 -- 2026-09-07 082850이
@@ -91,8 +96,8 @@ export async function notifyLimitUps(config, { url } = {}) {
       console.log(`알림: 상한가 · ${lock.name} ${lock.minutes}분 · 근거 ${evidence.kind}`);
     }
 
-    posted += await followUp(config, day, url);
-    posted += await nearPass(config, day, url);
+    posted += await followUp(config, day, url, sent);
+    posted += await nearPass(config, day, url, sent, sentNear);
 
     return posted;
   } catch (error) {
@@ -118,7 +123,7 @@ export async function notifyLimitUps(config, { url } = {}) {
  * 같은 테마 추정은 여기서 빼둡니다. 잠긴 뒤에는 "왜 올랐나"를 설명하는 자리라
  * 약한 근거도 값이 있지만, 여기는 **지금 살까**를 묻는 자리입니다.
  */
-async function nearPass(config, day, url) {
+async function nearPass(config, day, url, sent, sentNear) {
   const near = await loadNearLimitUps(config, day);
   let posted = 0;
 
@@ -131,6 +136,7 @@ async function nearPass(config, day, url) {
 
     if (!await notify(config, { text: nearMessage(stock, evidence), url })) continue;
 
+    await markAlertSent(config, "limit_up_near", day, stock.symbol, { note: evidence.kind });
     sentNear.add(stock.symbol);
     posted += 1;
     console.log(`알림: 상한가 근접 · ${stock.name} +${stock.top_rate.toFixed(1)}% · 근거 ${evidence.kind}`);
@@ -145,7 +151,7 @@ async function nearPass(config, day, url) {
  * 이것이 그 종목의 **첫 통**입니다 -- 잠겼을 때는 아무것도 안 보냈으니까요.
  * 그래서 잠긴 사실까지 같이 적는 firstMessage를 씁니다.
  */
-async function followUp(config, day, url) {
+async function followUp(config, day, url, sent) {
   let posted = 0;
 
   for (const [symbol, lock] of [...awaitingReason]) {
@@ -164,6 +170,7 @@ async function followUp(config, day, url) {
     // 첫 통을 안 보냈으므로 이것이 그 종목의 첫 통입니다 -- 잠긴 사실까지 같이
     // 적어야 합니다.
     if (await notify(config, { text: firstMessage(lock, evidence), url })) {
+      await markAlertSent(config, "limit_up", day, symbol, { note: evidence.kind });
       sent.add(symbol);
       posted += 1;
       console.log(`알림: 상한가(이유 확인) · ${lock.name} · 근거 ${evidence.kind}`);
