@@ -296,8 +296,14 @@ function naverDevelopersFeed(config, query) {
  * 없습니다. 주말을 메우는 일은 여전히 구글 뉴스(after:/before:)의 몫입니다.
  *
  * 2026-08-28 응답을 확인하고 고른 열 곳입니다. 매일경제는 브라우저 헤더가
- * 없으면 403을 돌려주므로 전부에 같은 헤더를 붙입니다. 이데일리와 서울경제는
- * 각각 갱신이 멈춰 있고 경로가 없어 뺐습니다.
+ * 없으면 403을 돌려주므로 전부에 같은 헤더를 붙입니다. 서울경제는 경로가 없어
+ * 뺐습니다.
+ *
+ * 2026-09-12에 둘을 더했습니다. 이데일리는 8-28에 본 `edaily.co.kr/rss/...`가
+ * 멈춰 있어 뺐던 것인데 `rss.edaily.co.kr` 쪽은 살아 있고, 그 사이 7일치 corpus에
+ * 이데일리 본지 기사가 0건이라 매체 하나가 통째로 빠져 있었습니다. 인포스탁데일리는
+ * 마감체크·시황레이더·테마시황 같은 종목 기사가 하루 25건쯤 나오는데 구글 검색으로는
+ * 주 42건만 걸렸습니다.
  */
 const koreanPressFeeds = [
   { label: "헤드라인", name: "한국경제", url: "https://www.hankyung.com/feed/finance" },
@@ -309,7 +315,11 @@ const koreanPressFeeds = [
   { label: "헤드라인", name: "아시아경제", url: "https://www.asiae.co.kr/rss/stock.htm" },
   { label: "헤드라인", name: "뉴시스", url: "https://newsis.com/RSS/economy.xml" },
   { label: "헤드라인", name: "조선비즈", url: "https://biz.chosun.com/arc/outboundfeeds/rss/category/stock/?outputType=xml" },
-  { label: "헤드라인", name: "연합인포맥스", url: "https://news.einfomax.co.kr/rss/allArticle.xml" }
+  { label: "헤드라인", name: "연합인포맥스", url: "https://news.einfomax.co.kr/rss/allArticle.xml" },
+  // http인 이유: 이 서버는 TLS 1.0/1.1만 받아 Node fetch가 ERR_SSL_UNSUPPORTED_PROTOCOL로
+  // 거부합니다(2026-09-12 실측, curl은 통과). 공개 RSS라 평문으로 받아도 잃는 것이 없습니다.
+  { label: "헤드라인", name: "이데일리", url: "http://rss.edaily.co.kr/stock_news.xml" },
+  { label: "헤드라인", name: "인포스탁데일리", url: "https://www.infostockdaily.co.kr/rss/allArticle.xml" }
 ];
 
 /*
