@@ -1,5 +1,5 @@
 import { readConfig } from "../src/config.mjs";
-import { fetchPressFeed } from "../src/providers/news.mjs";
+import { fetchPressFeed, koreanPressFeeds } from "../src/providers/news.mjs";
 
 /**
  * 뉴스 소스가 실제로 응답하는지 하나씩 찔러 봅니다.
@@ -81,20 +81,24 @@ await probe("네이버 개발자센터", () => {
   );
 });
 
-const press = [
-  ["한국경제 증권", "https://www.hankyung.com/feed/finance"],
-  ["한국경제 경제", "https://www.hankyung.com/feed/economy"],
-  ["매일경제 증권", "https://www.mk.co.kr/rss/50200011/"],
-  ["파이낸셜뉴스", "https://www.fnnews.com/rss/r20/fn_realnews_stock.xml"],
-  ["머니투데이", "https://rss.mt.co.kr/mt_news.xml"],
-  ["연합뉴스 경제", "https://www.yna.co.kr/rss/economy.xml"],
-  ["아시아경제 증권", "https://www.asiae.co.kr/rss/stock.htm"],
-  ["뉴시스 경제", "https://newsis.com/RSS/economy.xml"],
-  ["조선비즈 증권", "https://biz.chosun.com/arc/outboundfeeds/rss/category/stock/?outputType=xml"],
-  ["연합인포맥스", "https://news.einfomax.co.kr/rss/allArticle.xml"]
-];
+/*
+ * 목록을 여기에 다시 적지 않습니다.
+ *
+ * 적어 뒀었고, 2026-09-12에 이데일리·인포스탁데일리를 news.mjs에 더했을 때 이쪽은
+ * 그대로였습니다. 점검이 12곳을 "다 살아 있다"고 말하는 동안 수집기는 14곳을
+ * 읽고 있었고, **점검이 못 보는 두 곳은 죽어도 점검에 안 나옵니다.** 목록이 둘이면
+ * 둘 중 하나는 반드시 낡습니다.
+ *
+ * 한국경제처럼 한 매체가 두 경로를 쓰는 곳이 있어 이름만으로는 줄이 구별되지
+ * 않습니다. 겹치는 이름에만 경로 끝을 붙입니다.
+ */
+const feedLabel = (feed, feeds) => feeds.filter((other) => other.name === feed.name).length > 1
+  ? `${feed.name} ${new URL(feed.url).pathname.split("/").filter(Boolean).pop()}`
+  : feed.name;
 
-for (const [name, url] of press) await probe(name, () => rssCount(url));
+for (const feed of koreanPressFeeds) {
+  await probe(feedLabel(feed, koreanPressFeeds), () => rssCount(feed.url));
+}
 
 console.log("");
 console.log("뉴스 소스 점검");

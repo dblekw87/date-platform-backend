@@ -9,7 +9,7 @@ import { calibrateCloseBet, calibrateLimitPair } from "./providers/calibration.m
 import { collectKrDailyBars } from "./providers/kr-daily-bars.mjs";
 import { recordKrListings } from "./providers/kr-listings.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
-import { loadSymbolThemes } from "./providers/naver-themes.mjs";
+import { loadSymbolThemes, refreshThemes, themeDictionaryAgeMs } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
@@ -793,6 +793,48 @@ function startPairAlert(config, afterHours) {
     .catch((error) => console.warn("collector: pair alert failed", error instanceof Error ? error.message : error));
 }
 
+/*
+ * 사전의 원본을 되받아옵니다.
+ *
+ * 아래 startThemeRefresh는 kr_theme_members를 **읽기만** 합니다. 표를 채우는 것은
+ * refreshThemes이고, 그것을 부르는 곳은 `npm run kr:themes` 수동 실행뿐이었습니다.
+ * 그래서 표는 2026-08-18에 한 번 쓰이고 26일 동안 그대로였고, 그 사이 네이버가
+ * 사이트를 갈아엎어 읽는 쪽까지 죽었는데도 아무 일도 일어나지 않았습니다
+ * (naver-themes.mjs 머리말). **아무도 돌리지 않는 참조 데이터는 낡았다고 말하지
+ * 않습니다 -- 그냥 옛 시장을 조용히 설명합니다.** us-reference가 같은 이유로
+ * scheduler.mjs에 들어갔고, 국내 테마만 빠져 있었습니다.
+ *
+ * 일주일에 한 번이면 충분합니다. 회원은 편집자가 고칠 때만 바뀝니다.
+ */
+const themePullIntervalMs = 7 * 24 * 60 * 60_000;
+// 나이는 한 시간에 한 번만 물어봅니다. 틱마다 묻는다고 더 빨리 낡지 않습니다.
+const themePullCheckIntervalMs = 60 * 60_000;
+let themePullCheckedAt = 0;
+let themePullRunning = false;
+
+function startThemeDictionaryPull(config) {
+  if (themePullRunning || Date.now() - themePullCheckedAt < themePullCheckIntervalMs) return;
+
+  themePullCheckedAt = Date.now();
+  themePullRunning = true;
+
+  themeDictionaryAgeMs(config)
+    .then(async (age) => {
+      // null은 표가 빈 것입니다. 기다릴 이유가 없습니다.
+      if (age !== null && age < themePullIntervalMs) return;
+
+      const result = await refreshThemes(config);
+
+      console.log(`collector: theme dictionary pulled · ${result.themes} themes · ${result.saved} rows`);
+    })
+    // 실패하면 직전 사전이 그대로 남습니다. 빈 사전으로 갈아치우지 않으려고
+    // refreshThemes가 빈 목록에 던집니다.
+    .catch((error) => console.warn("collector: theme pull failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      themePullRunning = false;
+    });
+}
+
 const themeRefreshIntervalMs = 10 * 60_000;
 let themesRefreshedAt = 0;
 let themeRefreshRunning = false;
@@ -1249,6 +1291,9 @@ export function startMarketCollector(config) {
         startLimitUpAlert(config);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
+        // 원본을 먼저 되받아옵니다(주 1회). 사전은 표에서 만들어지므로 순서가
+        // 뒤집히면 갱신이 일주일 늦게 반영됩니다.
+        startThemeDictionaryPull(config);
         startThemeRefresh(config);
 
         const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);

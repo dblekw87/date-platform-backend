@@ -4,18 +4,28 @@ import { query } from "../db/client.mjs";
 /**
  * The theme dictionary, read from 네이버 금융 rather than from memory.
  *
- * About 280 themes across seven pages, each with a member list. EUC-KR, so the
- * bytes have to be decoded rather than read as text - fetch would hand back
- * mojibake and the symbols would still parse, which is the failure that looks
- * like it worked.
+ * About 270 themes across three index pages, each with a member list.
  *
- * Polite by construction: seven index pages plus one detail page per theme,
- * spaced, run at most weekly. Membership moves at the pace of whoever edits it.
+ * This used to scrape the EUC-KR list pages under finance.naver.com. They are
+ * gone: on 2026-09-13 those paths redirect to the rewritten stock.naver.com
+ * app, which renders on the client. The scrape still got its 200 and still
+ * decoded, so fetchThemeIndex returned an empty map and refreshThemes reported
+ * "0 themes · 0 rows" as a success - the dictionary had been frozen at its
+ * 2026-08-18 contents ever since, and nothing said so. **A parser that finds
+ * nothing has to be told apart from a source that holds nothing**, which is why
+ * the callers below treat an empty index as a failure now.
+ *
+ * We call the JSON the app itself calls. UTF-8, so the decoding step is gone,
+ * and the theme numbers are the ones already in kr_theme_members.
+ *
+ * Polite by construction: three index pages plus one or two detail pages per
+ * theme, spaced, run at most weekly. Membership moves at the pace of whoever
+ * edits it.
  */
 
-const indexUrl = "https://finance.naver.com/sise/theme.naver";
-const detailUrl = "https://finance.naver.com/sise/sise_group_detail.naver";
-const pageCount = 7;
+const themeUrl = "https://m.stock.naver.com/api/stocks/theme";
+// The cap. A larger one comes back with an empty body rather than an error.
+const pageSize = 100;
 const requestSpacingMs = 400;
 const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
@@ -23,38 +33,59 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function readEucKr(url) {
-  const response = await fetch(url, { headers: { "User-Agent": browserUserAgent } });
+async function readJson(url) {
+  const response = await fetch(url, {
+    headers: { Accept: "application/json", Referer: "https://stock.naver.com/", "User-Agent": browserUserAgent }
+  });
 
   if (!response.ok) throw new Error(`naver ${response.status} for ${url}`);
 
-  return new TextDecoder("euc-kr").decode(Buffer.from(await response.arrayBuffer()));
+  return response.json();
 }
 
+/*
+ * totalCount comes back with the first page, so the loop learns where to stop
+ * from the answer rather than from a page count written down here - a constant
+ * that only ever goes stale in the direction of dropping themes silently.
+ */
 export async function fetchThemeIndex() {
   const themes = new Map();
+  let total = Infinity;
 
-  for (let page = 1; page <= pageCount; page += 1) {
-    const html = await readEucKr(`${indexUrl}?&page=${page}`);
+  for (let page = 1; (page - 1) * pageSize < total; page += 1) {
+    if (page > 1) await sleep(requestSpacingMs);
 
-    for (const match of html.matchAll(/<a href="[^"]*no=(\d+)"[^>]*>([^<]+)<\/a>/g)) {
-      const name = match[2].trim();
+    const body = await readJson(`${themeUrl}?page=${page}&pageSize=${pageSize}`);
 
-      if (name) themes.set(Number(match[1]), name);
+    total = Number(body.totalCount ?? 0);
+
+    for (const group of body.groups ?? []) {
+      const name = String(group.name ?? "").trim();
+
+      if (name) themes.set(Number(group.no), name);
     }
-
-    await sleep(requestSpacingMs);
   }
 
   return themes;
 }
 
 export async function fetchThemeMembers(themeNo) {
-  const html = await readEucKr(`${detailUrl}?type=theme&no=${themeNo}`);
   const members = new Map();
+  let total = Infinity;
 
-  for (const match of html.matchAll(/\/item\/main\.naver\?code=(\w{6})"[^>]*>([^<]+)</g)) {
-    if (!members.has(match[1])) members.set(match[1], match[2].trim());
+  // 자동차부품 carries about 150, so the second page is real, not defensive.
+  for (let page = 1; (page - 1) * pageSize < total; page += 1) {
+    if (page > 1) await sleep(requestSpacingMs);
+
+    const body = await readJson(`${themeUrl}/${themeNo}?page=${page}&pageSize=${pageSize}`);
+
+    total = Number(body.totalCount ?? 0);
+
+    for (const stock of body.stocks ?? []) {
+      const symbol = String(stock.itemCode ?? "");
+
+      if (/^\w{6}$/.test(symbol) && !members.has(symbol)) members.set(symbol, String(stock.stockName ?? "").trim());
+    }
   }
 
   return members;
@@ -276,8 +307,26 @@ export async function loadSymbolThemes(config, { previous } = {}) {
   return ranked;
 }
 
+/**
+ * 사전을 마지막으로 되받아온 뒤 흐른 시간. 표가 비어 있으면 null입니다 --
+ * "한 번도 없음"과 "오래됨"은 부르는 쪽에서 같은 결론이지만 다른 사실입니다.
+ */
+export async function themeDictionaryAgeMs(config) {
+  const { rows } = await query(config, "SELECT max(fetched_at) AS fetched_at FROM kr_theme_members");
+  const fetchedAt = rows[0]?.fetched_at;
+
+  return fetchedAt ? Date.now() - new Date(fetchedAt).getTime() : null;
+}
+
 export async function refreshThemes(config, { log = () => {} } = {}) {
   const index = await fetchThemeIndex();
+
+  /*
+   * An empty index is a broken reader, never a Naver with no themes. Returning
+   * it quietly is what let the 2026-09 site rewrite sit unnoticed for 26 days,
+   * so it throws and the caller gets to keep the dictionary it already has.
+   */
+  if (index.size === 0) throw new Error("naver themes · index came back empty - the reader is broken, not the source");
 
   log(`naver themes · ${index.size} themes`);
 

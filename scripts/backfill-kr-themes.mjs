@@ -4,8 +4,10 @@ import { refreshThemes } from "../src/providers/naver-themes.mjs";
 /**
  * Refreshes the 네이버 금융 theme dictionary.
  *
- * About 280 themes with their members, which is 287 requests spaced out - a few
- * minutes. Weekly is plenty: membership changes when a human editor changes it.
+ * About 270 themes with their members, which is roughly 270 requests spaced out -
+ * a few minutes. Weekly is plenty: membership changes when a human editor changes
+ * it, and the collector now pulls on that cadence by itself; this stays for
+ * running it on demand.
  *
  *   npm run kr:themes
  */

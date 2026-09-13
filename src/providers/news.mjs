@@ -305,7 +305,7 @@ function naverDevelopersFeed(config, query) {
  * 마감체크·시황레이더·테마시황 같은 종목 기사가 하루 25건쯤 나오는데 구글 검색으로는
  * 주 42건만 걸렸습니다.
  */
-const koreanPressFeeds = [
+export const koreanPressFeeds = [
   { label: "헤드라인", name: "한국경제", url: "https://www.hankyung.com/feed/finance" },
   { label: "헤드라인", name: "한국경제", url: "https://www.hankyung.com/feed/economy" },
   { label: "헤드라인", name: "매일경제", url: "https://www.mk.co.kr/rss/50200011/" },
