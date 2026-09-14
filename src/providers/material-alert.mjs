@@ -3,6 +3,7 @@ import { query } from "../db/client.mjs";
 import { rankPicks, tierOf } from "./overnight-rank.mjs";
 import { materialPhase } from "./overnight-gate.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
+import { loadListedRelatives } from "./ownership-links.mjs";
 import { sendTelegram, telegramConfigured } from "./telegram.mjs";
 import { tradingSessions, upcomingWindow } from "./overnight-window.mjs";
 
@@ -62,6 +63,26 @@ export async function notifyNewMaterial(config, { url } = {}) {
     const fresh = await unsent(config, window.previous, phase, picks);
 
     if (!fresh.length) return 0;
+
+    /*
+     * 지분으로 이어진 상장사를 같이 적습니다.
+     *
+     * 2026-09-13(일) 20:23에 위메이드가 B등급 다음 장 후보로 갔습니다 -- 킹넷 4000억.
+     * 월요일 상한가는 위메이드가 아니라 36.83% 자회사 **위메이드맥스**였고, 그 이름은
+     * 알림 어디에도 없었습니다. 재료는 모회사에 붙고 값은 작은 쪽에서 터지는 일이
+     * 흔한데, 그 연결은 DART 지분 그래프가 이미 갖고 있습니다.
+     *
+     * 후보로 올리지는 않고 **줄만 붙입니다.** 지주사 하나에 상장 자회사가 여섯이면
+     * 후보가 여섯 배가 되고, 그중 무엇이 움직일지는 재 본 적이 없습니다. 이름과
+     * 지분율, 어제 거래대금을 적어 두면 판단은 받는 쪽이 합니다.
+     */
+    const relatives = await loadListedRelatives(config, fresh.map((pick) => pick.symbol));
+
+    for (const pick of fresh) {
+      pick.relatives = (relatives.get(pick.symbol) ?? [])
+        .map((relative) => ({ ...relative, listing: universe.get(relative.symbol) }))
+        .slice(0, 3);
+    }
 
     /*
      * **보낸 뒤에 기록합니다.**
@@ -185,6 +206,12 @@ function message(picks, window, phase, url) {
     }
 
     if (pick.sourceCount > 1) lines.push(`  매체 ${pick.sourceCount}곳`);
+
+    for (const relative of pick.relatives ?? []) {
+      const turnover = relative.listing ? ` · 거래대금 ${(relative.listing.turnover / 1e8).toFixed(0)}억` : "";
+
+      lines.push(`  ${relative.role} ${relative.name} ${relative.symbol} · 지분 ${relative.stake_pct.toFixed(1)}%${turnover}`);
+    }
 
     lines.push("");
   }

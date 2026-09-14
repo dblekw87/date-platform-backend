@@ -1,5 +1,6 @@
 import { classifyDisclosure, classifyHeadline, isReasonHeadline } from "./overnight-classify.mjs";
 import { query } from "../db/client.mjs";
+import { loadListedRelatives } from "./ownership-links.mjs";
 
 /**
  * 왜 상한가에 갔는가.
@@ -139,22 +140,9 @@ export async function loadLimitUpEvidence(config, lock, day) {
    * 기사는 재료 낱말이 잡힌 것만 받습니다(peers와 같은 문턱): 한 겹 건너 연결이라
    * 아무 기사나 올리면 근거가 아니라 소음입니다.
    */
-  const relatives = await query(config, `
-    WITH me AS (SELECT name FROM kr_listings WHERE symbol = $1),
-         clean AS (
-           SELECT holder_symbol, stake_pct,
-                  trim(regexp_replace(split_part(investee_name, '(', 1), '[㈜㈔]|주식회사', '', 'g')) AS investee
-             FROM kr_ownership_edges WHERE stake_pct >= 10
-         )
-    SELECT c.holder_symbol AS symbol, l.name, c.stake_pct, '모회사' AS role
-      FROM clean c JOIN kr_listings l ON l.symbol = c.holder_symbol, me
-     WHERE c.investee = me.name
-    UNION
-    SELECT l.symbol, l.name, c.stake_pct, '자회사' AS role
-      FROM clean c JOIN kr_listings l ON l.name = c.investee
-     WHERE c.holder_symbol = $1`, [lock.symbol]);
+  const relatives = (await loadListedRelatives(config, [lock.symbol])).get(lock.symbol) ?? [];
 
-  if (relatives.rows.length) {
+  if (relatives.length) {
     const previous = await query(config,
       "SELECT max(session_date)::text AS d FROM kr_daily_universe WHERE session_date < $1::date", [day]);
     const since = previous.rows[0]?.d ? new Date(`${previous.rows[0].d}T15:40:00+09:00`) : from;
@@ -165,8 +153,8 @@ export async function loadLimitUpEvidence(config, lock, day) {
         FROM market_news_items n, LATERAL unnest(n.related_symbols) s
        WHERE n.region = 'KR' AND s = ANY($1) AND n.published_at >= $2 AND n.published_at < $3
        ORDER BY s, left(regexp_replace(lower(n.headline), '[^가-힣a-z0-9]', '', 'g'), 30), n.published_at DESC`,
-      [relatives.rows.map((row) => row.symbol), since, to]);
-    const byPeer = new Map(relatives.rows.map((row) => [row.symbol, row]));
+      [relatives.map((row) => row.symbol), since, to]);
+    const byPeer = new Map(relatives.map((row) => [row.symbol, row]));
     const family = familyNews.rows
       .filter((row) => classifyHeadline(row.headline) === "material")
       .map((row) => ({ ...row, relative: byPeer.get(row.peer) }))
