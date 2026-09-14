@@ -48,7 +48,10 @@ export async function notifyPreMarketSurges(config, { url } = {}) {
     let posted = 0;
 
     for (const stock of surges) {
-      if (sent.has(stock.symbol)) continue;
+      if (sent.has(stock.symbol)) {
+        posted += await lockFollowUp(config, day, stock, sent.get(stock.symbol), url);
+        continue;
+      }
 
       const evidence = await loadEvidence(config, stock.symbol, day);
 
@@ -67,6 +70,32 @@ export async function notifyPreMarketSurges(config, { url } = {}) {
   } finally {
     running = false;
   }
+}
+
+/*
+ * 프리마켓에서 상한가까지 간 종목은 한 번 더.
+ *
+ * 2026-09-15 이뮨온시아: 08:03 +15.9%로 한 통 나간 뒤 08:33 NXT에서 +29.9%에 닿았는데
+ * 두 번째 소식이 없었습니다. 정규장의 상한가 알림은 09:00부터 보고, 이 파일은 종목당
+ * 한 통이라 그 사이가 비었습니다. 15%와 29.9%는 다른 사실입니다 -- 프리마켓 상한가는
+ * 09:00 시가가 그 값 근처에서 열릴 가능성을 말하고, 그러면 장중 상따 자리는 없습니다.
+ * note에 '상한가'가 없을 때만, 한 번.
+ */
+async function lockFollowUp(config, day, stock, sentRecord, url) {
+  if (stock.change_rate < 29.5 || String(sentRecord?.note ?? "").includes("상한가")) return 0;
+
+  const text = [
+    `[프리마켓 상한가] ${stock.name} ${stock.symbol}${stock.theme && stock.theme !== "미분류" ? ` · ${stock.theme}` : ""}`,
+    `${stock.at} NXT +${stock.change_rate.toFixed(1)}% · 거래대금 ${(stock.turnover / 1e8).toFixed(0)}억 · 첫 알림 ${String(sentRecord?.note ?? "")}`,
+    "프리마켓에서 이미 상한가입니다. 09:00 시가가 여기서 열리면 장중에 살 자리는 없고, 시가 상한가는 실측상 익일 시가 +14%p(82%)였던 자리입니다."
+  ].join("\n");
+
+  if (!await notify(config, { text, url })) return 0;
+
+  await markAlertSent(config, "premarket_surge", day, stock.symbol, { note: `${String(sentRecord?.note ?? "")} → 상한가 ${stock.at}` });
+  console.log(`알림: 프리마켓 상한가 · ${stock.name}`);
+
+  return 1;
 }
 
 /* 종목별 마지막 프리마켓 표본. 최고점이 아니라 지금 값을 봅니다 -- 08:05에 +20%
