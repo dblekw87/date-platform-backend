@@ -2,6 +2,7 @@ import { collectCandidates, tradableUniverse } from "./overnight-collect.mjs";
 import { query } from "../db/client.mjs";
 import { rankPicks, tierOf } from "./overnight-rank.mjs";
 import { materialPhase } from "./overnight-gate.mjs";
+import { isKrMarketOpen } from "./kis.mjs";
 import { sendTelegram, telegramConfigured } from "./telegram.mjs";
 import { tradingSessions, upcomingWindow } from "./overnight-window.mjs";
 
@@ -49,7 +50,15 @@ export async function notifyNewMaterial(config, { url } = {}) {
     const universe = await tradableUniverse(config, window.previous, minTurnoverWithFiling);
     const picks = rankPicks(candidates, universe)
       .filter((pick) => pick.good.length > 0 || pick.listing.turnover >= minTurnover);
-    const phase = materialPhase();
+    /*
+     * 휴장일엔 시계가 09:00~15:40을 가리켜도 장중이 아닙니다. 2026-09-13(일) 10:51에
+     * "[장중 재료]" 7종목이 나갔습니다 -- 내용은 맞았고(저녁에 같은 종목이 다음 장
+     * 후보로 다시 갔음) 사용자도 휴장일 알림을 원합니다: 월요일 진입을 미리 볼 수
+     * 있으니까요. 그래서 막지 않고 **이름만** 바로잡습니다. 휴장일에 나온 재료는
+     * 전부 다음 장을 겨냥한 것이라 overnight이고, 그쪽 기록(overnight_material)과
+     * 창(직전 거래일 15:40~)으로 들어가야 채점도 같은 표본에 붙습니다.
+     */
+    const phase = (await isKrMarketOpen(config)) ? materialPhase() : "overnight";
     const fresh = await unsent(config, window.previous, phase, picks);
 
     if (!fresh.length) return 0;

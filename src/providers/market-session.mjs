@@ -52,6 +52,15 @@ export function isKrFineWindow(now = new Date()) {
 }
 export const krAfterHoursOpenMinute = 15 * 60 + 40;
 export const krAfterHoursCloseMinute = 20 * 60;
+/*
+ * KRX's own after-market, from 2026-09-14: 16:00-20:00, continuous auction,
+ * +-30% of the previous close, alongside NXT's. Until today the evening had one
+ * book (NXT) and the KRX quote after 15:30 was a price that had stopped
+ * existing; from today `J` may move again after 16:00. Whether it actually does,
+ * and how the two books' turnover compare, is what the evening `kis:after:krx`
+ * samples are recorded to answer -- nothing on the screen reads them yet.
+ */
+export const krxAfterMarketOpenMinute = 16 * 60;
 
 /**
  * Two minutes past the bell, so the closing print gets recorded.

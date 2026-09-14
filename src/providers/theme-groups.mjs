@@ -260,6 +260,9 @@ export async function loadKrSessionUniverse(config, sessionDate, { etf = false }
         FROM market_price_samples
        WHERE session_date = $1 AND market = 'KR'
          AND source LIKE 'kis:%' AND source NOT LIKE '%:pair'
+         -- 저녁 KRX 표본(2026-09-14~)은 측정용이라 아직 화면에 안 올립니다. 같은 틱에
+         -- NX와 J가 나란히 찍히므로 여기서 빼지 않으면 둘 중 임의의 것이 잡힙니다.
+         AND source <> 'kis:after:krx'
          AND change_rate IS NOT NULL
        ORDER BY symbol, observed_at DESC
     ),

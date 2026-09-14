@@ -30,7 +30,7 @@ import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, sessionDate } from "./providers/market-session.mjs";
+import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, krxAfterMarketOpenMinute, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
@@ -474,16 +474,50 @@ async function sampleAfterHours(config) {
     if (!answered.has(symbol)) nxtSilentUntil.set(symbol, Date.now() + nxtSilenceMs);
   }
 
-  if (quotes.length === 0) return 0;
+  const observedAt = new Date().toISOString();
+  let saved = 0;
 
-  return saveMarketPriceSamples(config, {
-    market: "KR",
-    observedAt: new Date().toISOString(),
-    ranked: false,
-    sessionDate: day,
-    source: "kis:nxt:after",
-    stocks: await withThemes(config, quotes)
-  });
+  if (quotes.length > 0) {
+    saved += await saveMarketPriceSamples(config, {
+      market: "KR",
+      observedAt,
+      ranked: false,
+      sessionDate: day,
+      source: "kis:nxt:after",
+      stocks: await withThemes(config, quotes)
+    });
+  }
+
+  /*
+   * 16:00부터는 KRX 책도 다시 열립니다(2026-09-14 애프터마켓 신설). 같은 종목을
+   * `J`로 한 번 더 물어 **따로** 저장합니다 -- 두 시장의 값을 합치지도, 화면에
+   * 올리지도 않습니다. 질문은 셋입니다: J가 저녁에 실제로 움직이는가, NXT와 가격이
+   * 다른가, 거래대금은 어느 책이 두꺼운가. 첫날 값을 안 찍으면 첫날은 영영 없습니다.
+   *
+   * 이름이 `kis:krx:after`가 아닌 것은 `LIKE 'kis:krx%'`가 열 곳 넘게 "정규장"의 뜻으로
+   * 쓰이기 때문입니다 -- 그 접두사면 종가배팅·상한가 감지·테마 판정이 저녁 J 값을
+   * 낮 값으로 읽습니다. `kis:after:krx`는 어느 패턴에도 안 걸립니다.
+   *
+   * 16:00 전에는 묻지 않습니다. 그 시간의 J는 15:30 종가로 얼어 있어 죽은 값입니다.
+   * NX처럼 침묵 기억을 두지 않는 것은, J는 전 종목을 답하므로 "안 답한다"가 아니라
+   * "움직이지 않는다"가 질문이기 때문입니다. 움직이지 않는 값도 그 자체가 답입니다.
+   */
+  if (seoulMinute().minute >= krxAfterMarketOpenMinute) {
+    const krx = await loadKrQuotes(config, [...new Set([...recorded, ...watched])], "J");
+
+    if (krx.length > 0) {
+      saved += await saveMarketPriceSamples(config, {
+        market: "KR",
+        observedAt,
+        ranked: false,
+        sessionDate: day,
+        source: "kis:after:krx",
+        stocks: await withThemes(config, krx)
+      });
+    }
+  }
+
+  return saved;
 }
 
 // One screener call a tick, and the whole US session is six and a half hours,
