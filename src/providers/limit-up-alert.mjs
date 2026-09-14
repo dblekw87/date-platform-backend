@@ -132,7 +132,9 @@ async function nearPass(config, day, url, sent, sentNear) {
 
     const evidence = await loadLimitUpEvidence(config, stock, day);
 
-    if (evidence.kind !== "filing" && evidence.kind !== "direct") continue;
+    // 지분 관계사의 재료(family)도 받습니다 -- 모회사 M&A는 이 종목을 지목한 것과
+    // 같은 무게의 사실이고, 2026-09-14 위메이드맥스가 그 자리였습니다.
+    if (evidence.kind !== "filing" && evidence.kind !== "direct" && evidence.kind !== "family") continue;
 
     if (!await notify(config, { text: nearMessage(stock, evidence), url })) continue;
 
@@ -200,7 +202,9 @@ function evidenceLines(lock, evidence) {
       ? `  추정 ${item.at} [같은 테마 ${item.peer_name ?? item.peer} +${item.move.toFixed(0)}%]`
       : evidence.kind === "grouped"
         ? `  묶음 ${item.at}`
-        : `  뉴스 ${item.at}`;
+        : evidence.kind === "family"
+          ? `  지분 ${item.at} [${item.relative?.role ?? "관계사"} ${item.relative?.name ?? item.peer} ${item.relative?.stake_pct != null ? `${Number(item.relative.stake_pct).toFixed(1)}%` : ""}]`
+          : `  뉴스 ${item.at}`;
 
     lines.push(who);
     lines.push(`       ${item.headline}`);
@@ -213,6 +217,7 @@ function evidenceLines(lock, evidence) {
   }
 
   if (evidence.kind === "theme") lines.push(`  ※ 이 종목을 지목한 기사가 아니라 같은 테마(${lock.theme})에서 같이 오른 종목의 기사입니다.`);
+  if (evidence.kind === "family") lines.push("  ※ 이 종목이 아니라 지분으로 이어진 회사의 재료입니다(DART 사업보고서 지분).");
   if (evidence.kind === "grouped") lines.push("  ※ 재료 기사가 아니라 이 종목을 다른 종목과 묶어 부른 기사입니다 -- 이유는 테마 연속성으로 읽으세요.");
 
   return lines;

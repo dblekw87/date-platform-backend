@@ -125,6 +125,61 @@ export async function loadLimitUpEvidence(config, lock, day) {
    * 잠긴 뒤에만 씁니다. 잠기기 전 알림(nearPass)은 "지금 살까"라 filing·direct만
    * 받고, 이것은 그쪽에 들어가지 않습니다.
    */
+  /*
+   * 둘째 근거: **지분으로 이어진 회사의 재료.**
+   *
+   * 2026-09-14 위메이드맥스가 15:11 잠겼는데 이 종목을 지목한 기사는 16:24 사후 복기
+   * 하나였습니다. 이유는 모회사에 있었습니다 -- 위메이드(36.83% 보유)에 킹넷이 4000억을
+   * 넣는다는 단독이 일요일 11:14에 나왔고, 월요일 프리마켓부터 자회사가 +23%였습니다.
+   * DART 지분 그래프([[ownership-graph-finding]])가 그 연결을 이미 알고 있었는데
+   * 상한가 근거는 그것을 묻지 않았습니다.
+   *
+   * 지분 10% 이상, 양방향(모회사의 재료 → 자회사 / 자회사의 재료 → 모회사)으로 봅니다.
+   * 창은 직전 거래일 마감부터 -- 주말에 나온 모회사 기사가 월요일 자회사를 설명합니다.
+   * 기사는 재료 낱말이 잡힌 것만 받습니다(peers와 같은 문턱): 한 겹 건너 연결이라
+   * 아무 기사나 올리면 근거가 아니라 소음입니다.
+   */
+  const relatives = await query(config, `
+    WITH me AS (SELECT name FROM kr_listings WHERE symbol = $1),
+         clean AS (
+           SELECT holder_symbol, stake_pct,
+                  trim(regexp_replace(split_part(investee_name, '(', 1), '[㈜㈔]|주식회사', '', 'g')) AS investee
+             FROM kr_ownership_edges WHERE stake_pct >= 10
+         )
+    SELECT c.holder_symbol AS symbol, l.name, c.stake_pct, '모회사' AS role
+      FROM clean c JOIN kr_listings l ON l.symbol = c.holder_symbol, me
+     WHERE c.investee = me.name
+    UNION
+    SELECT l.symbol, l.name, c.stake_pct, '자회사' AS role
+      FROM clean c JOIN kr_listings l ON l.name = c.investee
+     WHERE c.holder_symbol = $1`, [lock.symbol]);
+
+  if (relatives.rows.length) {
+    const previous = await query(config,
+      "SELECT max(session_date)::text AS d FROM kr_daily_universe WHERE session_date < $1::date", [day]);
+    const since = previous.rows[0]?.d ? new Date(`${previous.rows[0].d}T15:40:00+09:00`) : from;
+    const familyNews = await query(config, `
+      SELECT DISTINCT ON (s, left(regexp_replace(lower(n.headline), '[^가-힣a-z0-9]', '', 'g'), 30))
+             to_char(n.published_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS at,
+             n.headline, n.original_url, n.published_at, s AS peer
+        FROM market_news_items n, LATERAL unnest(n.related_symbols) s
+       WHERE n.region = 'KR' AND s = ANY($1) AND n.published_at >= $2 AND n.published_at < $3
+       ORDER BY s, left(regexp_replace(lower(n.headline), '[^가-힣a-z0-9]', '', 'g'), 30), n.published_at DESC`,
+      [relatives.rows.map((row) => row.symbol), since, to]);
+    const byPeer = new Map(relatives.rows.map((row) => [row.symbol, row]));
+    const family = familyNews.rows
+      .filter((row) => classifyHeadline(row.headline) === "material")
+      .map((row) => ({ ...row, relative: byPeer.get(row.peer) }))
+      .sort((a, b) => b.published_at - a.published_at);
+    const onePerRelative = new Map();
+
+    for (const row of family) if (!onePerRelative.has(row.peer)) onePerRelative.set(row.peer, row);
+
+    if (onePerRelative.size) {
+      return { kind: "family", filings: [], cautions, news: [...onePerRelative.values()].slice(0, 2) };
+    }
+  }
+
   const grouped = direct.rows
     .filter((row) => Number(row.tagged) >= 2 && /관련주|테마|株|수혜주|동반|줄줄이|불붙|나란히|함께/.test(row.headline))
     .sort((a, b) => a.published_at - b.published_at);
