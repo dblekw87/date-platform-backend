@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { startMarketCollector } from "./collector.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
-import { setNaverThemes } from "./providers/themes.mjs";
+import { naverThemeMap, setNaverThemes } from "./providers/themes.mjs";
 import { startUsPipelineScheduler } from "./pipeline/scheduler.mjs";
 import { readConfig, hasTossCredentials } from "./config.mjs";
 import { HttpError, readJsonBody, sendJson, sendNoContent } from "./http.mjs";
@@ -94,6 +94,22 @@ async function route(request, response) {
 
   if (url.pathname === "/api/market-board") {
     sendJson(response, 200, await getMarketBoard(config), headers);
+    return;
+  }
+
+  /*
+   * 종목 -> 테마 사전 통째로.
+   *
+   * 같은 기계의 TodayStock market_watch.py가 급등 알림에 테마를 붙이려고 읽습니다.
+   * 그쪽은 표준 라이브러리만 쓰는 파이썬이라 DB에 직접 붙을 수 없고, 네이버 사전을
+   * 저마다 긁으면 "여러 테마 중 어느 것을 대표로 고르는가"가 두 벌이 됩니다 --
+   * 고르는 규칙은 themes.mjs 한 곳에만 둡니다. 2,300줄 60KB쯤이라 매 알림이 아니라
+   * 한 시간에 한 번 받아 두는 크기입니다.
+   */
+  if (url.pathname === "/api/themes/symbols") {
+    const symbols = Object.fromEntries(naverThemeMap());
+
+    sendJson(response, 200, { count: Object.keys(symbols).length, symbols }, headers);
     return;
   }
 
