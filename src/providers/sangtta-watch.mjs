@@ -23,6 +23,11 @@ import { sessionDate } from "./market-session.mjs";
  *   중형(3천억~1조) 27%  하루 1건    잠김 59%   +6.04%p 상회 59%
  *   대형(1조+) 27%       표본 6건    판단 불가
  *
+ * 2026-09-14부터 **잠기기 전 알림은 이 파일 하나**입니다. limit-up-alert.mjs의 근접 알림
+ * (27~29%, 근거 있을 때만)과 겹쳐 같은 종목이 두 통 오게 되어 사용자가 합치자고 했습니다.
+ * 그래서 근거는 여기 붙이고, 처음 보낼 때 없던 근거(공시·지목 기사·지분)가 잠기기 전에
+ * 붙으면 **한 번만** 더 보냅니다 -- 그게 예전 근접 알림이 하던 일입니다.
+ *
  * 이것은 **매수 신호가 아니라 감시 목록**입니다. 24% 시점 변수로 갈라 봐도 잠김 확률은
  * 40%대에서 멈췄고, 빠진 변수(호가 잔량)는 이제 찍기 시작했습니다. 알림은 진입 결정을
  * 대신하지 않고, 그 종목을 호가창에 띄울 이유와 재 본 확률을 줍니다.
@@ -72,7 +77,12 @@ export async function notifySangttaWatch(config, { url } = {}) {
     for (const stock of latest) {
       const size = sizeOf(stock.market_cap);
 
-      if (stock.change_rate < size.rate || stock.change_rate >= lockedRate || sent.has(stock.symbol)) continue;
+      if (stock.change_rate < size.rate || stock.change_rate >= lockedRate) continue;
+
+      if (sent.has(stock.symbol)) {
+        posted += await followUpEvidence(config, day, stock, size, sent.get(stock.symbol), url);
+        continue;
+      }
 
       const path = await loadPath(config, day, stock, size);
       const drop = dropReason(path, size);
@@ -96,9 +106,11 @@ export async function notifySangttaWatch(config, { url } = {}) {
 
       if (!await notify(config, { text: message(stock, size, path, evidence), url })) continue;
 
-      await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}%` });
+      await markAlertSent(config, "sangtta_watch", day, stock.symbol, {
+        note: `${size.label} ${stock.change_rate.toFixed(1)}%${hasSpecificEvidence(evidence) ? "" : " · 근거없음"}`
+      });
       posted += 1;
-      console.log(`알림: 상따 감시 · ${stock.name} +${stock.change_rate.toFixed(1)}% · ${size.label}`);
+      console.log(`알림: 상한가 직전 · ${stock.name} +${stock.change_rate.toFixed(1)}% · ${size.label}`);
     }
 
     return posted;
@@ -109,6 +121,47 @@ export async function notifySangttaWatch(config, { url } = {}) {
   } finally {
     running = false;
   }
+}
+
+function hasSpecificEvidence(evidence) {
+  return evidence.filings.length > 0 || evidence.kind === "direct" || evidence.kind === "family";
+}
+
+/*
+ * 첫 통에 근거가 없었던 종목에, 잠기기 전에 근거가 붙으면 한 번 더.
+ *
+ * 예전 근접 알림(27~29%, 근거 있을 때만)이 하던 일을 여기로 옮긴 것입니다. 24%에서 "근거
+ * 없음"으로 나간 소형주가 27%에서 공시가 뜨면 그건 새 사실이고, 그 한 통이 예전 알림의 값
+ * 전부였습니다. note에 '근거없음'이 남아 있을 때만 다시 보고, 보내면 note를 갈아 두 번은
+ * 안 갑니다. 이미 '건너뜀(skip:)'으로 기록된 종목은 그대로 둡니다 -- 나쁜 조건은 근거가
+ * 생겨도 나쁜 조건입니다.
+ */
+async function followUpEvidence(config, day, stock, size, sentRecord, url) {
+  const note = String(sentRecord?.note ?? "");
+
+  if (!note.includes("근거없음")) return 0;
+
+  const evidence = await loadLimitUpEvidence(config, { name: stock.name, symbol: stock.symbol, theme: stock.theme }, day);
+
+  if (!hasSpecificEvidence(evidence)) return 0;
+
+  evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
+
+  const lines = [
+    `[상한가 직전 · 근거 추가] ${stock.name} ${stock.symbol} · 지금 +${stock.change_rate.toFixed(1)}%`,
+    "앞서 근거 없이 보낸 종목에 공시·기사가 붙었습니다."
+  ];
+
+  for (const filing of evidence.filings.slice(0, 1)) lines.push(`  공시 ${filing.at} ${(filing.report_name ?? filing.title ?? "").slice(0, 50)}`);
+  for (const item of evidence.news.slice(0, 1)) lines.push(`  ${evidence.kind === "family" ? "지분" : "뉴스"} ${item.at} ${item.headline.slice(0, 60)}`);
+  lines.push(...contextLines(evidence.context));
+
+  if (!await notify(config, { text: lines.join("\n"), url })) return 0;
+
+  await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}% · 근거 추가` });
+  console.log(`알림: 상한가 직전 근거 추가 · ${stock.name} +${stock.change_rate.toFixed(1)}%`);
+
+  return 1;
 }
 
 /** 종목별 마지막 정규장 표본. 지금 값을 봅니다 -- 아침에 24%였다가 10%인 종목은 후보가 아닙니다. */
@@ -191,7 +244,7 @@ function message(stock, size, path, evidence) {
   const low = path.lowBefore === null ? "시가부터 문턱 위" : `그날 최저 ${path.lowBefore >= 0 ? "+" : ""}${path.lowBefore.toFixed(1)}%`;
   const rise = path.riseMinutes !== null ? ` · 22→${size.rate}% ${path.riseMinutes}분` : "";
   const lines = [
-    `[상따 감시] ${stock.name} ${stock.symbol} · ${size.label} ${eok(stock.market_cap)}${theme}`,
+    `[상한가 직전] ${stock.name} ${stock.symbol} · ${size.label} ${eok(stock.market_cap)}${theme}`,
     `${path.at ?? ""} +${stock.change_rate.toFixed(1)}% · 거래대금 ${eok(stock.turnover)}${multiple}`,
     `  경로: ${low}${rise}`
   ];

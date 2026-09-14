@@ -799,7 +799,7 @@ function startLimitUpAlert(config) {
 
   notifyLimitUps(config, { url: config.publicSiteUrl })
     .catch((error) => console.warn("collector: limit up alert failed", error instanceof Error ? error.message : error));
-  // 상따 감시(소형 24% / 중대형 27%)와 24% 위 종목의 호가 잔량 기록. 상한가 감시와 같은
+  // 상한가 직전(소형 24% / 중대형 27%, 잠기기 전 알림은 이것 하나)과 24% 위 호가 잔량 기록. 잠김 감시와 같은
   // 1분 간격 -- 소형은 24%에서 잠기기까지 중앙 3분입니다.
   notifySangttaWatch(config, { url: config.publicSiteUrl })
     .catch((error) => console.warn("collector: sangtta watch failed", error instanceof Error ? error.message : error));

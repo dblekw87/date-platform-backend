@@ -1,7 +1,7 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitUpEvidence } from "./limit-up-evidence.mjs";
 import { contextLines, loadThemeContext } from "./theme-context.mjs";
-import { loadLockedLimitUps, loadNearLimitUps } from "./limit-up-detect.mjs";
+import { loadLockedLimitUps } from "./limit-up-detect.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
 import { sessionDate } from "./market-session.mjs";
@@ -34,7 +34,7 @@ let awaitingDay = null;
 /*
  * 이유가 없어 미뤄둔 잠김. 이것만 메모리에 둡니다 -- 보낸 기록이 아니라 "아직
  * 안 보낸" 목록이고, 잠긴 채인 종목은 다음 틱의 본 루프가 다시 집어 올립니다.
- * 보낸 기록(sent·sentNear)은 alert-sent.mjs에 있어 재기동해도 남습니다.
+ * 보낸 기록(sent)은 alert-sent.mjs에 있어 재기동해도 남습니다.
  */
 const awaitingReason = new Map();
 
@@ -58,7 +58,6 @@ export async function notifyLimitUps(config, { url } = {}) {
     }
 
     const sent = new Set((await loadAlertSent(config, "limit_up", day)).keys());
-    const sentNear = new Set((await loadAlertSent(config, "limit_up_near", day)).keys());
     const locks = await loadLockedLimitUps(config, day);
     let posted = 0;
 
@@ -99,7 +98,13 @@ export async function notifyLimitUps(config, { url } = {}) {
     }
 
     posted += await followUp(config, day, url, sent);
-    posted += await nearPass(config, day, url, sent, sentNear);
+    /*
+     * 잠기기 전 알림은 2026-09-14부터 sangtta-watch.mjs가 맡습니다. 여기 있던 nearPass
+     * (27~29%, 공시·지목 기사 있을 때만)와 상따 감시(소형 24% / 중대형 27%, 근거 없어도)가
+     * 같은 종목에 두 통을 보내게 되어 사용자가 한쪽으로 합치자고 했습니다. 근거는 그쪽
+     * 메시지에 같은 로더로 붙고, 처음에 없던 근거가 잠기기 전에 붙으면 그쪽이 한 번 더
+     * 보냅니다. 이 파일은 **잠긴 뒤**만 봅니다.
+     */
 
     return posted;
   } catch (error) {
@@ -109,45 +114,6 @@ export async function notifyLimitUps(config, { url } = {}) {
   } finally {
     running = false;
   }
-}
-
-/*
- * 잠기기 전에 한 번.
- *
- * 잠긴 뒤에는 매도호가가 비어 살 수 없으므로, 값은 **잠기기 전**에 있습니다.
- * 27%를 넘긴 종목 중 아직 29%에 못 간 것만 봅니다 -- 넘긴 것은 잠김 쪽이 맡습니다.
- *
- * **근거 없이는 보내지 않고, 근거는 공시나 그 종목을 지목한 기사여야 합니다.**
- * 하루 7~14종목이 27%에 닿는데 그 시각까지 근거가 있는 것은 4종목쯤입니다
- * (2026-09-02~04 실측). 나머지는 기사가 나오기도 전에 올라간 것들이라, 같이
- * 보내면 알림이 세 배가 되고 그중 대부분은 왜 오르는지 말하지 못합니다.
- *
- * 같은 테마 추정은 여기서 빼둡니다. 잠긴 뒤에는 "왜 올랐나"를 설명하는 자리라
- * 약한 근거도 값이 있지만, 여기는 **지금 살까**를 묻는 자리입니다.
- */
-async function nearPass(config, day, url, sent, sentNear) {
-  const near = await loadNearLimitUps(config, day);
-  let posted = 0;
-
-  for (const stock of near) {
-    if (sentNear.has(stock.symbol) || sent.has(stock.symbol)) continue;
-
-    const evidence = await loadLimitUpEvidence(config, stock, day);
-      evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
-
-    // 지분 관계사의 재료(family)도 받습니다 -- 모회사 M&A는 이 종목을 지목한 것과
-    // 같은 무게의 사실이고, 2026-09-14 위메이드맥스가 그 자리였습니다.
-    if (evidence.kind !== "filing" && evidence.kind !== "direct" && evidence.kind !== "family") continue;
-
-    if (!await notify(config, { text: nearMessage(stock, evidence), url })) continue;
-
-    await markAlertSent(config, "limit_up_near", day, stock.symbol, { note: evidence.kind });
-    sentNear.add(stock.symbol);
-    posted += 1;
-    console.log(`알림: 상한가 근접 · ${stock.name} +${stock.top_rate.toFixed(1)}% · 근거 ${evidence.kind}`);
-  }
-
-  return posted;
 }
 
 /*
@@ -241,15 +207,6 @@ function firstMessage(lock, evidence) {
   ].filter(Boolean).join("\n");
 }
 
-function nearMessage(stock, evidence) {
-  return [
-    `[상한가 직전] ${stock.name} ${stock.symbol} · ${stock.size} · ${stock.market ?? "KR"}`,
-    `+${stock.top_rate.toFixed(1)}% · 상한가까지 ${stock.gap}%p · 거래대금 ${(Number(stock.turnover ?? 0) / 1e8).toFixed(0)}억`,
-    stock.theme && stock.theme !== "미분류" ? `테마 ${stock.theme}` : "",
-    "",
-    ...evidenceLines(stock, evidence)
-  ].filter(Boolean).join("\n");
-}
 
 /** 하루가 끝나면 남깁니다. "상한가가 다음 날 어떻게 됐나"는 나중에 잴 수 있는 질문입니다. */
 export async function recordLimitUps(config, day) {
