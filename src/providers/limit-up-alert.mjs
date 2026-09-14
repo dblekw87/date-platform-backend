@@ -1,5 +1,6 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitUpEvidence } from "./limit-up-evidence.mjs";
+import { contextLines, loadThemeContext } from "./theme-context.mjs";
 import { loadLockedLimitUps, loadNearLimitUps } from "./limit-up-detect.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -65,6 +66,7 @@ export async function notifyLimitUps(config, { url } = {}) {
       if (sent.has(lock.symbol)) continue;
 
       const evidence = await loadLimitUpEvidence(config, lock, day);
+      evidence.context = await loadThemeContext(config, lock.symbol, day).catch(() => []);
 
       /*
        * 이유가 없으면 보내지 않습니다.
@@ -131,6 +133,7 @@ async function nearPass(config, day, url, sent, sentNear) {
     if (sentNear.has(stock.symbol) || sent.has(stock.symbol)) continue;
 
     const evidence = await loadLimitUpEvidence(config, stock, day);
+      evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
 
     // 지분 관계사의 재료(family)도 받습니다 -- 모회사 M&A는 이 종목을 지목한 것과
     // 같은 무게의 사실이고, 2026-09-14 위메이드맥스가 그 자리였습니다.
@@ -164,6 +167,7 @@ async function followUp(config, day, url, sent) {
     }
 
     const evidence = await loadLimitUpEvidence(config, lock, day);
+      evidence.context = await loadThemeContext(config, lock.symbol, day).catch(() => []);
 
     if (evidence.kind === "none") continue;
 
@@ -219,6 +223,9 @@ function evidenceLines(lock, evidence) {
   if (evidence.kind === "theme") lines.push(`  ※ 이 종목을 지목한 기사가 아니라 같은 테마(${lock.theme})에서 같이 오른 종목의 기사입니다.`);
   if (evidence.kind === "family") lines.push("  ※ 이 종목이 아니라 지분으로 이어진 회사의 재료입니다(DART 사업보고서 지분).");
   if (evidence.kind === "grouped") lines.push("  ※ 재료 기사가 아니라 이 종목을 다른 종목과 묶어 부른 기사입니다 -- 이유는 테마 연속성으로 읽으세요.");
+
+  // 맥락 -- 이 종목을 지목하지 않은, 테마를 움직이는 이야기. 근거와 다른 얼굴로 끝에.
+  lines.push(...contextLines(evidence.context ?? []));
 
   return lines;
 }

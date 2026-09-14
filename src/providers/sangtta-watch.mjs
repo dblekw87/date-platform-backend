@@ -1,5 +1,6 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitUpEvidence } from "./limit-up-evidence.mjs";
+import { contextLines, loadThemeContext } from "./theme-context.mjs";
 import { loadKrOrderBooks } from "./kis.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -90,6 +91,8 @@ export async function notifySangttaWatch(config, { url } = {}) {
       }
 
       const evidence = await loadLimitUpEvidence(config, { name: stock.name, symbol: stock.symbol, theme: stock.theme }, day);
+
+      evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
 
       if (!await notify(config, { text: message(stock, size, path, evidence), url })) continue;
 
@@ -206,6 +209,8 @@ function message(stock, size, path, evidence) {
   }
 
   if (!evidence.filings.length && evidence.kind !== "direct" && evidence.kind !== "family") lines.push("  공시·지목 기사 없음");
+
+  lines.push(...contextLines(evidence.context ?? []));
 
   lines.push("");
   lines.push(`감시 목록입니다, 매수 신호가 아닙니다. ${base}`);
