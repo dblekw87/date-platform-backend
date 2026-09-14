@@ -33,6 +33,7 @@ const kinds = [
   { kind: "offhigh_close_bet", label: "재료(미돌파)" },
   { kind: "sector_follower", label: "섹터 대조군" },
   { kind: "limit_up", label: "상한가" },
+  { kind: "sangtta_watch", label: "상따 감시" },
   { kind: "limit_pair", label: "짝꿍" },
   { kind: "overnight_material", label: "밤 재료" },
   { kind: "intraday_material", label: "장중 재료" }

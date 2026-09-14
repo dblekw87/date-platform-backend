@@ -682,3 +682,62 @@ export async function loadKisMarketBoard(config) {
     };
   });
 }
+
+/**
+ * 호가 잔량. 상따 연구용입니다.
+ *
+ * 가격 경로·거래대금·시각·시총·공시로는 "24%에 닿은 소형주가 종가까지 잠기는가"가
+ * 40%대에서 멈췄습니다(2026-09-14 실측, 340건). 상따를 실제로 하는 사람이 보는 것은
+ * **상한가 매수잔량이 얼마나 쌓이고 매도호가가 얼마나 빨리 먹히는가**인데, 그 변수가
+ * 우리 표본에 없었습니다. 그래서 24% 위 종목만 1분마다 찍어 둡니다 -- 알림에는 아직
+ * 안 붙이고, 2~4주 뒤 잔량이 잠김을 가르는지 잰 다음에 씁니다.
+ *
+ * 한 종목에 한 요청이라 순위 종목 전부에 물리지 않고 문턱을 넘은 것만 묻습니다.
+ */
+export async function loadKrOrderBooks(config, symbols, venue = "J") {
+  if (!hasKisCredentials(config) || symbols.length === 0) return [];
+
+  const token = await getAccessToken(config);
+  const books = [];
+
+  for (let index = 0; index < symbols.length; index += 2) {
+    const batch = symbols.slice(index, index + 2);
+    const settled = await Promise.allSettled(batch.map((symbol) => loadKrOrderBook(config, token, symbol, venue)));
+
+    books.push(...settled.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []));
+
+    if (index + 2 < symbols.length) await new Promise((wait) => setTimeout(wait, 200));
+  }
+
+  return books;
+}
+
+async function loadKrOrderBook(config, token, symbol, venue) {
+  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", {
+    FID_COND_MRKT_DIV_CODE: venue,
+    FID_INPUT_ISCD: symbol
+  }), {
+    timeoutMs: 3500,
+    headers: kisHeaders(config, token, "FHKST01010200")
+  });
+
+  if (data?.rt_cd && data.rt_cd !== "0") return null;
+
+  const book = data?.output1 ?? {};
+  const quote = data?.output2 ?? {};
+  const sum = (prefix) => [1, 2, 3].reduce((total, level) => total + parseNumeric(book[`${prefix}${level}`]), 0);
+
+  return {
+    askQty1: parseNumeric(book.askp_rsqn1),
+    askQtyTop3: sum("askp_rsqn"),
+    bestAsk: parseNumeric(book.askp1) || null,
+    bestBid: parseNumeric(book.bidp1) || null,
+    bidQty1: parseNumeric(book.bidp_rsqn1),
+    bidQtyTop3: sum("bidp_rsqn"),
+    changeRateValue: parseNumeric(quote.prdy_ctrt),
+    priceValue: parseNumeric(quote.stck_prpr) || null,
+    symbol,
+    totalAskQty: parseNumeric(book.total_askp_rsqn),
+    totalBidQty: parseNumeric(book.total_bidp_rsqn)
+  };
+}

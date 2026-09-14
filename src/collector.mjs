@@ -23,6 +23,7 @@ import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadAfterHoursWatchlist } from "./providers/after-hours-watch.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
 import { notifyPreMarketSurges } from "./providers/premarket-surge-alert.mjs";
+import { notifySangttaWatch } from "./providers/sangtta-watch.mjs";
 import { notifyNewDelistNotices } from "./providers/us-delist-notice-alert.mjs";
 import { notifyMorningFeedback } from "./providers/morning-feedback.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
@@ -798,6 +799,10 @@ function startLimitUpAlert(config) {
 
   notifyLimitUps(config, { url: config.publicSiteUrl })
     .catch((error) => console.warn("collector: limit up alert failed", error instanceof Error ? error.message : error));
+  // 상따 감시(소형 24% / 중대형 27%)와 24% 위 종목의 호가 잔량 기록. 상한가 감시와 같은
+  // 1분 간격 -- 소형은 24%에서 잠기기까지 중앙 3분입니다.
+  notifySangttaWatch(config, { url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: sangtta watch failed", error instanceof Error ? error.message : error));
 }
 
 /*
