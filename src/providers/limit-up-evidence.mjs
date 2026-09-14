@@ -87,7 +87,8 @@ export async function loadLimitUpEvidence(config, lock, day) {
   const direct = await query(config, `
     SELECT DISTINCT ON (left(regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'), 30))
            to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at,
-           headline, original_url, published_at
+           headline, original_url, published_at,
+           coalesce(array_length(related_symbols, 1), 0) AS tagged
       FROM market_news_items, LATERAL unnest(related_symbols) s
      WHERE region = 'KR' AND s = $1 AND published_at >= $2 AND published_at < $3
      ORDER BY left(regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'), 30), published_at`,
@@ -104,6 +105,32 @@ export async function loadLimitUpEvidence(config, lock, day) {
       cautions: cautions.slice(0, 2),
       news: reasons.slice(0, 2)
     };
+  }
+
+  /*
+   * 셋째 근거: **기사가 이 종목을 다른 종목과 묶어 부른 것.**
+   *
+   * 2026-09-14 광전자가 12:07 시총 6천억·거래대금 2,600억으로 잠겼는데 알림이 끝내
+   * 안 나갔습니다. 이유는 있었습니다 -- 젠슨 황의 광통신·보안 발언에 이어진 테마
+   * 연속성이고, 13:08 기사가 그대로 말합니다: "광통신 관련주 불붙었다…광전자 상한가,
+   * 빛샘전자 26%대 급등". 그 기사는 '상한가·급등'이 들어 복기로 걸려 버려졌고,
+   * 사전은 광전자를 LED에 두어 광통신 동료를 못 봤습니다([[theme-dictionary-lag]] --
+   * 사전은 틀린 게 아니라 빠진 것).
+   *
+   * 복기 기사 중에서도 **둘 이상을 한 문장에 묶어 관련주·테마라고 부른 것**은 다릅니다.
+   * "무엇이 올랐다"가 아니라 "무엇과 함께, 어느 이름으로 올랐다"를 말하고, 그게
+   * 잠긴 뒤의 알림이 답해야 하는 질문입니다. 테마를 이름으로 추정하지 않고 **같이
+   * 오른 종목으로** 말하라는 원칙과도 맞습니다 -- 기사가 그 묶음을 해 줬습니다.
+   *
+   * 잠긴 뒤에만 씁니다. 잠기기 전 알림(nearPass)은 "지금 살까"라 filing·direct만
+   * 받고, 이것은 그쪽에 들어가지 않습니다.
+   */
+  const grouped = direct.rows
+    .filter((row) => Number(row.tagged) >= 2 && /관련주|테마|株|수혜주|동반|줄줄이|불붙|나란히|함께/.test(row.headline))
+    .sort((a, b) => a.published_at - b.published_at);
+
+  if (grouped.length) {
+    return { kind: "grouped", filings: [], cautions, news: grouped.slice(0, 2) };
   }
 
   if (!lock.theme || lock.theme === "미분류") return { kind: "none", filings: [], cautions, news: [] };
