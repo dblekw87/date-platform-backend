@@ -46,8 +46,9 @@ export async function notifyNewMaterial(config, { url } = {}) {
     const sessions = await tradingSessions(config);
     const window = upcomingWindow(sessions);
     const candidates = await collectCandidates(config, window);
-    const universe = await tradableUniverse(config, window.previous, minTurnover);
-    const picks = rankPicks(candidates, universe);
+    const universe = await tradableUniverse(config, window.previous, minTurnoverWithFiling);
+    const picks = rankPicks(candidates, universe)
+      .filter((pick) => pick.good.length > 0 || pick.listing.turnover >= minTurnover);
     const phase = materialPhase();
     const fresh = await unsent(config, window.previous, phase, picks);
 
@@ -83,6 +84,18 @@ export async function notifyNewMaterial(config, { url } = {}) {
 // 거래대금 바닥. 판단 조건이 아니라 모집단 조건입니다 -- 이보다 얇으면 주문이
 // 나가지 않습니다. [[leader-pool-filters]]
 const minTurnover = 1_000_000_000;
+
+/*
+ * 호재 공시가 붙은 종목은 바닥을 1억까지 내립니다.
+ *
+ * 2026-09-11(금) 인피니트헬스케어가 거래대금 2억에 16:19 공정공시로 654억 배당
+ * (시총의 31%)을 알렸고, 월요일 시가 상한가였습니다. 공시는 갖고 있었는데 10억
+ * 바닥에서 걸려 후보 목록에 오르지도 못했습니다. 재료가 **공시**면 얇은 종목이
+ * 오히려 더 크게 움직이고, 알림에 거래대금이 같이 찍히므로 얇다는 것은 받는 쪽이
+ * 봅니다. 뉴스만 붙은 종목은 그대로 10억입니다 -- 뉴스는 얇은 종목에 붙을수록
+ * 홍보성이 늘고, 그쪽은 아직 재 본 적이 없습니다.
+ */
+const minTurnoverWithFiling = 100_000_000;
 
 /** 아직 기록에 없는 것만. 기록은 보낸 뒤에 하므로 "기록 없음"이 곧 "안 보냈음"입니다. */
 async function unsent(config, sessionDate, phase, picks) {

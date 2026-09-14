@@ -22,6 +22,7 @@ import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadAfterHoursWatchlist } from "./providers/after-hours-watch.mjs";
 import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
+import { notifyPreMarketSurges } from "./providers/premarket-surge-alert.mjs";
 import { notifyNewDelistNotices } from "./providers/us-delist-notice-alert.mjs";
 import { notifyMorningFeedback } from "./providers/morning-feedback.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
@@ -1299,6 +1300,13 @@ export function startMarketCollector(config) {
         const saved = afterHours ? await sampleAfterHours(config) : await samplePrices(config);
 
         if (saved > 0) console.log(`collector: ${saved} ${afterHours ? "after-hours " : ""}price samples`);
+
+        // 표본을 쓴 **뒤에** 봅니다 -- 이 틱의 프리마켓 값을 읽는 것이라 앞에 두면
+        // 늘 한 틱 늦습니다. 08:00~08:50, NXT만 열려 있는 시간입니다.
+        if (minute >= openMinute && minute < krPreMarketCloseMinute) {
+          notifyPreMarketSurges(config, { url: config.publicSiteUrl })
+            .catch((error) => console.warn("collector: premarket surge alert failed", error instanceof Error ? error.message : error));
+        }
 
         // Only while the ranked pass runs. After 15:40 the evening pass already
         // follows the day's names and this would ask the same question twice.
