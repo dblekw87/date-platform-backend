@@ -167,7 +167,8 @@ async function followUp(config, day, url, sent) {
     }
 
     const evidence = await loadLimitUpEvidence(config, lock, day);
-      evidence.context = await loadThemeContext(config, lock.symbol, day).catch(() => []);
+
+    evidence.context = await loadThemeContext(config, lock.symbol, day).catch(() => []);
 
     if (evidence.kind === "none") continue;
 
