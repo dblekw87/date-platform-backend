@@ -739,7 +739,14 @@ export function attachLeaderNewsTags(headlines, leaders) {
     .filter((leader) => leader.name || leader.symbol);
 
   return headlines.map((headline) => {
-    const text = `${headline.source} ${headline.label} ${headline.text} ${headline.originalText ?? ""}`;
+    /*
+     * 종목 매칭도 기사 본문만 봅니다. source를 넣었더니 네이버 API Hub 기사는 전부
+     * source가 "NAVER"라 별칭 NAVER → 035420에 걸렸고, 2026-09-15 하루에 "[美증시
+     * 특징주] 퀄컴 급등"류 미국 시황 10건이 네이버 특징주로 텔레그램에 나갔습니다.
+     * 발행처는 기사가 누구 얘기인지 말하지 않습니다 -- 아래 테마 매칭이 같은 이유로
+     * source를 이미 빼고 있었습니다.
+     */
+    const text = `${headline.label} ${headline.text} ${headline.originalText ?? ""}`;
     // The theme match reads the story itself — not who published it, and not
     // the label this pipeline assigned upstream. Both produced false matches by
     // substring: a Reuters report on Houthi missiles in Yemen carries the label
