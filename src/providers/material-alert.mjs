@@ -85,6 +85,19 @@ export async function notifyNewMaterial(config, { url } = {}) {
     }
 
     /*
+     * 저녁 시세를 같이 적습니다.
+     *
+     * 2026-09-15 미투온: 종가 −4.98%로 끝난 뒤 15:57 카카오게임즈 인수 공시가 나왔고,
+     * KRX 애프터마켓에서 17:07 +26.9%(종가 대비 +33%)까지 갔습니다. "다음 장 후보"의
+     * 값은 익일 시가 갭인데, 애프터마켓(9/14~)이 그 갭을 저녁에 먹습니다. 종가만 적힌
+     * 알림은 이미 지나간 자리를 새 자리처럼 보여 줍니다. KRX(J)와 NXT 둘 다 적습니다 --
+     * 최선집행으로 어느 책에서 체결됐는지가 종목마다 다릅니다.
+     */
+    const after = await loadAfterMarket(config, fresh.map((pick) => pick.symbol));
+
+    for (const pick of fresh) pick.after = after.get(pick.symbol) ?? null;
+
+    /*
      * **보낸 뒤에 기록합니다.**
      *
      * 처음엔 기록이 먼저였습니다 -- 유일 제약이 중복을 걸러 주니 INSERT가 들어간
@@ -163,6 +176,44 @@ async function record(config, sessionDate, phase, pick) {
 
 const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
 
+/** 종목별 마지막 저녁 표본, KRX 애프터(J)와 NXT 애프터 따로. 여섯 시간 안의 것만. */
+async function loadAfterMarket(config, symbols) {
+  if (!symbols.length) return new Map();
+
+  const { rows } = await query(config, `
+    SELECT DISTINCT ON (symbol, source) symbol, source, change_rate::float8, turnover::float8,
+           to_char(observed_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+      FROM market_price_samples
+     WHERE market = 'KR' AND symbol = ANY($1) AND source IN ('kis:after:krx', 'kis:nxt:after')
+       AND observed_at >= now() - interval '6 hours'
+     ORDER BY symbol, source, observed_at DESC`, [symbols]);
+  const bySymbol = new Map();
+
+  for (const row of rows) {
+    if (!bySymbol.has(row.symbol)) bySymbol.set(row.symbol, {});
+    bySymbol.get(row.symbol)[row.source === "kis:after:krx" ? "krx" : "nxt"] = row;
+  }
+
+  return bySymbol;
+}
+
+/* 종가 대비 저녁 등락. 둘 다 전일 종가 기준 등락률이라 나눠서 잇습니다. */
+function afterLine(pick) {
+  const after = pick.after;
+
+  if (!after) return null;
+
+  const close = Number(pick.listing.change_rate ?? 0);
+  const versusClose = (rate) => ((1 + rate / 100) / (1 + close / 100) - 1) * 100;
+  const part = (label, row) => row
+    ? `${label} ${row.change_rate >= 0 ? "+" : ""}${row.change_rate.toFixed(1)}% (종가 대비 ${versusClose(row.change_rate) >= 0 ? "+" : ""}${versusClose(row.change_rate).toFixed(1)}%)`
+    : null;
+  const parts = [part("KRX", after.krx), part("NXT", after.nxt)].filter(Boolean);
+  const at = after.krx?.at ?? after.nxt?.at;
+
+  return parts.length ? `  애프터 ${at} ${parts.join(" · ")}` : null;
+}
+
 /*
  * 근거를 종목 밑에 같이 적습니다. 종목 코드만 온 알림은 새벽에 받아도 무엇을 보고
  * 고른 것인지 되짚을 수 없고, 되짚을 수 없으면 틀렸을 때 무엇을 고쳐야 하는지도
@@ -189,6 +240,10 @@ function message(picks, window, phase, url) {
       + ` ${won(listing.close_price)}원 (${listing.change_rate > 0 ? "+" : ""}${listing.change_rate}%)`
       + ` 거래대금 ${(listing.turnover / 1e8).toFixed(0)}억`
     );
+
+    const evening = afterLine(pick);
+
+    if (evening) lines.push(evening);
 
     /* 원문 주소를 같이 보냅니다. 제목만으로는 재료의 크기를 알 수 없고 -- 수주
      * 한 건이 300억인지 3,000억인지가 제목에서 빠지는 일이 흔합니다 -- 알림을
