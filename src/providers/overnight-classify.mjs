@@ -112,6 +112,14 @@ export function classifyDisclosure(reportName, title) {
     return /제3자배정/.test(text) ? "good" : "dilution";
   }
 
+  /*
+   * 최대주주가 바뀌는 양수도 계약은 그 자체가 M&A입니다. 2026-09-15 15:57 미투온
+   * (카카오게임즈가 980억에 인수)이 이 이름으로 왔고, 같이 온 유상증자는 새 주인
+   * 앞으로의 제3자배정인데 DART 제목엔 배정 방식이 없어 희석으로 읽혔습니다.
+   * 짝을 이루는 유상증자는 overnight-collect가 이 공시를 보고 되돌립니다.
+   */
+  if (/최대주주변경을수반하는주식양수도계약/.test(name)) return "good";
+
   if (/단일판매ㆍ공급계약체결|단일판매.공급계약|공급계약/.test(text)) return "good";
   if (/타법인주식및출자증권취득결정|회사합병결정|주식교환|영업양수/.test(text)) return "good";
   if (/자기주식취득|자기주식\s*신탁/.test(text)) return "good";

@@ -87,6 +87,26 @@ export async function collectCandidates(config, window) {
     if (kind) of(row.symbol)[kind].push(row);
   }
 
+  /*
+   * 새 주인이 오는 유상증자는 희석이 아닙니다.
+   *
+   * DART 제목 "주요사항보고서(유상증자결정)"엔 배정 방식이 없어 전부 희석으로
+   * 분류됩니다(주주배정 큐리언트가 후보에 오르던 것을 막은 규칙). 그런데 같은 날
+   * "최대주주변경을수반하는주식양수도계약"이 같이 오면 그 증자는 인수자 앞으로의
+   * 제3자배정입니다 -- 2026-09-15 미투온이 그 꼴이었고, 희석 하나 때문에 카카오게임즈
+   * 인수가 후보에서 빠질 뻔했습니다. 그 경우만 되돌립니다.
+   */
+  for (const entry of candidates.values()) {
+    const ownerChange = entry.good.some((row) => /최대주주변경을수반하는주식양수도계약/.test(row.report_name ?? ""));
+
+    if (!ownerChange || !entry.dilution.length) continue;
+
+    const paired = entry.dilution.filter((row) => /유상증자/.test(`${row.report_name ?? ""} ${row.title ?? ""}`));
+
+    entry.dilution = entry.dilution.filter((row) => !paired.includes(row));
+    entry.good.push(...paired);
+  }
+
   return candidates;
 }
 
