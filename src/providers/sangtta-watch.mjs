@@ -166,13 +166,28 @@ async function followUpEvidence(config, day, stock, size, sentRecord, url) {
 
 /** 종목별 마지막 정규장 표본. 지금 값을 봅니다 -- 아침에 24%였다가 10%인 종목은 후보가 아닙니다. */
 async function loadLatest(config, day) {
+  /*
+   * 시총은 마지막 표본이 아니라 그날 표본 중 있는 것에서, 없으면 어제 유니버스에서.
+   * 순위 표본(kis:krx)에는 시총이 비어 오는 종목이 있어(2026-09-15 경남제약: 순위 18행
+   * 전부 null, :seen 4행만 524억) 마지막 표본만 보면 "소형 0억"으로 나가고 규모 판정도
+   * 소형으로 떨어집니다. 규모가 문턱(24/27)을 정하므로 여기가 틀리면 알림 시각이 틀립니다.
+   */
   const { rows } = await query(config, `
-    SELECT DISTINCT ON (symbol) symbol, name, change_rate::float8, turnover::float8, market_cap::float8, theme,
-           observed_at
-      FROM market_price_samples
-     WHERE market = 'KR' AND session_date = $1::date AND source LIKE 'kis:krx%' AND source NOT LIKE '%:pair'
-       AND change_rate IS NOT NULL AND observed_at >= now() - interval '6 minutes'
-     ORDER BY symbol, observed_at DESC`, [day]);
+    WITH latest AS (
+      SELECT DISTINCT ON (symbol) symbol, name, change_rate::float8, turnover::float8, theme, observed_at
+        FROM market_price_samples
+       WHERE market = 'KR' AND session_date = $1::date AND source LIKE 'kis:krx%' AND source NOT LIKE '%:pair'
+         AND change_rate IS NOT NULL AND observed_at >= now() - interval '6 minutes'
+       ORDER BY symbol, observed_at DESC
+    )
+    SELECT l.*,
+           coalesce(
+             (SELECT max(p.market_cap)::float8 FROM market_price_samples p
+               WHERE p.market = 'KR' AND p.session_date = $1::date AND p.symbol = l.symbol),
+             (SELECT u.market_cap::float8 FROM kr_daily_universe u
+               WHERE u.symbol = l.symbol AND u.session_date < $1::date ORDER BY u.session_date DESC LIMIT 1)
+           ) AS market_cap
+      FROM latest l`, [day]);
 
   return rows;
 }
