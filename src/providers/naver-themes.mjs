@@ -215,8 +215,9 @@ export async function loadSymbolThemes(config, { previous } = {}) {
        ORDER BY symbol, observed_at DESC
     ),
     live_base AS (SELECT avg(move) AS market FROM live),
+    -- 합과 개수로 둡니다. 종목마다 **자기 자신을 뺀** 평균을 아래에서 만들기 위해서입니다.
     live_theme AS (
-      SELECT b.theme_name, avg(l.move) - (SELECT market FROM live_base) AS theme_move
+      SELECT b.theme_name, sum(l.move) AS total, count(*) AS n
         FROM business b
         JOIN live l ON l.symbol = b.symbol
        GROUP BY b.theme_name
@@ -224,7 +225,7 @@ export async function loadSymbolThemes(config, { previous } = {}) {
     ),
     -- 개장 전과 주말에는 분봉이 없습니다. 그때만 마지막 일봉 스냅샷으로 답합니다.
     snapshot AS (
-      SELECT b.theme_name, avg(u.change_rate) AS theme_move
+      SELECT b.theme_name, sum(u.change_rate) AS total, count(*) AS n
         FROM business b
         JOIN kr_daily_universe u
           ON u.symbol = b.symbol
@@ -232,18 +233,46 @@ export async function loadSymbolThemes(config, { previous } = {}) {
        GROUP BY b.theme_name
       HAVING count(*) >= $2
     ),
+    is_live AS (SELECT EXISTS (SELECT 1 FROM live_theme) AS live),
     session AS (
-      SELECT theme_name, theme_move FROM live_theme
+      SELECT theme_name, total, n FROM live_theme
        UNION ALL
-      SELECT theme_name, theme_move FROM snapshot
-       WHERE NOT EXISTS (SELECT 1 FROM live_theme)
+      SELECT theme_name, total, n FROM snapshot
+       WHERE NOT (SELECT live FROM is_live)
+    ),
+    -- 종목 자신의 오늘 값. 분봉이 있으면 분봉, 없으면 스냅샷 -- session과 같은 쪽.
+    own AS (
+      SELECT symbol, move FROM live WHERE (SELECT live FROM is_live)
+       UNION ALL
+      SELECT u.symbol, u.change_rate AS move FROM kr_daily_universe u
+       WHERE NOT (SELECT live FROM is_live)
+         AND u.session_date = (SELECT max(session_date) FROM kr_daily_universe)
+    ),
+    -- 시장 평균은 분봉일 때만 뺍니다(스냅샷은 전 종목이라 원래 규칙대로 빼지 않음).
+    base AS (SELECT CASE WHEN (SELECT live FROM is_live) THEN (SELECT market FROM live_base) ELSE 0 END AS market),
+    /*
+     * 테마의 오늘 값을 **그 종목을 빼고** 잽니다.
+     *
+     * 2026-09-15 한컴위드(+19.7%)가 "모바일콘텐츠"를 달았습니다. 그 테마 표본 14종목의
+     * 평균 +2.35%p 중 1.1%p가 한컴위드 자신이었고, 나머지는 무관한 YTN 상한가였습니다.
+     * 자신을 빼면 +1.23, 중앙값은 −1.48 -- 그 테마는 오르지 않았습니다. 종목이 자기
+     * 표로 자기 라벨을 고르면 작은 테마가 늘 이깁니다. 자신을 빼면 "나 말고 이 테마가
+     * 오늘 움직였나"를 묻게 되고, 그게 라벨이 답해야 하는 질문입니다.
+     */
+    scored AS (
+      SELECT b.symbol, b.theme_name, b.theme_no,
+             CASE WHEN o.move IS NOT NULL AND s.n > 1 THEN (s.total - o.move) / (s.n - 1)
+                  ELSE s.total / s.n END - (SELECT market FROM base) AS theme_move
+        FROM business b
+        JOIN session s ON s.theme_name = b.theme_name
+        LEFT JOIN own o ON o.symbol = b.symbol
     )
-    SELECT DISTINCT ON (b.symbol) b.symbol, b.theme_name, s.theme_move,
-           -- 지금 달려 있는 라벨이 오늘 얼마나 올랐는지. 관성 판정에 씁니다.
-           (SELECT p.theme_move FROM session p WHERE p.theme_name = held.theme_name) AS held_move,
+    SELECT DISTINCT ON (b.symbol) b.symbol, b.theme_name, sc.theme_move,
+           -- 지금 달려 있는 라벨이 오늘 얼마나 올랐는지(역시 자신 제외). 관성 판정에 씁니다.
+           (SELECT p.theme_move FROM scored p WHERE p.symbol = b.symbol AND p.theme_name = held.theme_name) AS held_move,
            held.theme_name AS held_theme
       FROM business b
-      LEFT JOIN session s ON s.theme_name = b.theme_name
+      LEFT JOIN scored sc ON sc.symbol = b.symbol AND sc.theme_name = b.theme_name
       LEFT JOIN LATERAL (
         SELECT unnest($4::text[]) AS symbol, unnest($5::text[]) AS theme_name
       ) held ON held.symbol = b.symbol
@@ -258,8 +287,8 @@ export async function loadSymbolThemes(config, { previous } = {}) {
      -- theme_no는 마지막 동점 처리로만 남깁니다 -- 값이 같을 때 순서가 흔들리면
      -- 새로고침마다 라벨이 바뀝니다.
      ORDER BY b.symbol,
-              (CASE WHEN coalesce(s.theme_move, 0) > 0 THEN 0 ELSE 1 END),
-              s.theme_move DESC NULLS LAST,
+              (CASE WHEN coalesce(sc.theme_move, 0) > 0 THEN 0 ELSE 1 END),
+              sc.theme_move DESC NULLS LAST,
               b.theme_no ASC
   `, [nonBusinessThemePattern, minimumThemeSample, sessionDate("KR"),
       previous ? [...previous.keys()] : [], previous ? [...previous.values()] : []]);

@@ -1,6 +1,7 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitPairCandidates } from "./limit-pair.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
+import { query } from "../db/client.mjs";
 
 /**
  * 짝꿍이 새로 뜨면 카톡 한 통.
@@ -79,7 +80,25 @@ function themeNote(pair) {
 const BASIS = "※ 위 등급 성적은 종가에 사서 익일 아침에 판 값입니다.\n" +
   "※ 지금 장중에 사는 것은 실측 -1.47%(314건, 대조군 +0.06%)";
 
-function line(pair) {
+/*
+ * 두 종목이 함께 속한 테마 전부.
+ *
+ * 짝은 공유 테마가 하나라도 있으면 성립하고 제목에는 그중 하나만 옵니다. 2026-09-15
+ * 아이티센피엔에스 → 한컴위드는 핀테크·양자암호·스테이블코인·보안주 넷을 공유했는데
+ * 제목의 테마 하나로는 "스테이블코인 얘기구나"를 읽을 수 없었습니다. 어느 이름이
+ * 오늘의 이유인지는 가격이 못 고르므로([[theme-card-attribution]]) 고르지 않고 다
+ * 적습니다 -- 읽는 쪽이 압니다.
+ */
+async function sharedThemes(config, pair) {
+  const { rows } = await query(config, `
+    SELECT a.theme_name FROM kr_theme_membership a
+      JOIN kr_theme_membership b ON b.theme_name = a.theme_name AND b.symbol = $2
+     WHERE a.symbol = $1 ORDER BY a.theme_name`, [pair.leader.symbol, pair.second.symbol]);
+
+  return rows.map((row) => row.theme_name).filter((theme) => theme !== pair.theme);
+}
+
+function line(pair, shared = []) {
   const gap = Number(pair.leadGap);
 
   return [
@@ -87,8 +106,9 @@ function line(pair) {
     `1등주 ${pair.leader.name} +${Number(pair.leader.changeRateValue).toFixed(2)}%`,
     `2등주 ${pair.second.name} +${Number(pair.second.changeRateValue).toFixed(2)}%`,
     `간격 ${gap.toFixed(2)}%p`,
+    shared.length ? `함께 속한 테마: ${shared.join(" · ")}` : "",
     BASIS
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 /**
@@ -140,7 +160,8 @@ export async function notifyNewPairs(config, { day, url } = {}) {
       // 같은 짝이 같은 등급 이하로 다시 오면 조용히 넘깁니다.
       if ((sent.get(key) ?? 0) >= rank) continue;
 
-      const ok = await notify(config, { text: line(pair), url });
+      const shared = await sharedThemes(config, pair).catch(() => []);
+      const ok = await notify(config, { text: line(pair, shared), url });
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
       if (!ok) continue;
