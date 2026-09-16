@@ -102,5 +102,30 @@ export async function publishBoardSnapshot(board, { config, repoPath = snapshotR
     await git(["push", "-q", "--force-with-lease", "origin", "main"]);
   }
 
+  await purgeJsdelivrCache();
+
   return { generatedAt, published: true };
+}
+
+/*
+ * jsdelivr가 raw.githubusercontent.com을 통해 board.json을 다시 서빙하기 전에
+ * 캐시를 비워 둡니다.
+ *
+ * 2026-09-16에 GitHub raw 자체를 읽던 프론트가, 이미 고친 지 여러 시간 지난
+ * 뉴스 텍스트를 한 리전에서만 계속 옛 값으로 돌려받았습니다. raw.githubusercontent.com
+ * 에는 강제로 비우는 방법이 없어 그 리전의 캐시가 스스로 풀릴 때까지 기다리는 것
+ * 말고는 손쓸 게 없었습니다. jsdelivr는 같은 파일을 서빙하면서 purge API를 두고
+ * 있어서, 매번 올린 뒤 바로 비우면 다음에 읽는 쪽이 항상 이번 것을 받습니다.
+ * 실패해도 게시 자체를 막지 않습니다 -- 다음 틱이 다시 시도합니다.
+ */
+async function purgeJsdelivrCache() {
+  try {
+    const response = await fetch("https://purge.jsdelivr.net/gh/dblekw87/date-board-snapshot@main/board.json", {
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!response.ok) console.warn(`jsdelivr purge ${response.status}`);
+  } catch (error) {
+    console.warn("jsdelivr purge failed", error instanceof Error ? error.message : error);
+  }
 }
