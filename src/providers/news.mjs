@@ -85,14 +85,31 @@ const state = createRuntimeState("market-board-news-state", () => ({
   seenHeadlineIds: []
 }));
 
-function decodeXml(value) {
+/*
+ * 숫자 문자 참조("&#039;", "&#x2019;")를 실제 글자로.
+ *
+ * 이름 있는 다섯 개(quot·apos·amp·lt·gt)만 풀고 있어서, 머니투데이·더벨 RSS가
+ * 흔히 쓰는 "&#039;"(아포스트로피)가 텔레그램·화면에 그대로 찍혔습니다
+ * (2026-09-16 사용자가 화면에서 봄). 순서가 중요합니다 -- &amp;를 맨 나중에
+ * 풀어야 "&amp;#039;"(한 번 더 감싸인 것) 같은 경우가 잘못 풀리지 않습니다.
+ */
+function decodeNumericEntities(value) {
   return value
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&quot;/g, "\"")
-    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)));
+}
+
+function decodeXml(value) {
+  return decodeNumericEntities(
+    value
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+      .replace(/&quot;/g, "\"")
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+  )
     .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
     .trim();
 }
 
