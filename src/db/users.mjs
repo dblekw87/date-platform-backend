@@ -56,11 +56,16 @@ export async function ensureUser(config, input = {}) {
   `, [provider, providerUserId, input.email ?? null, displayName, authorId]);
   const user = result.rows[0];
 
+  /*
+   * 첫 닉네임은 OAuth가 준 이름입니다. author_id였습니다 -- 그래서 매매 복기 목록에
+   * "kakao_5036468766"이 작성자로 찍혔습니다(2026-09-16 화면 점검). author_id는 URL과
+   * 소유권 판정용 식별자고, 사람 눈에 보일 이름은 provider가 준 표시 이름이 맞습니다.
+   */
   await query(config, `
     INSERT INTO profiles (user_id, nickname)
     VALUES ($1, $2)
     ON CONFLICT (user_id) DO NOTHING
-  `, [user.id, user.author_id]);
+  `, [user.id, user.display_name || user.author_id]);
 
   return user;
 }
