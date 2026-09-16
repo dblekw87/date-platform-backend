@@ -6,7 +6,7 @@ import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { calibrateCloseBet, calibrateLimitPair } from "./providers/calibration.mjs";
-import { collectKrDailyBars } from "./providers/kr-daily-bars.mjs";
+import { collectKrDailyBars, collectKrDailyBarsFromKis } from "./providers/kr-daily-bars.mjs";
 import { recordKrListings } from "./providers/kr-listings.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes, refreshThemes, themeDictionaryAgeMs } from "./providers/naver-themes.mjs";
@@ -35,6 +35,7 @@ import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursS
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
+import { query } from "./db/client.mjs";
 
 /**
  * Records the market to disk while the session runs.
@@ -924,10 +925,43 @@ function startUniverseSample(config, minute) {
 
   if (universeRunning || universeDay === day || minute < universeMinute) return;
 
+  /*
+   * 16:00 전에만 뜹니다.
+   *
+   * 2026-09-14부터 KRX 애프터마켓이 16:00에 열리고, 그 뒤 네이버 목록의 closePrice와
+   * 등락률은 **애프터마켓 가격**입니다. 이 스냅샷이 그날 "종가"의 원본이라, 저녁에 뜨면
+   * 종가배팅·짝꿍 채점과 등급 보정표가 전부 애프터 가격으로 잽니다. 9/14 19:54와 9/15
+   * 19:05에 재기동 뒤 다시 떠서 그렇게 됐고, 정규장 종가와 다른 종목이 303개·186개였습니다.
+   * 삼현 짝꿍 카드에 +33.08%가 찍힌 게 그 흔적입니다(9/14 종가 40,600이 39,600으로).
+   *
+   * 놓친 날은 morning-catch-up이 다음 날 아침 KIS 공식 일봉으로 채웁니다.
+   */
+  if (minute >= krxAfterMarketOpenMinute) {
+    if (universeDay !== `${day}:skipped`) {
+      universeDay = `${day}:skipped`;
+      console.warn(`collector: universe window missed for ${day} - after 16:00 the list carries after-market prices, leaving it to the morning catch-up`);
+    }
+
+    return;
+  }
+
   universeDay = day;
   universeRunning = true;
 
   (async () => {
+    /*
+     * 재기동 뒤라도 오늘 것이 이미 있으면 다시 쓰지 않습니다. 15:52에 맞게 찍힌 표를
+     * 15:58에 다시 찍는 건 무해하지만, 이 함수가 실패로 universeDay를 되돌린 뒤 다음
+     * 틱이 16:00을 넘겼을 때 위 창이 막아 줍니다 -- 두 겹입니다.
+     */
+    const existing = await query(config, "SELECT count(*)::int AS n FROM kr_daily_universe WHERE session_date = $1::date", [day]);
+
+    if ((existing.rows[0]?.n ?? 0) > 1000) {
+      console.log(`collector: universe for ${day} already stored (${existing.rows[0].n} rows) - not rewriting`);
+
+      return;
+    }
+
     const rows = await loadKrUniverse();
     const saved = await saveKrUniverse(config, { rows, sessionDate: day });
 
@@ -976,6 +1010,60 @@ function startUniverseSample(config, minute) {
     })
     .finally(() => {
       universeRunning = false;
+    });
+}
+
+/*
+ * 아침 되받기 -- 어제 일봉을 KIS 공식 값으로.
+ *
+ * 15:50 창을 놓친 날(재기동·꺼짐)과, 네이버가 애프터마켓 가격을 종가로 준 날을 고칩니다.
+ * 06:20~07:00 사이 하루 한 번, 직전 거래일 일봉을 유니버스 종목 전체에 대해 KIS로 다시
+ * 받아 덮어씁니다(4,300요청 · 약 9분). 유니버스 표의 종가·등락률도 그 값으로 맞춥니다.
+ * 이미 맞는 날은 값이 같아 덮어써도 바뀌는 게 없습니다 -- 확인 비용이 고치는 비용과
+ * 같아 그냥 고칩니다.
+ */
+let catchUpDay = null;
+let catchUpRunning = false;
+
+function startMorningCatchUp(config, minute) {
+  const day = sessionDate("KR");
+
+  // 06:20~07:00. 07:00 채점이 이 종가를 쓰므로 그 전에 끝나야 합니다(4,300요청 · 약 9분).
+  if (catchUpRunning || catchUpDay === day || minute < 6 * 60 + 20 || minute >= 7 * 60) return;
+
+  catchUpDay = day;
+  catchUpRunning = true;
+
+  (async () => {
+    const previous = await query(config,
+      "SELECT max(session_date)::text AS d FROM kr_daily_universe WHERE session_date < $1::date", [day]);
+    const target = previous.rows[0]?.d;
+
+    if (!target) return;
+
+    const symbols = (await query(config,
+      "SELECT symbol FROM kr_daily_universe WHERE session_date = $1::date", [target])).rows.map((row) => row.symbol);
+    const { saved, failed } = await collectKrDailyBarsFromKis(config, symbols, {
+      from: target, log: (message) => console.log(`collector: catch-up ${message}`), to: target
+    });
+
+    console.log(`collector: catch-up · ${target} · ${saved} bars from KIS · ${failed} failed`);
+
+    const fixed = await query(config, `
+      UPDATE kr_daily_universe u
+         SET close_price = b.close,
+             change_rate = round(((b.close / nullif(p.close, 0) - 1) * 100)::numeric, 2)
+        FROM kr_daily_bars b
+        JOIN LATERAL (SELECT close FROM kr_daily_bars q WHERE q.symbol = b.symbol AND q.session_date < b.session_date ORDER BY q.session_date DESC LIMIT 1) p ON true
+       WHERE u.symbol = b.symbol AND u.session_date = b.session_date AND b.session_date = $1::date
+         AND p.close > 0
+         AND (abs(u.close_price - b.close) > 0 OR abs(u.change_rate - ((b.close / p.close - 1) * 100)) > 0.05)`, [target]);
+
+    console.log(`collector: catch-up · ${target} · universe close/change fixed for ${fixed.rowCount} symbols`);
+  })()
+    .catch((error) => console.warn("collector: morning catch-up failed", error instanceof Error ? error.message : error))
+    .finally(() => {
+      catchUpRunning = false;
     });
 }
 
@@ -1508,6 +1596,9 @@ export function startMarketCollector(config) {
     // 아침 07:30 한 번. 창과 하루 잠금은 provider가 봅니다.
     notifyNewDelistNotices(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: delist notice alert failed", error instanceof Error ? error.message : error));
+    // 아침 06:20~07:00 한 번. 어제 일봉·유니버스 종가를 KIS 공식 값으로 되받습니다.
+    // 07:00 채점이 그 종가를 쓰므로 그 전에 끝나게 창을 앞에 둡니다.
+    startMorningCatchUp(config, seoulMinute(new Date()).minute);
     // 아침 07:00 한 번. 어제 들어간 것과 그저께 판단의 채점. 창과 하루 잠금은 provider가 봅니다.
     notifyMorningFeedback(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: morning feedback failed", error instanceof Error ? error.message : error));

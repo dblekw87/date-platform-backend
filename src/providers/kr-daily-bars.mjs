@@ -1,5 +1,6 @@
 import { fetchText } from "../http.mjs";
 import { query } from "../db/client.mjs";
+import { loadKrDailyBarsFromKis } from "./kis.mjs";
 
 /**
  * 국내 일봉 — 시가가 있는 유일한 표.
@@ -123,4 +124,57 @@ export async function collectKrDailyBars(config, symbols, { from, log = () => {}
   }
 
   return { failed, saved };
+}
+
+/**
+ * 공식 일봉으로 되받기 -- 과거 날짜용.
+ *
+ * 네이버 일봉은 2026-09-14부터 애프터마켓 가격을 종가에 씁니다(kis.mjs의
+ * loadKrDailyBarsFromKis 머리말). 15:50 수집은 애프터마켓이 열리기 전이라 네이버로도
+ * 맞지만, 그 창을 놓친 날과 오염된 날을 고치는 것은 KIS로만 합니다. foreign_ratio는
+ * KIS 일봉에 없어 있던 값을 그대로 둡니다.
+ */
+export async function collectKrDailyBarsFromKis(config, symbols, { from, log = () => {}, to, spacingMs = 120 }) {
+  let failed = 0;
+  let saved = 0;
+
+  for (const [index, symbol] of symbols.entries()) {
+    try {
+      const bars = await loadKrDailyBarsFromKis(config, symbol, { from, to });
+
+      saved += await saveKrDailyBarsKeepingForeign(config, bars);
+    } catch (error) {
+      failed += 1;
+      log(`kis daily bars ${symbol} failed: ${error instanceof Error ? error.message : error}`);
+    }
+
+    if ((index + 1) % 200 === 0) log(`kis daily bars · ${index + 1}/${symbols.length} · ${saved} rows · ${failed} failed`);
+
+    await sleep(spacingMs);
+  }
+
+  return { failed, saved };
+}
+
+async function saveKrDailyBarsKeepingForeign(config, bars) {
+  if (!config.databaseUrl || bars.length === 0) return 0;
+
+  const columns = 7;
+  const values = bars.flatMap((bar) => [bar.symbol, bar.sessionDate, bar.open, bar.high, bar.low, bar.close, bar.volume]);
+  const placeholders = bars
+    .map((_, index) => `(${Array.from({ length: columns }, (__, offset) => `$${index * columns + offset + 1}`).join(", ")})`)
+    .join(", ");
+  const result = await query(config, `
+    INSERT INTO kr_daily_bars (symbol, session_date, open, high, low, close, volume)
+    VALUES ${placeholders}
+    ON CONFLICT (symbol, session_date) DO UPDATE SET
+      close = EXCLUDED.close,
+      high = EXCLUDED.high,
+      low = EXCLUDED.low,
+      observed_at = now(),
+      open = EXCLUDED.open,
+      volume = EXCLUDED.volume
+  `, values);
+
+  return result.rowCount;
 }

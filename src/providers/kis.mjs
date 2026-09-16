@@ -741,3 +741,44 @@ async function loadKrOrderBook(config, token, symbol, venue) {
     totalBidQty: parseNumeric(book.total_bidp_rsqn)
   };
 }
+
+/**
+ * 공식 일봉. KRX 정규장 기준 OHLC입니다.
+ *
+ * 2026-09-14 KRX 애프터마켓이 열린 뒤 네이버 일봉(siseJson)은 그날의 종가·고가에
+ * 애프터마켓 가격을 씁니다 -- 미투온 9/15: 네이버 종가 4,030·고가 4,040, KIS 종가
+ * 2,955·고가 3,160. 상하한가 기준가도, 우리가 20개월을 잰 "종가 매수 → 익일 시가"도
+ * 정규장 종가입니다. 과거 날짜는 여기서 받습니다. **오늘 행은 장중엔 현재가라 쓰지
+ * 않습니다** -- 다음 날 아침에 어제 것을 받는 용도입니다.
+ *
+ * 한 종목에 한 요청(최대 100영업일). 전 종목이면 4,300요청이라 저녁·아침에만 돕니다.
+ */
+export async function loadKrDailyBarsFromKis(config, symbol, { from, to }) {
+  const token = await getAccessToken(config);
+  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", {
+    FID_COND_MRKT_DIV_CODE: "J",
+    FID_INPUT_DATE_1: String(from).replaceAll("-", ""),
+    FID_INPUT_DATE_2: String(to).replaceAll("-", ""),
+    FID_INPUT_ISCD: symbol,
+    FID_ORG_ADJ_PRC: "0",
+    FID_PERIOD_DIV_CODE: "D"
+  }), {
+    timeoutMs: 5000,
+    headers: kisHeaders(config, token, "FHKST03010100")
+  });
+
+  if (data?.rt_cd && data.rt_cd !== "0") throw new Error(`kis daily ${symbol}: ${data.msg1 ?? data.rt_cd}`);
+
+  return (data?.output2 ?? [])
+    .filter((row) => row?.stck_bsop_date && parseNumeric(row.stck_clpr))
+    .map((row) => ({
+      close: parseNumeric(row.stck_clpr),
+      foreignRatio: null,
+      high: parseNumeric(row.stck_hgpr),
+      low: parseNumeric(row.stck_lwpr),
+      open: parseNumeric(row.stck_oprc),
+      sessionDate: `${row.stck_bsop_date.slice(0, 4)}-${row.stck_bsop_date.slice(4, 6)}-${row.stck_bsop_date.slice(6, 8)}`,
+      symbol,
+      volume: parseNumeric(row.acml_vol)
+    }));
+}
