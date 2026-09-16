@@ -4,14 +4,29 @@
  * removes duplicates that arrive through more than one of them.
  */
 
-function stripHtml(value) {
+/*
+ * 숫자 문자 참조("&#x27;", "&#8217;")를 실제 글자로. news.mjs의 decodeXml과
+ * 같은 이유입니다 -- NewsAPI·Finnhub·Benzinga 제목에 이 형태가 흔한데, 이름
+ * 있는 다섯 개만 풀던 stripHtml은 그대로 통과시켰습니다(2026-09-16, 화면에서
+ * "SpaceX&#x27;s Business"로 확인). &amp;는 맨 나중에 풉니다.
+ */
+function decodeNumericEntities(value) {
   return value
-    .replace(/<[^>]*>/g, "")
-    .replace(/&quot;/g, "\"")
-    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)));
+}
+
+function stripHtml(value) {
+  return decodeNumericEntities(
+    value
+      .replace(/<[^>]*>/g, "")
+      .replace(/&quot;/g, "\"")
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+  )
     .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
     .trim();
 }
 
