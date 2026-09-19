@@ -522,6 +522,86 @@ async function sampleAfterHours(config) {
   return saved;
 }
 
+/*
+ * 24%↑ 종목만 독립된 1분 타이머로.
+ *
+ * 메인 루프는 setTimeout으로 자기 자신을 다시 예약하는 구조라, 10:00~15:30 내내
+ * 그 간격이 5분입니다. `sangtta-watch.mjs`·`limit-up-alert.mjs` 안의 "1분마다
+ * 확인"은 **그 함수가 실제로 불려야** 의미가 있는데, 메인 루프 자체가 5분에 한 번만
+ * 부르니 안의 1분 체크는 장식이었습니다 -- 09:00~09:30(개장 30분)에만 진짜
+ * 1분이었습니다. 2026-09-17 코닉오토메이션이 10:01 +23.9%에서 10:06 +30.0%로
+ * 5분 표본 사이를 그대로 건너뛴 것이 증거입니다.
+ *
+ * 메인 루프 전체를 1분으로 당기면 순위 종목 전부(500종목 안팎)를 하루 종일 매분
+ * 물어야 해서 비용이 너무 큽니다. 대신 **이미 24% 위인 종목만** 별도 setInterval로
+ * 매분 다시 묻습니다 -- 후보가 없으면 이 타이머는 쿼리 한 번으로 끝납니다.
+ *
+ * source는 `kis:krx:hot`, `LIKE 'kis:krx%'`에 걸립니다(의도한 것). 상한가 감지·
+ * 짝꿍·종가배팅·테마 판정이 전부 "최신 표본"을 찾는 패턴이라 더 잦은 값이 끼어도
+ * 안전하고, 오히려 limit-up-detect의 "3분 연속 확인" 조건이 더 빨리 채워집니다.
+ * 저녁 애프터마켓의 `kis:after:krx`와 달리 이건 정규장 값 그 자체라 구분해 둘
+ * 이유가 없습니다.
+ *
+ * 표본을 쓴 뒤에 상한가·상따 감시를 직접 부릅니다 -- 새 표본이 있어야 볼 게
+ * 생기고, 두 함수 다 자기 안의 lastRunAt로 중복 발송을 막으므로 메인 루프가
+ * 같은 틱에 또 불러도 안전합니다.
+ */
+let hotWatchRunning = false;
+
+async function startHotSymbolWatch(config) {
+  if (hotWatchRunning) return;
+
+  const now = new Date();
+
+  if (!isCollecting(now) || !isRegularSession("KR", now)) return;
+  if (!(await isKrMarketOpen(config, now).catch(() => false))) return;
+
+  const { minute } = seoulMinute(now);
+
+  // 메인 루프가 이미 1분인 구간(개장 30분)에서는 할 일이 없습니다.
+  if (intervalMsFor(minute) <= 60_000) return;
+
+  hotWatchRunning = true;
+
+  try {
+    const day = sessionDate("KR");
+    const { rows } = await query(config, `
+      SELECT DISTINCT ON (symbol) symbol
+        FROM market_price_samples
+       WHERE market = 'KR' AND session_date = $1::date AND source LIKE 'kis:krx%'
+         AND change_rate >= 24 AND change_rate < 29.5
+         AND observed_at >= now() - interval '10 minutes'
+       ORDER BY symbol, observed_at DESC`, [day]);
+    const symbols = rows.map((row) => row.symbol);
+
+    if (symbols.length === 0) return;
+
+    const quotes = await loadKrQuotes(config, symbols, "J");
+
+    if (quotes.length === 0) return;
+
+    const saved = await saveMarketPriceSamples(config, {
+      market: "KR",
+      observedAt: new Date().toISOString(),
+      ranked: false,
+      sessionDate: day,
+      source: "kis:krx:hot",
+      stocks: await withThemes(config, quotes)
+    });
+
+    if (saved > 0) console.log(`collector: ${saved} hot-symbol price samples (24%+, ${symbols.length} watched)`);
+
+    await notifySangttaWatch(config, { url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: hot-watch sangtta failed", error instanceof Error ? error.message : error));
+    await notifyLimitUps(config, { url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: hot-watch limit-up failed", error instanceof Error ? error.message : error));
+  } catch (error) {
+    console.warn("collector: hot symbol watch failed", error instanceof Error ? error.message : error);
+  } finally {
+    hotWatchRunning = false;
+  }
+}
+
 // One screener call a tick, and the whole US session is six and a half hours,
 // so there is nothing to gain from the minute cadence the Korean open needs.
 const usIntervalMs = 5 * 60_000;
@@ -1626,8 +1706,15 @@ export function startMarketCollector(config) {
   console.log("market collector on · 국내 08:00–20:00 · 미국 18:00–09:00(프리·정규·애프터) · 뉴스 상시");
   void tick();
 
+  // 메인 루프와 독립된 타이머입니다 -- 그게 이 함수가 있는 이유입니다(위 주석).
+  const hotWatchIntervalId = setInterval(() => {
+    startHotSymbolWatch(config)
+      .catch((error) => console.warn("collector: hot symbol watch failed", error instanceof Error ? error.message : error));
+  }, 60_000);
+
   return () => {
     stopped = true;
     if (timeoutId) clearTimeout(timeoutId);
+    clearInterval(hotWatchIntervalId);
   };
 }
