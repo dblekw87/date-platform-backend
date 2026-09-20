@@ -26,6 +26,7 @@ import { notifyPreMarketSurges } from "./providers/premarket-surge-alert.mjs";
 import { notifySangttaWatch } from "./providers/sangtta-watch.mjs";
 import { notifyNewDelistNotices } from "./providers/us-delist-notice-alert.mjs";
 import { notifyMorningFeedback } from "./providers/morning-feedback.mjs";
+import { notifyWeekendBrief } from "./providers/weekend-brief.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
@@ -1682,6 +1683,10 @@ export function startMarketCollector(config) {
     // 아침 07:00 한 번. 어제 들어간 것과 그저께 판단의 채점. 창과 하루 잠금은 provider가 봅니다.
     notifyMorningFeedback(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: morning feedback failed", error instanceof Error ? error.message : error));
+    // 월요일 07:10 한 통. 주말 창일 때만 나갑니다 -- 평일 창은 대조군과 구별되지
+    // 않아 보낼 값이 없습니다. 07:00 아침 피드백과 07:30 상폐위험 사이입니다.
+    notifyWeekendBrief(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: weekend brief failed", error instanceof Error ? error.message : error));
 
     /*
      * 다음 틱은 **지금** 시각으로 다시 계산합니다.
