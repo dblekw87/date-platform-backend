@@ -8,8 +8,11 @@ import { query } from "../db/client.mjs";
  * 끝나는 시각이라 그 뒤에 나온 것은 아직 거래되지 않았기 때문이고, 끝이 08:50인
  * 것은 NXT 프리마켓이 그때 멈춰 09:00 주문 직전의 마지막 시점이기 때문입니다.
  *
- * 금요일 15:40부터 월요일 08:50까지가 곧 주말 창이라, 주말이라고 다르게 다룰
- * 것이 없습니다. 컴퓨터를 껐다 켠 주말이든 평일 하룻밤이든 같은 코드가 답합니다.
+ * 창을 잡는 방법은 주말이든 평일 하룻밤이든 같지만, **값은 같지 않습니다.**
+ * 2026-09-20에 20세션으로 갈라 재니 같은 "새 재료"가 주말 창에서는 장중 초과
+ * +1.01%p(승률 58%)인데 평일 창에서는 +0.23%p(46%)로 대조군과 구별되지 않았습니다.
+ * 이틀치 뉴스가 한 번에 반영되는 자리라서로 보입니다. 그래서 어느 창인지를
+ * 같이 돌려줍니다 -- 거르는 데는 아직 안 쓰고 읽는 사람이 무게를 정하도록 둡니다.
  */
 
 export async function tradingSessions(config, since = "2026-08-14") {
@@ -28,6 +31,11 @@ export async function tradingSessions(config, since = "2026-08-14") {
  */
 export function upcomingWindow(sessions, now = new Date()) {
   const previous = sessions[sessions.length - 1];
+  /* 직전 거래일이 금요일이면 다음 장은 월요일입니다. 국내 휴장일 목록이 없어
+   * 다음 장이 언제인지는 모르지만 직전 장에서 며칠 지났는지는 알 수 있으므로,
+   * 연휴로 사흘 넘게 벌어진 경우도 같은 창으로 봅니다. */
+  const previousNoon = new Date(`${previous}T12:00:00+09:00`);
+  const elapsedDays = Math.floor((now - previousNoon) / 86400000);
 
   return {
     previous,
@@ -37,6 +45,7 @@ export function upcomingWindow(sessions, now = new Date()) {
      * 돌려줍니다 -- 마감 뒤 기사가 새 사실인지 낮에 하던 얘기의 연장인지가
      * 여기서 갈립니다. */
     sessionFrom: new Date(`${previous}T09:00:00+09:00`),
-    sessionTo: new Date(`${previous}T15:40:00+09:00`)
+    sessionTo: new Date(`${previous}T15:40:00+09:00`),
+    weekend: previousNoon.getUTCDay() === 5 || elapsedDays >= 3
   };
 }

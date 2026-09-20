@@ -17,6 +17,9 @@ export function printPicks(picks, window, target) {
   console.log("");
   console.log(`주말 재료 후보 · ${target} 장 대상`);
   console.log(`창 ${window.from.toISOString().slice(0, 16)}Z ~ ${window.to.toISOString().slice(0, 16)}Z (직전 거래일 ${window.previous} 15:40부터)`);
+  console.log(window.weekend
+    ? "창 종류 주말 · 새 재료 장중 초과 +1.01%p(58%, 62건) -- 평일보다 값이 큰 자리"
+    : "창 종류 평일 · 새 재료 장중 초과 +0.23%p(46%, 201건) -- 대조군과 구별되지 않습니다");
   console.log("");
 
   if (!picks.length) {

@@ -26,6 +26,9 @@ import { storyTokens } from "./overnight-collect.mjs";
 
 const limitUpRate = 29;
 
+/* 직전 장에 이만큼 오른 종목은 뉴스만으로는 후보가 아닙니다. 아래 blockReason 참고. */
+const alreadyMovedRate = 2;
+
 export function rankPicks(candidates, universe) {
   const picks = [];
 
@@ -82,6 +85,28 @@ export function blockReason(entry, listing) {
    * 돌았는지와 무관하고, 실제로 갈라 재도 +0.62 대 +0.50으로 거의 같습니다.
    */
   if (entry.coveredInSession && !entry.good.length && !hasNewStory(entry, listing)) return "직전 장중에 이미 다뤄짐";
+
+  /*
+   * 직전 장에 이미 오른 종목은 뉴스만으로는 후보가 아닙니다.
+   *
+   * 2026-09-20에 20세션으로 다시 재면서 직전 장 등락으로 갈라 봤습니다. 재료가
+   * 새 얘기인 것만 모아도 직전 장에서 이미 올랐는지에 따라 방향이 갈립니다.
+   *
+   *   주말 창  조용(+2% 미만)    45건   장중 +1.40%p   승률 64%
+   *   주말 창  달림(+2% 이상)    17건   장중 -0.01%p   승률 41%
+   *   평일 창  조용             148건   장중 +0.40%p   승률 48%
+   *   평일 창  달림              50건   장중 +0.06%p   승률 40%
+   *
+   * 주말 표본이 얇지만(45건) 평일에서도 부호가 같아 방향은 믿습니다. 크기는
+   * 아직 믿지 마세요. 상한가(29%)만 막던 자리를 2%로 내리는 셈이고, 값이 있는
+   * 쪽은 "재료는 새로운데 아직 안 움직인 것"이라는 뜻입니다.
+   *
+   * **공시에는 걸지 않습니다.** 공시를 직전 장 등락으로 갈라 잰 적이 없고,
+   * 복기·이어진 규칙과 같은 이유로 공시는 그 자체가 새 사실입니다.
+   */
+  if (!entry.good.length && listing.change_rate >= alreadyMovedRate) {
+    return `직전장 +${Number(listing.change_rate).toFixed(1)}% 상승`;
+  }
   if (entry.dilution.length) return `희석 공시 ${entry.dilution.length}건`;
   if (entry.bad.length) return `악재 공시 ${entry.bad.length}건`;
   if (listing.halted || listing.managed) return "거래정지·관리종목";
