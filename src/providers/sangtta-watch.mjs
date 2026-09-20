@@ -25,8 +25,13 @@ import { sessionDate } from "./market-session.mjs";
  *
  * 2026-09-14부터 **잠기기 전 알림은 이 파일 하나**입니다. limit-up-alert.mjs의 근접 알림
  * (27~29%, 근거 있을 때만)과 겹쳐 같은 종목이 두 통 오게 되어 사용자가 합치자고 했습니다.
- * 그래서 근거는 여기 붙이고, 처음 보낼 때 없던 근거(공시·지목 기사·지분)가 잠기기 전에
- * 붙으면 **한 번만** 더 보냅니다 -- 그게 예전 근접 알림이 하던 일입니다.
+ *
+ * **근거(공시·지목 기사·지분)가 있을 때만 보냅니다** (2026-09-21, 사용자 결정: "뉴스나
+ * 공시가 같이 왔으면, 없으면 안 보내도 된다"). 문턱에 닿았는데 근거가 없으면 기록만 하고
+ * 기다렸다가, 잠기기 전에 근거가 붙는 순간 그 종목의 첫 통을 보냅니다. 감시 목록에
+ * 호가창을 띄울 이유가 같이 오지 않으면 노이즈였습니다. 채점(kr_signal_outcomes)은
+ * 예전대로 문턱 도달 시점에 남깁니다 -- 안 보낸 종목도 잠김률에는 들어가야 문턱 실측이
+ * 이어집니다.
  *
  * 이것은 **매수 신호가 아니라 감시 목록**입니다. 24% 시점 변수로 갈라 봐도 잠김 확률은
  * 40%대에서 멈췄고, 빠진 변수(호가 잔량)는 이제 찍기 시작했습니다. 알림은 진입 결정을
@@ -102,13 +107,18 @@ export async function notifySangttaWatch(config, { url } = {}) {
 
       const evidence = await loadLimitUpEvidence(config, { name: stock.name, symbol: stock.symbol, theme: stock.theme }, day);
 
+      if (!hasSpecificEvidence(evidence)) {
+        // 기다림. 근거가 붙으면 followUpEvidence가 첫 통을 보냅니다.
+        await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}% · 근거없음` });
+        console.log(`상한가 직전 대기 · ${stock.name} +${stock.change_rate.toFixed(1)}% · 근거 없음`);
+        continue;
+      }
+
       evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
 
       if (!await notify(config, { text: message(stock, size, path, evidence), url })) continue;
 
-      await markAlertSent(config, "sangtta_watch", day, stock.symbol, {
-        note: `${size.label} ${stock.change_rate.toFixed(1)}%${hasSpecificEvidence(evidence) ? "" : " · 근거없음"}`
-      });
+      await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}%` });
       posted += 1;
       console.log(`알림: 상한가 직전 · ${stock.name} +${stock.change_rate.toFixed(1)}% · ${size.label}`);
     }
@@ -128,13 +138,14 @@ function hasSpecificEvidence(evidence) {
 }
 
 /*
- * 첫 통에 근거가 없었던 종목에, 잠기기 전에 근거가 붙으면 한 번 더.
+ * 문턱에 닿았을 때 근거가 없어 기다리던 종목에, 잠기기 전에 근거가 붙으면 그때 첫 통.
  *
- * 예전 근접 알림(27~29%, 근거 있을 때만)이 하던 일을 여기로 옮긴 것입니다. 24%에서 "근거
- * 없음"으로 나간 소형주가 27%에서 공시가 뜨면 그건 새 사실이고, 그 한 통이 예전 알림의 값
- * 전부였습니다. note에 '근거없음'이 남아 있을 때만 다시 보고, 보내면 note를 갈아 두 번은
- * 안 갑니다. 이미 '건너뜀(skip:)'으로 기록된 종목은 그대로 둡니다 -- 나쁜 조건은 근거가
- * 생겨도 나쁜 조건입니다.
+ * 예전엔 근거 없이 한 통 보내고 여기서 "근거 추가"를 한 통 더 보냈는데, 2026-09-21부터
+ * 첫 통을 여기로 미뤘습니다. 24%에서 근거 없던 소형주가 27%에서 공시가 뜨면 그게 사용자가
+ * 보는 첫 문장이므로 본문은 처음 보내는 것과 같은 모양이고, 문턱 도달 시각은 경로 줄에
+ * 그대로 남습니다(path.at). note에 '근거없음'이 남아 있을 때만 보고, 보내면 note를 갈아
+ * 두 번은 안 갑니다. 이미 '건너뜀(skip:)'으로 기록된 종목은 그대로 둡니다 -- 나쁜 조건은
+ * 근거가 생겨도 나쁜 조건입니다.
  */
 async function followUpEvidence(config, day, stock, size, sentRecord, url) {
   const note = String(sentRecord?.note ?? "");
@@ -147,19 +158,12 @@ async function followUpEvidence(config, day, stock, size, sentRecord, url) {
 
   evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
 
-  const lines = [
-    `[상한가 직전 · 근거 추가] ${stock.name} ${stock.symbol} · 지금 +${stock.change_rate.toFixed(1)}%`,
-    "앞서 근거 없이 보낸 종목에 공시·기사가 붙었습니다."
-  ];
+  const path = await loadPath(config, day, stock, size);
 
-  for (const filing of evidence.filings.slice(0, 1)) lines.push(`  공시 ${filing.at} ${(filing.report_name ?? filing.title ?? "").slice(0, 50)}`);
-  for (const item of evidence.news.slice(0, 1)) lines.push(`  ${evidence.kind === "family" ? "지분" : "뉴스"} ${item.at} ${item.headline.slice(0, 60)}`);
-  lines.push(...contextLines(evidence.context));
+  if (!await notify(config, { text: message(stock, size, path, evidence), url })) return 0;
 
-  if (!await notify(config, { text: lines.join("\n"), url })) return 0;
-
-  await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}% · 근거 추가` });
-  console.log(`알림: 상한가 직전 근거 추가 · ${stock.name} +${stock.change_rate.toFixed(1)}%`);
+  await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}% · 근거 뒤늦게` });
+  console.log(`알림: 상한가 직전 · ${stock.name} +${stock.change_rate.toFixed(1)}% · ${size.label} · 근거 뒤늦게`);
 
   return 1;
 }
@@ -275,8 +279,6 @@ function message(stock, size, path, evidence) {
       lines.push(`  ${evidence.kind === "family" ? "지분" : "뉴스"} ${item.at} ${item.headline.slice(0, 60)}`);
     }
   }
-
-  if (!evidence.filings.length && evidence.kind !== "direct" && evidence.kind !== "family") lines.push("  공시·지목 기사 없음");
 
   lines.push(...contextLines(evidence.context ?? []));
 
