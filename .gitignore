@@ -17,3 +17,6 @@ analysis/daily/
 # 파이썬 바이트코드. 인터프리터가 다시 만듭니다.
 __pycache__/
 *.pyc
+
+# Claude Code 세션이 만드는 작업 사본. 저장소 안에 있지만 소스가 아닙니다.
+.claude/worktrees/
