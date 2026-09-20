@@ -23,7 +23,12 @@
 
 param(
   [string] $SessionName = "date-platform",
-  [string] $ProjectPath = "C:\Users\Pangwoo\date-platform"
+  [string] $ProjectPath = "C:\Users\Pangwoo\date-platform",
+  # The two repos are siblings and most of the work is on the backend - the
+  # collector, the measurements, the alerts. A session rooted only in the
+  # frontend has to ask before it can touch any of that, and the whole point
+  # of this session is that nobody is at the keyboard to answer.
+  [string] $ExtraPath = "C:\Users\Pangwoo\date-platform-backend"
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,7 +130,7 @@ try {
   # logon open. Verified on 2026-09-20 that --bg still enables Remote Control:
   # the session appeared in the phone app even though the listing showed its id
   # rather than the name passed here.
-  $output = & $claude --bg --remote-control $SessionName 2>&1
+  $output = & $claude --bg --remote-control $SessionName --add-dir $ExtraPath 2>&1
 
   foreach ($line in $output) { Write-Line "  $line" }
 } catch {
