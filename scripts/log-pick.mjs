@@ -23,7 +23,9 @@ const config = readConfig();
 const args = process.argv.slice(2);
 const dateAt = args.indexOf("--date");
 const day = dateAt >= 0 ? args[dateAt + 1] : new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-const positional = args.filter((value, index) => index !== dateAt && index !== dateAt + 1);
+// --date가 없으면 dateAt은 -1이고, 그때 `index !== dateAt + 1`은 첫 인자를 떨어뜨립니다.
+// 2026-09-21 스카이랩스를 남기려다 이유 문장이 종목명 자리로 밀려 "못 찾았습니다"가 났습니다.
+const positional = dateAt >= 0 ? args.filter((value, index) => index !== dateAt && index !== dateAt + 1) : args;
 const [who, reason = ""] = positional;
 
 if (!who) {
