@@ -18,8 +18,15 @@ import { query } from "../db/client.mjs";
  * 유형을 주는 표가 우리에게 없어 지금은 이게 유일한 길입니다.
  */
 
-// 종목코드가 6자리 숫자가 아닌 것은 ETF·ETN·신주인수권 등입니다. 0233A0 같은 것.
-const stockCode = /^\d{6}$/;
+/*
+ * 종목코드 6자리, 숫자 아니면 대문자. 2026년부터 새 종목은 숫자 사이에 영문 한 자가
+ * 들어간 코드를 받습니다 -- 해치텍 0155E0, 네오사피엔스 0161M0, 엔비알모션 0004V0.
+ * 예전 규칙 `^\d{6}$`은 그걸 ETN(0233A0)과 함께 버려서, 2026-09-21 네오사피엔스가
+ * 상장 첫날 시총 4,190억·거래대금 9,811억으로 돌았는데 이 표에 안 들어왔습니다 --
+ * 이 표가 만들어진 이유였던 바로 그 종류의 종목입니다. ETF·ETN은 이름으로 거릅니다.
+ * 미국 티커(전부 영문)는 숫자가 하나도 없어 여기 못 들어옵니다.
+ */
+const stockCode = /^(?=.*\d)[0-9A-Z]{6}$/;
 const fundName = /(ETF|ETN|KODEX|TIGER|KBSTAR|ARIRANG|HANARO|SOL |ACE |RISE |PLUS |KIWOOM |MIDAS |마이티|TIMEFOLIO|리츠|스팩|기업인수목적)/i;
 
 function isTradableStock(symbol, name) {
@@ -51,7 +58,7 @@ export async function recordKrListings(config, { log = () => {} } = {}) {
            -- 압니다. 표시해 두지 않으면 4,300종목이 전부 그날 상장한 것이 됩니다.
            f.listed_on <= (SELECT start FROM span)
       FROM first_seen f
-     WHERE f.symbol ~ '^[0-9]{6}$'
+     WHERE f.symbol ~ '^[0-9A-Z]{6}$' AND f.symbol ~ '[0-9]'
     ON CONFLICT (symbol) DO NOTHING
   `);
 

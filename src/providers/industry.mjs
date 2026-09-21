@@ -270,7 +270,8 @@ export async function listRegisteredCompanies(config) {
   const byStockCode = await loadCorpIndex(config);
 
   return Object.entries(byStockCode)
-    .filter(([symbol, entry]) => /^\d{6}$/.test(symbol) && entry?.corpName)
+    // 2026년 신규 코드(0155E0)에는 영문이 한 자 섞입니다. kr-listings.mjs와 같은 규칙.
+    .filter(([symbol, entry]) => /^(?=.*\d)[0-9A-Z]{6}$/.test(symbol) && entry?.corpName)
     .map(([symbol, entry]) => ({ name: entry.corpName, symbol }));
 }
 

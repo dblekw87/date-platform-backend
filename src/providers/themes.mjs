@@ -502,9 +502,12 @@ for (const [symbol, theme] of Object.entries(symbolThemes)) {
   membersByTheme.get(theme).push(symbol);
 }
 
-/** Domestic codes are six digits; US tickers are letters. */
+/**
+ * Domestic codes are six characters with at least one digit (0155E0 since the
+ * 2026 KRX scheme, 005930 before it); US tickers are letters only.
+ */
 function isDomesticSymbol(symbol) {
-  return /^\d{6}$/.test(symbol);
+  return /^(?=.*\d)[0-9A-Z]{6}$/.test(symbol);
 }
 
 export function membersOfTheme(theme, market = "KR") {
