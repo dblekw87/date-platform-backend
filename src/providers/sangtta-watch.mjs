@@ -33,6 +33,19 @@ import { sessionDate } from "./market-session.mjs";
  * 예전대로 문턱 도달 시점에 남깁니다 -- 안 보낸 종목도 잠김률에는 들어가야 문턱 실측이
  * 이어집니다.
  *
+ * **2026-09-22 재측정 (25거래일, 장중 20% 위 종목-일 666건).** 문턱을 규모별로 다시
+ * 갈라 봤습니다. 사각지대 = 종가에 잠겼는데 [문턱, 29.5) 구간 표본이 한 번도 없던 것:
+ *
+ *   소형 24%  하루 14.8건  잠김 30%  사각지대 15%
+ *   중형 27%  하루  0.6건  잠김 50%  사각지대 53%  ← 절반 넘게 놓치고 있었습니다
+ *   중형 25%  하루  1.3건  잠김 44%  사각지대 18%
+ *
+ * 그래서 **중형만 27 → 25로 내렸습니다.** 2026-09-21 스카이랩스가 10:50에 25.5%,
+ * 10:51에 29.9%로 잠겨 27% 구간을 통째로 건너뛴 것이 이 경우입니다. 소형은 그대로
+ * 둡니다 -- 24→25로 올리면 확률은 30→34%로 오르지만 그만큼 비싸게 사는 자리이고,
+ * 실측 진입가(24.5%)가 [[sangtta-verdict]]의 +0.71%p를 낸 자리입니다. 대형은 잠김
+ * 표본이 넷뿐이고 어느 문턱에서도 사각지대가 0이라 건드릴 근거가 없습니다.
+ *
  * 이것은 **매수 신호가 아니라 감시 목록**입니다. 24% 시점 변수로 갈라 봐도 잠김 확률은
  * 40%대에서 멈췄고, 빠진 변수(호가 잔량)는 이제 찍기 시작했습니다. 알림은 진입 결정을
  * 대신하지 않고, 그 종목을 호가창에 띄울 이유와 재 본 확률을 줍니다.
@@ -40,7 +53,7 @@ import { sessionDate } from "./market-session.mjs";
 
 const thresholds = [
   { label: "소형", minCap: 0, rate: 24 },
-  { label: "중형", minCap: 3000e8, rate: 27 },
+  { label: "중형", minCap: 3000e8, rate: 25 },
   { label: "대형", minCap: 1e12, rate: 27 }
 ];
 const lockedRate = 29.5;
@@ -90,20 +103,9 @@ export async function notifySangttaWatch(config, { url } = {}) {
       }
 
       const path = await loadPath(config, day, stock, size);
-      const drop = dropReason(path, size);
+      const weak = weakReason(path, size);
 
-      /*
-       * 안 보내는 조건은 재 본 것만 씁니다(소형 24% 340건). 하락 출발 18%, 24% 시점
-       * 거래대금 50~200억 16%, 13:30 이후 22%, 22→24에 10분 넘게 걸린 것 21% --
-       * 기본 34%의 절반이라 빼면 나머지가 40%대로 올라갑니다. 종목당 하루 한 통이므로
-       * 걸린 종목은 그날 다시 오지 않습니다. 기록은 남겨 채점에는 들어갑니다.
-       */
-      await record(config, day, stock, size, path, drop);
-
-      if (drop) {
-        await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `skip:${drop}` });
-        continue;
-      }
+      await record(config, day, stock, size, path, weak);
 
       const evidence = await loadLimitUpEvidence(config, { name: stock.name, symbol: stock.symbol, theme: stock.theme }, day);
 
@@ -116,7 +118,7 @@ export async function notifySangttaWatch(config, { url } = {}) {
 
       evidence.context = await loadThemeContext(config, stock.symbol, day).catch(() => []);
 
-      if (!await notify(config, { text: message(stock, size, path, evidence), url })) continue;
+      if (!await notify(config, { text: message(stock, size, path, evidence, weak), url })) continue;
 
       await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}%` });
       posted += 1;
@@ -144,8 +146,8 @@ function hasSpecificEvidence(evidence) {
  * 첫 통을 여기로 미뤘습니다. 24%에서 근거 없던 소형주가 27%에서 공시가 뜨면 그게 사용자가
  * 보는 첫 문장이므로 본문은 처음 보내는 것과 같은 모양이고, 문턱 도달 시각은 경로 줄에
  * 그대로 남습니다(path.at). note에 '근거없음'이 남아 있을 때만 보고, 보내면 note를 갈아
- * 두 번은 안 갑니다. 이미 '건너뜀(skip:)'으로 기록된 종목은 그대로 둡니다 -- 나쁜 조건은
- * 근거가 생겨도 나쁜 조건입니다.
+ * 두 번은 안 갑니다. 2026-09-22 전에는 약한 조건에 걸린 종목이 'skip:'으로 기록돼 여기서도
+ * 건너뛰었는데, 이제 그런 행을 쓰지 않습니다 -- 약한 조건은 막는 것이 아니라 적는 것입니다.
  */
 async function followUpEvidence(config, day, stock, size, sentRecord, url) {
   const note = String(sentRecord?.note ?? "");
@@ -160,7 +162,7 @@ async function followUpEvidence(config, day, stock, size, sentRecord, url) {
 
   const path = await loadPath(config, day, stock, size);
 
-  if (!await notify(config, { text: message(stock, size, path, evidence), url })) return 0;
+  if (!await notify(config, { text: message(stock, size, path, evidence, weakReason(path, size)), url })) return 0;
 
   await markAlertSent(config, "sangtta_watch", day, stock.symbol, { note: `${size.label} ${stock.change_rate.toFixed(1)}% · 근거 뒤늦게` });
   console.log(`알림: 상한가 직전 · ${stock.name} +${stock.change_rate.toFixed(1)}% · ${size.label} · 근거 뒤늦게`);
@@ -226,8 +228,21 @@ async function loadPath(config, day, stock, size) {
   };
 }
 
-function dropReason(path, size) {
-  // 소형에서 잰 조건입니다. 중·대형은 표본이 없어 시각 하나만 겁니다.
+/*
+ * 약한 조건. **2026-09-22부터 알림을 막지 않고 문장에 적기만 합니다.**
+ *
+ * 원래는 여기 걸리면 안 보냈습니다. 근거는 소형 24% 340건에서 잰 "기본 34% → 이 조건들은
+ * 16~22%"였는데, 알림이 실제로 돌기 시작한 뒤의 기록(9/15~9/22, 96건)으로 다시 재니
+ * 갈라지지 않았습니다:
+ *
+ *   보냄/대기 73건 33%  ·  13:30 이후 16건 25%  ·  22→24 10분 초과 5건 40%  ·  하락 출발 2건 50%
+ *
+ * 표본이 작아 옛 측정을 뒤집지는 못하지만, 이 규칙이 이틀 연속으로 사용자가 실제로
+ * 산 종목을 걸렀습니다 -- 2026-09-22 토마토시스템(09:23 26.5%에서 "22→24 10분 초과"로
+ * 제외, 09:24 잠김, 종가까지 +30%). 걸러서 얻는 것이 확인되지 않는데 잃는 것은 확인됐으므로
+ * 문을 열고, 대신 어느 조건에 걸렸는지를 문장과 기록에 남겨 표본이 쌓이면 다시 판단합니다.
+ */
+function weakReason(path, size) {
   if (path.minute !== null && path.minute >= 13 * 60 + 30) return "13:30 이후";
   if (size.label !== "소형") return null;
   if (path.lowBefore !== null && path.lowBefore < 0) return "하락 출발";
@@ -253,10 +268,10 @@ function flags(stock, size, path) {
   return out;
 }
 
-function message(stock, size, path, evidence) {
+function message(stock, size, path, evidence, weak = null) {
   const eok = (value) => `${(Number(value ?? 0) / 1e8).toFixed(0)}억`;
   const base = size.label === "소형" ? "소형 24% 기본 잠김 34% · 24.5% 매수→익일 시가 +0.7%p"
-    : size.label === "중형" ? "중형 27% 기본 잠김 59% · +6.0%p 상회 59%"
+    : size.label === "중형" ? "중형 25% 실측 잠김 44% (27%였을 때 50%, 대신 절반을 놓쳤습니다)"
       : "대형 27% · 표본 6건, 참고치 없음";
   const theme = stock.theme && stock.theme !== "미분류" ? ` · ${stock.theme}` : "";
   const multiple = path.multiple !== null ? ` (전일의 ${path.multiple.toFixed(1)}배)` : "";
@@ -269,6 +284,8 @@ function message(stock, size, path, evidence) {
   ];
 
   for (const flag of flags(stock, size, path)) lines.push(`  · ${flag}`);
+
+  if (weak) lines.push(`  ⚠ ${weak} · 예전엔 이 조건이면 안 보냈습니다(재측정 중)`);
 
   for (const filing of evidence.filings.slice(0, 1)) {
     lines.push(`  공시 ${filing.at} ${(filing.report_name ?? filing.title ?? "").slice(0, 50)}`);
@@ -289,12 +306,17 @@ function message(stock, size, path, evidence) {
   return lines.join("\n");
 }
 
-async function record(config, day, stock, size, path, drop) {
+/*
+ * tier에 규모와 약한 조건을 같이 적습니다. 2026-09-22 전 행은 `제외(...)`, 그 뒤는
+ * `약함(...)`입니다 -- 같은 조건이지만 앞엣것은 안 보낸 것이고 뒤엣것은 보낸 것이라,
+ * 나중에 둘을 한 통에 넣고 세면 안 됩니다.
+ */
+async function record(config, day, stock, size, path, weak) {
   await query(config, `
     INSERT INTO kr_signal_outcomes (kind, session_date, symbol, detected_at, tier, theme, entry_rate)
     VALUES ('sangtta_watch', $1::date, $2, now(), $3, $4, $5)
     ON CONFLICT (kind, session_date, symbol) DO NOTHING`,
-    [day, stock.symbol, `${size.label}${drop ? ` · 제외(${drop})` : ""}`, stock.theme ?? null, stock.change_rate]);
+    [day, stock.symbol, `${size.label}${weak ? ` · 약함(${weak})` : ""}`, stock.theme ?? null, stock.change_rate]);
 }
 
 /*
