@@ -121,6 +121,8 @@ async function loadGraded(config) {
            ((o.next_open / nullif(b.close, 0) - 1) * 100)::float8 AS gap,
            ((o.next_close / nullif(b.close, 0) - 1) * 100)::float8 AS to_close,
            o.market_next_open::float8 AS market_gap,
+           o.entry_price::float8 AS entry_price,
+           o.exit_price::float8 AS exit_price,
            u.name
       FROM kr_signal_outcomes o
       JOIN latest l ON o.session_date = l.day
@@ -196,9 +198,10 @@ function gradedSection(rows) {
   const day = rows[0].day;
   const marketGap = rows.find((row) => Number.isFinite(row.market_gap))?.market_gap;
   const lines = [`■ ${dayLabel(day)} 판단 채점 · 종가 매수 → 다음 장 시가 · 시장 갭 ${signed(marketGap)}%`];
+  const overnight = rows.filter((row) => !isIntraday(row));
 
   for (const { kind, label } of kinds) {
-    const group = rows.filter((row) => row.kind === kind);
+    const group = overnight.filter((row) => row.kind === kind);
 
     if (!group.length) {
       if (listedKinds.has(kind)) lines.push(`${label} —`);
@@ -218,18 +221,66 @@ function gradedSection(rows) {
 
     for (const row of group) {
       lines.push(`  ${row.name ?? row.symbol} ${row.symbol}  갭 ${signed(row.gap)}% (초과 ${signed(row.gap - row.market_gap)}%p) · 종가까지 ${signed(row.to_close)}%`);
+
+      /*
+       * 갭은 **종가**를 진입가로 잡습니다. 상따는 장중에 사므로 그 줄이 사람이 실제로
+       * 낸 값이 아닙니다 -- 2026-09-22 토마토시스템은 평단 3,300원인데 종가가 3,315원이라
+       * 갭 -0.2%로 찍히고 실현은 +1.4%였습니다. 체결가를 적어 둔 행은 그 값으로 한 줄 더
+       * 냅니다. 규칙의 성적과 사람의 성적을 같은 자리에서 따로 읽을 수 있어야 합니다.
+       */
+      if (row.entry_price && row.exit_price) {
+        const realized = (row.exit_price / row.entry_price - 1) * 100;
+
+        lines.push(`  └ 평단 ${won(row.entry_price)} → ${won(row.exit_price)} · 실현 ${signed(realized)}% (초과 ${signed(realized - row.market_gap)}%p)`);
+      }
+
       // 사람의 판단은 이유가 같이 있어야 맞았을 때와 틀렸을 때를 나중에 가를 수 있습니다.
       if ((kind === "user_close_bet" || kind === "offhigh_close_bet") && row.theme) lines.push(`  └ ${row.theme}`);
     }
   }
 
+  lines.push(...intradayLines(rows.filter(isIntraday)));
+
   return lines;
 }
 
-function enteredSection(rows) {
-  if (!rows.length) return ["■ 어제 들어간 기록이 없습니다"];
+/*
+ * 장중매매는 같은 날 끝납니다.
+ *
+ * 2026-09-23에 사람 매매 기록에 종류가 생기면서(`사람 · 장중매매`) 이 표에 들어오기
+ * 시작했는데, 이 알림의 두 토막은 **둘 다 오버나이트를 전제**합니다 -- 채점은 "종가
+ * 매수 → 다음 장 시가"이고, 아래 토막은 "오늘 09:05~09:10에 팔 것"입니다. 장중매매를
+ * 그대로 두면 이미 끝난 자리를 팔라고 띄우고, 평균에도 무관한 갭이 섞입니다.
+ * 그래서 갈라내고 실제 체결가로만 적습니다. 값이 없으면 종목만 적습니다.
+ */
+function isIntraday(row) {
+  return String(row.tier ?? "").includes("장중매매");
+}
 
-  const day = rows[0].day;
+function intradayLines(rows) {
+  if (!rows.length) return [];
+
+  const lines = [`장중매매 ${rows.length}건 · 당일에 끝나 밤 채점과 무관합니다`];
+
+  for (const row of rows) {
+    const realized = row.entry_price && row.exit_price ? (row.exit_price / row.entry_price - 1) * 100 : null;
+
+    lines.push(`  ${row.name ?? row.symbol} ${row.symbol}`
+      + (realized === null ? "  (체결가 미기록)" : `  실현 ${signed(realized)}%`));
+  }
+
+  return lines;
+}
+
+function enteredSection(allRows) {
+  if (!allRows.length) return ["■ 어제 들어간 기록이 없습니다"];
+
+  const day = allRows[0].day;
+  // 장중매매는 어제 안에 청산됐으므로 오늘 팔 것이 없습니다.
+  const rows = allRows.filter((row) => !isIntraday(row));
+
+  if (!rows.length) return [`■ ${dayLabel(day)}에 오버나이트로 들고 간 것이 없습니다 (장중매매 ${allRows.length}건)`];
+
   const lines = [`■ ${dayLabel(day)} 종가에 들어간 것 · 오늘 09:05~09:10 청산`];
   const others = [];
 
