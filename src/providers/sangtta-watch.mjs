@@ -206,6 +206,9 @@ async function loadPath(config, day, stock, size) {
   const { rows } = await query(config, `
     SELECT min(observed_at) FILTER (WHERE change_rate >= 22) AS t22,
            min(observed_at) FILTER (WHERE change_rate >= $3) AS t_rate,
+           -- 문턱에 처음 닿은 뒤의 고점. 되돌림을 재는 기준입니다.
+           max(change_rate) FILTER (WHERE observed_at >= (SELECT min(observed_at) FROM market_price_samples i
+                                                           WHERE i.market = 'KR' AND i.session_date = $1::date AND i.symbol = $2 AND i.change_rate >= $3))::float8 AS peak_after,
            min(change_rate) FILTER (WHERE observed_at < (SELECT min(observed_at) FROM market_price_samples i
                                                           WHERE i.market = 'KR' AND i.session_date = $1::date AND i.symbol = $2 AND i.change_rate >= $3))::float8 AS low_before,
            (SELECT turnover::float8 FROM kr_daily_universe u WHERE u.symbol = $2 AND u.session_date < $1::date ORDER BY u.session_date DESC LIMIT 1) AS prev_turnover
@@ -218,14 +221,51 @@ async function loadPath(config, day, stock, size) {
   const at = seoul(row.t_rate);
   const seoulMinute = at ? Number(at.slice(0, 2)) * 60 + Number(at.slice(3, 5)) : null;
 
+  const peak = row.peak_after;
+
   return {
     at,
+    dip: peak === null || peak === undefined ? null : Math.max(0, peak - stock.change_rate),
     lowBefore: row.low_before,
     minute: seoulMinute,
     multiple: row.prev_turnover ? stock.turnover / row.prev_turnover : null,
+    peak,
     prevTurnover: row.prev_turnover,
     riseMinutes: minutes
   };
+}
+
+/*
+ * 되돌림 -- 지금까지 잰 것 중 **잠김을 실제로 가르는 유일한 진입 시점 변수**입니다.
+ *
+ * 2026-09-23 측정(8/19~, 문턱에 닿은 447 종목-일, 상장일·이상치 제외, 기본 잠김 34%).
+ * 사후값이 아니라 그 순간의 판단 자리로 셌습니다 -- "지금 고점 대비 N%p 밀렸고 아직
+ * 안 잠겼다"에서 그날 끝내 잠긴 비율입니다.
+ *
+ *   0~2%p  31%    6~8%p  12%
+ *   2~4%p  22%    8~10%p 11%
+ *   4~6%p  16%    10~14% 10%    14%p+  4%
+ *
+ * 단조이고 폭이 큽니다. 진입 시점 변수로 재 본 다른 것들(시각·거래대금 배수·출발
+ * 위치)은 전부 40%대에서 멈췄는데 이것은 31%에서 4%까지 갑니다.
+ *
+ * 계기는 2026-09-22 동국생명과학입니다. 14:03 +25.7% → 14:35 +16.7%(-10%p)에서
+ * 사용자가 잘랐고 45분 뒤 상한가에 잠겼습니다. 이 표로 보면 그 자리의 잠김 확률은
+ * 11%였으니 **자른 판단이 확률적으로는 옳았고 그날이 그 11%였던 것**입니다.
+ * 알림에 이 숫자를 적어 두면 같은 자리에서 감이 아니라 확률로 정할 수 있습니다.
+ */
+const dipBands = [
+  { lockRate: 31, upTo: 2 },
+  { lockRate: 22, upTo: 4 },
+  { lockRate: 16, upTo: 6 },
+  { lockRate: 12, upTo: 8 },
+  { lockRate: 11, upTo: 10 },
+  { lockRate: 10, upTo: 14 },
+  { lockRate: 4, upTo: Infinity }
+];
+
+function dipLockRate(dip) {
+  return dipBands.find((band) => dip < band.upTo)?.lockRate ?? null;
 }
 
 /*
@@ -282,6 +322,18 @@ function message(stock, size, path, evidence, weak = null) {
     `${path.at ?? ""} +${stock.change_rate.toFixed(1)}% · 거래대금 ${eok(stock.turnover)}${multiple}`,
     `  경로: ${low}${rise}`
   ];
+
+  /*
+   * 알림은 대개 문턱에 닿은 그 순간, 즉 되돌림이 0일 때 나갑니다. 그래서 지금 값
+   * 하나만 적으면 늘 같은 숫자가 되어 쓸모가 없습니다. **기준표를 같이 붙여** 이 뒤에
+   * 호가창을 보다가 밀릴 때 확률로 정할 수 있게 합니다 -- 손절을 감으로 정하던 자리입니다.
+   */
+  if (path.dip !== null && path.peak !== null) {
+    lines.push(path.dip < 0.5
+      ? `  되돌림: 없음 (고점 +${path.peak.toFixed(1)}%)`
+      : `  되돌림: 고점 +${path.peak.toFixed(1)}% 대비 -${path.dip.toFixed(1)}%p · 이 깊이의 실측 잠김 ${dipLockRate(path.dip)}%`);
+    lines.push("  밀릴 때 잠김 확률: -2%p 31% · -4 22% · -6 16% · -8 12% · -10 11% · -14↑ 4% (기본 34%)");
+  }
 
   for (const flag of flags(stock, size, path)) lines.push(`  · ${flag}`);
 
