@@ -1,4 +1,4 @@
-<#
+﻿<#
   Keeps one Remote Control session alive for this project, so the phone can
   reach this machine.
 
@@ -17,6 +17,14 @@
   this runs at logon alongside everything else, and a background session that
   is started twice does not collide loudly - it just leaves a second idle
   session behind, every logon, until `claude agents` is a wall of them.
+
+  **이어 붙이기 (2026-09-23).** logs\claude-rc-session.txt에 세션 id가 적혀 있으면
+  새 대화를 여는 대신 그 대화를 이어서 띄웁니다. 사용자는 주말마다 끄고 켜는데
+  (shutdown-after-us-close.ps1이 끄면서 id를 적습니다), 그때마다 새 대화가 열리면
+  월요일 아침에 지금까지 이야기한 것이 전부 없는 채로 시작합니다.
+
+  이어 붙이기가 실패하면 새 대화로 떨어집니다 - 세션 파일이 지워졌거나 너무 오래된
+  경우입니다. 대화가 없는 것보다 낫고, 로그에 어느 쪽이었는지 남습니다.
 
   Written for Windows PowerShell 5.1, like the other logon scripts here.
 #>
@@ -106,7 +114,36 @@ if (Test-SessionRunning -ClaudePath $claude) {
   exit 0
 }
 
-Write-Line "starting Remote Control session '$SessionName' in $ProjectPath"
+<#
+  이어 붙일 세션이 있는가. 있으면 id를, 없으면 $null을 돌려줍니다.
+  일주일 넘게 묵은 것은 쓰지 않습니다 - 그 사이 저장소도 데이터도 달라져 있어
+  이어 붙이는 것이 오히려 헷갈립니다.
+#>
+function Read-ResumeId {
+  $file = Join-Path $root "logs\claude-rc-session.txt"
+
+  if (-not (Test-Path $file)) { return $null }
+
+  $age = (Get-Date) - (Get-Item $file).LastWriteTime
+
+  if ($age.TotalDays -gt 7) {
+    Write-Line "세션 파일이 $([int] $age.TotalDays)일 지나 새 대화로 시작합니다"
+
+    return $null
+  }
+
+  $id = (Get-Content -Path $file -Raw).Trim()
+
+  if ($id -match "^[0-9a-fA-F-]{16,}$") { return $id }
+
+  Write-Line "세션 파일을 읽을 수 없어 새 대화로 시작합니다"
+
+  return $null
+}
+
+$resumeId = Read-ResumeId
+
+Write-Line $(if ($resumeId) { "이어서 시작합니다 · 세션 $resumeId" } else { "새 Remote Control 세션 '$SessionName' · $ProjectPath" })
 
 <#
   ErrorActionPreference has to come down for the call itself.
@@ -130,9 +167,25 @@ try {
   # logon open. Verified on 2026-09-20 that --bg still enables Remote Control:
   # the session appeared in the phone app even though the listing showed its id
   # rather than the name passed here.
-  $output = & $claude --bg --remote-control $SessionName --add-dir $ExtraPath 2>&1
+  $arguments = @("--bg", "--remote-control", $SessionName, "--add-dir", $ExtraPath)
+
+  # --resume <id>는 --bg와 같이 쓰면 그 대화를 백그라운드로 이어 줍니다(claude --help).
+  if ($resumeId) { $arguments += @("--resume", $resumeId) }
+
+  $output = & $claude @arguments 2>&1
 
   foreach ($line in $output) { Write-Line "  $line" }
+
+  <#
+    이어 붙이기가 실패했으면 새 대화로 한 번 더 시도합니다. 실패는 stderr 한 줄로
+    오고 종료 코드가 늘 정직하지는 않아, 세션 목록으로 확인하는 쪽이 확실합니다.
+  #>
+  if ($resumeId -and -not (Test-SessionRunning -ClaudePath $claude)) {
+    Write-Line "이어 붙이기가 안 됐습니다 - 새 대화로 다시 시작합니다"
+    $output = & $claude --bg --remote-control $SessionName --add-dir $ExtraPath 2>&1
+
+    foreach ($line in $output) { Write-Line "  $line" }
+  }
 } catch {
   Write-Line "start failed: $($_.Exception.Message)"
 } finally {
