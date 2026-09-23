@@ -85,7 +85,9 @@ export async function notifyLimitUps(config, { url } = {}) {
         continue;
       }
 
-      if (!await notify(config, { text: firstMessage(lock, evidence), url })) continue;
+      const book = await loadBook(config, day, lock.symbol).catch(() => null);
+
+      if (!await notify(config, { text: firstMessage(lock, evidence, book), url })) continue;
 
       await markAlertSent(config, "limit_up", day, lock.symbol, { note: evidence.kind });
       sent.add(lock.symbol);
@@ -142,7 +144,9 @@ async function followUp(config, day, url, sent) {
 
     // 첫 통을 안 보냈으므로 이것이 그 종목의 첫 통입니다 -- 잠긴 사실까지 같이
     // 적어야 합니다.
-    if (await notify(config, { text: firstMessage(lock, evidence), url })) {
+    const book = await loadBook(config, day, symbol).catch(() => null);
+
+    if (await notify(config, { text: firstMessage(lock, evidence, book), url })) {
       await markAlertSent(config, "limit_up", day, symbol, { note: evidence.kind });
       sent.add(symbol);
       posted += 1;
@@ -197,14 +201,83 @@ function evidenceLines(lock, evidence) {
   return lines;
 }
 
-function firstMessage(lock, evidence) {
+function firstMessage(lock, evidence, book = null) {
   return [
     `[상한가 잠김] ${lock.name} ${lock.symbol} · ${lock.size} · ${lock.market ?? "KR"}`,
     `${won(lock.close_price)}원 · ${lock.minutes}분째 · 거래대금 ${(Number(lock.turnover ?? 0) / 1e8).toFixed(0)}억`,
     lock.theme && lock.theme !== "미분류" ? `테마 ${lock.theme}` : "",
+    ...bookLines(book),
     "",
     ...evidenceLines(lock, evidence)
   ].filter(Boolean).join("\n");
+}
+
+/*
+ * 호가 한 줄 -- 사용자가 알려준 상따 노하우 두 가지를 통에 붙입니다(2026-09-23).
+ * "상한가 매수 잔량이 유통주식수의 일정 비율 이상인가"와 "대량 매수세가 갑자기
+ * 취소되는가". 잠겼다는 통은 어차피 한 번 나가므로 여기 얹으면 통 수가 안 늘어납니다.
+ *
+ * **새 알림으로는 안 만들었습니다.** 037 표본 7세션·잠긴 종목-일 58건으로 재 보니,
+ * 3분에 20% 넘게 빠져도 그날 종가에 안 잠기는 비율은 7% → 21%로 세 배에 그치고
+ * **79%는 그대로 종가까지 잠깁니다**(잠깐 풀리는 것만 1%→16%로 크게 갈립니다).
+ * 사용자가 먼저 지적한 그대로 "빠졌다 다시 잠기는 것"이 흔해서, 따로 통을 보낼
+ * 값이 아닙니다. `scripts/measure-order-book.mjs`로 몇 주 뒤 다시 잽니다.
+ *
+ * 두께도 마찬가지로 문턱이 아니라 참고값입니다 -- 0.5% 미만만 유지 33%로 나쁘고
+ * 그 위는 64~78%로 평평합니다. 유통주식수가 없어 상장주식수로 나눕니다.
+ */
+function bookLines(book) {
+  if (!book) return [];
+
+  const shares = book.cap > 0 && book.price > 0 ? Number(book.cap) / Number(book.price) : null;
+  // 잔량이 상장주식수를 넘으면 데이터가 틀린 것입니다(앤씨앤 2026-09-17). 두께를 뺍니다.
+  const thickness = shares && Number(book.bid_total) <= shares ? 100 * Number(book.bid_total) / shares : null;
+  const parts = [`잔량 ${Math.round(Number(book.bid_total)).toLocaleString("ko-KR")}주`];
+
+  if (thickness !== null) parts.push(`상장의 ${thickness.toFixed(2)}%${thickness < 0.5 ? " (얇음 · 유지 33%)" : ""}`);
+  if (book.drop !== null && book.drop !== undefined) {
+    const drop = Number(book.drop);
+
+    parts.push(drop >= 1
+      ? `3분 −${drop.toFixed(0)}%${drop >= 20 ? " (종가까지 안 잠김 21%)" : ""}`
+      : "3분 변화 없음");
+  }
+
+  return [`호가 ${parts.join(" · ")}`];
+}
+
+/*
+ * 지금 잠겨 있는 그 종목의 마지막 호가 표본과 3분 전 대비 변화.
+ * 표본은 sangtta-watch가 24% 위 종목을 1분마다 찍어 둔 것이라 추가 요청이 없습니다.
+ */
+async function loadBook(config, day, symbol) {
+  const { rows } = await query(config, `
+    WITH latest AS (
+      SELECT observed_at, total_bid_qty::float8 AS bid_total, price::float8 AS price
+        FROM kr_order_book_samples
+       WHERE session_date = $1::date AND symbol = $2
+       ORDER BY observed_at DESC LIMIT 1
+    )
+    SELECT l.bid_total, l.price,
+           (SELECT b.total_bid_qty::float8 FROM kr_order_book_samples b
+             WHERE b.session_date = $1::date AND b.symbol = $2
+               AND b.observed_at <= l.observed_at - interval '3 minutes'
+             ORDER BY b.observed_at DESC LIMIT 1) AS bid_before,
+           (SELECT max(p.market_cap)::float8 FROM market_price_samples p
+             WHERE p.symbol = $2 AND p.session_date = $1::date) AS cap
+      FROM latest l`, [day, symbol]);
+  const row = rows[0];
+
+  if (!row || !(Number(row.bid_total) > 0)) return null;
+
+  const before = Number(row.bid_before);
+
+  return {
+    bid_total: row.bid_total,
+    cap: row.cap,
+    drop: before > 0 ? 100 * (before - Number(row.bid_total)) / before : null,
+    price: row.price
+  };
 }
 
 
