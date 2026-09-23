@@ -26,6 +26,10 @@
   이어 붙이기가 실패하면 새 대화로 떨어집니다 - 세션 파일이 지워졌거나 너무 오래된
   경우입니다. 대화가 없는 것보다 낫고, 로그에 어느 쪽이었는지 남습니다.
 
+  **감시도 같이 되살립니다 (2026-09-23).** 30분마다 도는 수집기 감시는 세션 메모리에만
+  있어서 껐다 켜면 사라집니다. 그래서 세션을 띄울 때 첫 프롬프트로 "감시를 다시 걸어라"를
+  같이 보냅니다 - 사용자가 켤 때마다 같은 말을 해야 하는 것을 없애려는 것입니다.
+
   Written for Windows PowerShell 5.1, like the other logon scripts here.
 #>
 
@@ -143,6 +147,24 @@ function Read-ResumeId {
 
 $resumeId = Read-ResumeId
 
+<#
+  세션이 뜨자마자 할 일.
+
+  감시를 다시 거는 것이 전부입니다. 경로를 스크립트로 박아 두는 이유는, 예전에
+  감시 스크립트가 세션별 임시 폴더에 있어 세션이 바뀌면 같이 사라졌기 때문입니다.
+  이제 저장소 안(scripts/health-check.sh)에 있어 껐다 켜도 그대로입니다.
+#>
+$bootPrompt = @"
+컴퓨터를 다시 켰습니다. 수집기 감시를 다시 걸어 주세요.
+
+- 30분마다 `bash "C:/Users/Pangwoo/date-platform-backend/scripts/health-check.sh"` 를 돌립니다.
+- 아무것도 안 나오면 정상이니 한 줄로만 답하고 알림은 보내지 마세요.
+- PROBLEM 줄이 나오면 해당 로그 끝을 짧게 확인한 뒤 한국어 한 줄로 PushNotification을 보내고 대화에도 요약하세요.
+- 스스로 재기동하지는 마세요.
+
+거는 즉시 지금 상태를 한 번 확인해서 한국어 두세 줄로 알려 주세요 - 수집기가 올라왔는지, 마지막 스냅샷이 언제인지, 국내 뉴스와 공시가 들어오고 있는지.
+"@
+
 Write-Line $(if ($resumeId) { "이어서 시작합니다 · 세션 $resumeId" } else { "새 Remote Control 세션 '$SessionName' · $ProjectPath" })
 
 <#
@@ -167,7 +189,18 @@ try {
   # logon open. Verified on 2026-09-20 that --bg still enables Remote Control:
   # the session appeared in the phone app even though the listing showed its id
   # rather than the name passed here.
-  $arguments = @("--bg", "--remote-control", $SessionName, "--add-dir", $ExtraPath)
+  <#
+    **프롬프트가 맨 앞이어야 합니다.** 2026-09-23 실측:
+
+      claude --add-dir <경로> --bg ... "<프롬프트>"
+        → "backgrounded · d71662d7 (idle - send a prompt to start)"  프롬프트가 안 먹음
+      claude "<프롬프트>" --bg --add-dir <경로>
+        → "backgrounded · db02f036"                                  먹음(state=done 확인)
+
+    `claude [options] [command] [prompt]`이라 뒤에 두면 될 것 같지만 그렇지 않았습니다.
+    뒤쪽 자리 인자는 여러 개를 받는 --add-dir에 먹히는 것으로 보입니다.
+  #>
+  $arguments = @($bootPrompt, "--bg", "--remote-control", $SessionName, "--add-dir", $ExtraPath)
 
   # --resume <id>는 --bg와 같이 쓰면 그 대화를 백그라운드로 이어 줍니다(claude --help).
   if ($resumeId) { $arguments += @("--resume", $resumeId) }
@@ -182,7 +215,8 @@ try {
   #>
   if ($resumeId -and -not (Test-SessionRunning -ClaudePath $claude)) {
     Write-Line "이어 붙이기가 안 됐습니다 - 새 대화로 다시 시작합니다"
-    $output = & $claude --bg --remote-control $SessionName --add-dir $ExtraPath 2>&1
+    # 새 대화로 떨어져도 감시는 걸려야 합니다. 프롬프트는 여기서도 맨 앞입니다.
+    $output = & $claude $bootPrompt --bg --remote-control $SessionName --add-dir $ExtraPath 2>&1
 
     foreach ($line in $output) { Write-Line "  $line" }
   }
