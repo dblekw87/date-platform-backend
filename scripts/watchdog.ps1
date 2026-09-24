@@ -1,4 +1,4 @@
-# 백엔드와 프론트가 죽으면 다시 띄웁니다.
+﻿# 백엔드와 프론트가 죽으면 다시 띄웁니다.
 #
 # 두 번 겪고 만들었습니다. 백엔드는 수집기를 겸하고 있어서 죽으면 그 시간의
 # 분봉이 영영 없습니다 -- 나중에 받아올 방법이 없는 유일한 데이터입니다.
@@ -85,11 +85,62 @@ if (Test-Path $pidFile) {
 Set-Content -Path $pidFile -Value $PID
 Write-Line "watchdog on (pid $PID)"
 
+<#
+  DB가 없을 때 무엇을 하는가.
+
+  **예전에는 기다리기만 했습니다.** 부팅 직후 도커가 아직 안 뜬 상황을 염두에 둔
+  것이었는데, 도커가 *도중에* 죽는 경우를 그대로 방치했습니다. 2026-09-25 01:57에
+  도커 데스크톱이 꺼지자 Postgres가 사라지고 백엔드가 DB를 잃었는데, 워치독은
+  30초마다 "database not up yet - waiting"만 찍으며 35분을 보냈습니다. 미국 정규장
+  한가운데였고 그 시간의 장중 표본은 되받을 수 없습니다. 사람이 와서 손으로 켤 때까지
+  아무도 못 살리는 구조였습니다.
+
+  정작 도커 데스크톱을 띄우는 코드는 start-collector.ps1 안에 있습니다. 그러니
+  기다리지 말고 그걸 부르면 됩니다. 이 루프가 거기까지 못 갔던 것뿐입니다.
+
+  부팅 직후를 배려하던 원래 의도는 유지합니다 -- **한 번은 그냥 기다립니다.**
+  로그온 때는 start-collector가 어차피 곧 뜨고, 그때 이쪽이 끼어들면 둘이 같은 초에
+  도커를 켜려 듭니다. 두 바퀴째에도 DB가 없으면 그때는 우리가 부릅니다.
+
+  같은 것을 반복해서 부르지 않도록 시도 간격을 둡니다. 도커 데스크톱은 뜨는 데
+  1~2분이 걸리고, start-collector 자신도 그만큼 기다립니다.
+#>
+$databaseMissingRounds = 0
+$lastDatabaseStart = [DateTime]::MinValue
+
 while ($true) {
   if (-not (Test-Database)) {
-    Write-Line "database not up yet - waiting"
+    $databaseMissingRounds += 1
+
+    if ($databaseMissingRounds -le 1) {
+      Write-Line "database not up yet - waiting one round"
+      Start-Sleep -Seconds 30
+      continue
+    }
+
+    if (Test-StartInProgress) {
+      Write-Line "database down but a start-collector is running - leaving it to that"
+      Start-Sleep -Seconds 30
+      continue
+    }
+
+    if (((Get-Date) - $lastDatabaseStart).TotalMinutes -lt 5) {
+      Write-Line "database still down - waiting out the last start attempt"
+      Start-Sleep -Seconds 30
+      continue
+    }
+
+    Write-Line "database down - starting docker through start-collector"
+    $lastDatabaseStart = Get-Date
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+      -File "$backend\scripts\start-collector.ps1" | Out-Null
     Start-Sleep -Seconds 30
     continue
+  }
+
+  if ($databaseMissingRounds -gt 0) {
+    Write-Line "database is back"
+    $databaseMissingRounds = 0
   }
 
   # 백엔드 먼저. 프론트가 이걸 부르므로 순서가 중요합니다.
