@@ -55,8 +55,31 @@ news=$($PSQL "select count(*) from market_news_items where region='KR' and obser
 [ "$news" -lt 3 ] && echo "PROBLEM 국내 뉴스가 90분간 ${news}건 (수집이 멈췄을 수 있습니다)"
 
 # 공시는 접수가 뜸한 시간대가 있어 건수로 못 봅니다. 마지막 접수가 이틀 넘게 없으면 봅니다.
+#
+# 다만 시계만 보면 안 됩니다. DART는 휴장일에 접수를 받지 않으니 연휴가 길면 시간은
+# 계속 늘어나는데 아무 문제가 없습니다. 2026 추석(09-24~09-27)에 이 줄이 48시간째부터
+# 30분마다 떴습니다 -- 조용해야 하는 확인이 소음이 됐습니다.
+#
+# 그래서 **마지막 접수 뒤로 장이 실제로 열린 날**을 셉니다. 국내 휴장일 표는 코드에
+# 없지만 DB가 대신 압니다: 장이 열린 날은 kr_daily_bars에 일봉이 쌓이고
+# market_price_samples에 장중 표본이 들어옵니다. 휴장일엔 둘 다 비어 있습니다.
+# 일봉은 마감 뒤에 들어오므로 장중 표본을 같이 봐서 당일도 세어집니다 -- 연휴 다음
+# 월요일 오전에 수집이 깨져도 그날 안에 잡히게 하려고요.
+#
+# 둘 다 맞을 때만 알립니다: 48시간 넘게 없고, 그 사이 장이 한 번 이상 열렸다.
 dlag=$($PSQL "select coalesce(extract(epoch from now() - max(observed_at))/3600, 999)::int from market_disclosures;" 2>/dev/null)
-[ -n "$dlag" ] && [ "$dlag" -gt 48 ] && echo "PROBLEM DART 공시를 ${dlag}시간째 못 받고 있습니다"
+if [ -n "$dlag" ] && [ "$dlag" -gt 48 ]; then
+  # 판단을 못 하면(쿼리 실패·표 비었음) 예전처럼 알립니다. 조용히 넘기는 쪽이 더 위험합니다.
+  opened=$($PSQL "
+    select count(*) from (
+      select session_date as day from kr_daily_bars
+      union
+      select (observed_at at time zone 'Asia/Seoul')::date from market_price_samples where market='KR'
+    ) sessions
+    where sessions.day > (select (max(observed_at) at time zone 'Asia/Seoul')::date from market_disclosures);" 2>/dev/null)
+  [ -z "$opened" ] && opened=1
+  [ "$opened" -ge 1 ] && echo "PROBLEM DART 공시를 ${dlag}시간째 못 받고 있습니다 (그 사이 개장일 ${opened}일)"
+fi
 
 err=$(ls -t "$LOGS"/server-????-??-??.err.log 2>/dev/null | head -1)
 if [ -n "$err" ]; then
