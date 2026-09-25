@@ -1,4 +1,4 @@
-<#
+﻿<#
   Brings the collector up for a trading day with nobody at the keyboard.
 
   The price series is the one thing here that cannot be backfilled: a minute not
@@ -33,6 +33,17 @@ $ErrorActionPreference = "Stop"
 # 7.4+ this would otherwise turn a probing `docker ps` into a terminating error.
 $PSNativeCommandUseErrorActionPreference = $false
 
+<#
+  node가 내는 한글을 그대로 읽기 위한 것입니다.
+
+  뉴스 백필의 출력을 이 로그로 옮겨 적는데(Invoke-NewsBackfill), node는 UTF-8로
+  쓰고 PS 5.1은 받을 때 ANSI(949)로 읽습니다. 그래서 여태 "메울 구멍이 없습니다"가
+  "메울 구멍???�습?�다"로 남았습니다. 평소엔 그냥 못 읽는 정도지만, 주말에 컴퓨터를
+  끄고 켠 다음 **진짜 백필이 도는 기동**의 로그가 바로 이 줄입니다. 그때 몇 건을
+  메웠는지 읽을 수 없으면 확인할 방법이 없습니다.
+#>
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $root = Split-Path -Parent $PSScriptRoot
 $logDir = Join-Path $root "logs"
 $stamp = Get-Date -Format "yyyy-MM-dd"
@@ -54,7 +65,9 @@ function Write-Line {
 
   $line = "{0} {1}" -f (Get-Date -Format "HH:mm:ss"), $Message
 
-  Add-Content -Path $runLog -Value $line
+  # PS 5.1의 Add-Content는 기본이 ANSI입니다. 읽는 쪽을 UTF-8로 맞췄으니 적는 쪽도
+  # 맞춰야 하고, 아니면 제대로 받은 한글이 파일에서 다시 깨집니다.
+  Add-Content -Path $runLog -Value $line -Encoding UTF8
   Write-Output $line
 }
 
