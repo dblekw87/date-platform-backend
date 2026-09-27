@@ -18,7 +18,12 @@
 -- program series cannot be swept across hundreds of names on a five-a-second
 -- budget, and the daily breakdown is the half that names the actors.
 --
--- Quantities are shares and the _amount columns are won, both as reported.
+-- Quantities are shares. The _amount columns are MILLIONS of won, not won --
+-- this comment said "won" until 2026-09-27, when a pair-trade measurement
+-- divided an amount by turnover and got 1e-6. Checked against qty x close on
+-- 2026-09-23 across the eight largest flows: the ratio is 1,000,000 every time
+-- (Samsung Electronics 1,279,813,020,000 won of shares against a reported
+-- 1,276,688). close-bet-card.mjs already divides by 100 for 억, which is right.
 -- Negative is net selling.
 
 CREATE TABLE IF NOT EXISTS kr_investor_flow (
