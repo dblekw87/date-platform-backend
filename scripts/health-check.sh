@@ -36,9 +36,33 @@ else
 fi
 
 # 미국 정규장은 22:30~05:00 KST. 그 시간대에 표본이 안 들어오면 문제입니다.
-# (미국 휴장일에는 빈 것이 정상이라 한 번쯤 헛경보가 날 수 있습니다 -- us-holidays.mjs를
-#  여기서 읽지는 않습니다. 연달아 나오면 그때 보세요.)
-if [ "$hhmm" \> "2245" ] || [ "$hhmm" \< "0450" ]; then
+#
+# **요일과 휴장일을 같이 봅니다.** 시계만 보던 탓에 2026-09-27(일) 23:15에 이 줄이
+# 떴습니다 -- 일요일 밤 23:15 KST는 미국 일요일 아침이라 장이 없습니다. 공시 확인이
+# 추석에 헛경보를 낸 것과 같은 자리입니다: 시각은 맞는데 그 날 시장이 없었습니다.
+#
+# KST로 따지면 미국 정규장은 (월~금 22:45 이후) 또는 (화~토 04:50 이전)입니다.
+# 일요일 밤과 월요일 새벽은 주말이라 비어 있는 것이 정상입니다. 휴장일은
+# us-holidays.mjs가 이미 알고 있으니 그걸 부릅니다 -- 여기 표를 또 만들면 해마다
+# 두 곳을 고쳐야 하고, 한 곳은 반드시 잊습니다.
+dow=$(date +%u)   # 1=월 … 7=일
+us_open=no
+
+if [ "$hhmm" \> "2245" ] && [ "$dow" -le 5 ]; then us_open=yes; fi
+# 새벽 쪽은 화~토입니다. `-ge 2`만 두면 일요일 새벽(=미국 토요일 오후)이 통과해서
+# 주말에 또 헛경보가 납니다. 처음 짤 때 실제로 그렇게 뒀고 요일별로 돌려 보고 잡았습니다.
+if [ "$hhmm" \< "0450" ] && [ "$dow" -ge 2 ] && [ "$dow" -le 6 ]; then us_open=yes; fi
+
+if [ "$us_open" = yes ] && node -e "
+  import('file:///C:/Users/Pangwoo/date-platform-backend/src/providers/us-holidays.mjs')
+    .then((module) => process.exit(module.isUsMarketHoliday() ? 1 : 0))
+    .catch(() => process.exit(0));" 2>/dev/null; then
+  :
+else
+  us_open=no
+fi
+
+if [ "$us_open" = yes ]; then
   fresh=$($PSQL "select count(*) from market_price_samples where market='US' and observed_at > now() - interval '15 minutes';" 2>/dev/null)
   [ -z "$fresh" ] && fresh=0
   [ "$fresh" -lt 50 ] && echo "PROBLEM US samples in the last 15 min: $fresh (정규장 시간인데 비었습니다)"
