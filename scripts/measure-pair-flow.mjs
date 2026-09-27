@@ -42,6 +42,10 @@ import { query } from "../src/db/client.mjs";
  * 장중 값으로 다시 재려면 kr_program_trade의 시각별 누적을 써야 합니다.
  */
 const config = readConfig();
+const args = process.argv.slice(2);
+/* --watch는 판정 한 줄만 남깁니다. 표는 사람이 볼 때만 찍습니다. */
+const quiet = args.includes("--watch");
+const say = (...parts) => { if (!quiet) console.log(...parts); };
 const minLeaderMove = 5;
 const minTurnover = 1_000_000_000;
 
@@ -122,7 +126,7 @@ const { rows } = await query(config, `
 
 const nights = new Set(rows.map((row) => row.d)).size;
 
-console.log(`\n짝 ${rows.length}쌍 · ${nights}세션 · 주도주 +${minLeaderMove}% 이상, 거래대금 ${minTurnover / 1e8}억 이상\n`);
+say(`\n짝 ${rows.length}쌍 · ${nights}세션 · 주도주 +${minLeaderMove}% 이상, 거래대금 ${minTurnover / 1e8}억 이상\n`);
 
 /* 1) 빈도. 가설의 앞부분입니다. 수급 표가 비어 있는 종목은 분모에서 뺍니다 --
    "자료가 없다"를 "순매도였다"로 세면 답이 틀립니다. */
@@ -130,11 +134,11 @@ const share = (label, list, test) => {
   const known = list.filter((row) => test(row) !== null);
   const yes = known.filter((row) => test(row) === true).length;
 
-  console.log(`  ${label.padEnd(26)} ${String(known.length).padStart(6)}쌍 중 ${String(yes).padStart(6)}쌍 · ${known.length ? Math.round((100 * yes) / known.length) : 0}%`);
+  say(`  ${label.padEnd(26)} ${String(known.length).padStart(6)}쌍 중 ${String(yes).padStart(6)}쌍 · ${known.length ? Math.round((100 * yes) / known.length) : 0}%`);
 };
 const sign = (value) => value === null || value === undefined ? null : Number(value) > 0;
 
-console.log("1) 주도주가 오른 날, 누가 순매수였나");
+say("1) 주도주가 오른 날, 누가 순매수였나");
 share("외국인 순매수", rows, (row) => sign(row.leader_foreign));
 share("기관 순매수", rows, (row) => sign(row.leader_institution));
 share("프로그램 순매수", rows, (row) => sign(row.leader_program));
@@ -146,7 +150,7 @@ share("외국인+기관 둘 다 순매수", rows, (row) => row.leader_foreign ==
 /* 2) 값. 짝꿍의 하룻밤 초과수익을 수급으로 갈라 봅니다. */
 const report = (label, list, key = "follower_excess") => {
   if (list.length < 50) {
-    console.log(`  ${label.padEnd(30)} ${String(list.length).padStart(6)}쌍 · 표본 부족`);
+    say(`  ${label.padEnd(30)} ${String(list.length).padStart(6)}쌍 · 표본 부족`);
 
     return;
   }
@@ -155,15 +159,15 @@ const report = (label, list, key = "follower_excess") => {
   const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
   const beat = xs.filter((x) => x > 0).length;
 
-  console.log(`  ${label.padEnd(30)} ${String(list.length).padStart(6)}쌍 · 상회 ${String(Math.round((100 * beat) / xs.length)).padStart(3)}% · 초과 ${mean >= 0 ? "+" : ""}${mean.toFixed(3)}%p`);
+  say(`  ${label.padEnd(30)} ${String(list.length).padStart(6)}쌍 · 상회 ${String(Math.round((100 * beat) / xs.length)).padStart(3)}% · 초과 ${mean >= 0 ? "+" : ""}${mean.toFixed(3)}%p`);
 };
 
-console.log("\n2) 짝꿍의 하룻밤 초과수익 (익일 종가 기준)");
+say("\n2) 짝꿍의 하룻밤 초과수익 (익일 종가 기준)");
 report("전체(대조군)", rows);
 
 const has = (row, field) => row[field] !== null && row[field] !== undefined;
 
-console.log("\n  주도주 수급으로 갈랐을 때");
+say("\n  주도주 수급으로 갈랐을 때");
 report("주도주 외국인 순매수", rows.filter((row) => has(row, "leader_foreign") && Number(row.leader_foreign) > 0));
 report("주도주 외국인 순매도", rows.filter((row) => has(row, "leader_foreign") && Number(row.leader_foreign) <= 0));
 report("주도주 기관 순매수", rows.filter((row) => has(row, "leader_institution") && Number(row.leader_institution) > 0));
@@ -173,7 +177,7 @@ report("주도주 프로그램 순매도", rows.filter((row) => has(row, "leader
 report("주도주 개인만 (외인·기관 매도)", rows.filter((row) => has(row, "leader_foreign") && has(row, "leader_institution")
   && Number(row.leader_foreign) <= 0 && Number(row.leader_institution) <= 0));
 
-console.log("\n  짝꿍 자신의 수급으로 갈랐을 때");
+say("\n  짝꿍 자신의 수급으로 갈랐을 때");
 report("짝꿍 외국인 순매수", rows.filter((row) => has(row, "follower_foreign") && Number(row.follower_foreign) > 0));
 report("짝꿍 외국인 순매도", rows.filter((row) => has(row, "follower_foreign") && Number(row.follower_foreign) <= 0));
 report("짝꿍 기관 순매수", rows.filter((row) => has(row, "follower_institution") && Number(row.follower_institution) > 0));
@@ -185,7 +189,7 @@ report("짝꿍 프로그램 순매도", rows.filter((row) => has(row, "follower_
 
 const capReport = (label, list) => {
   if (list.length < 50) {
-    console.log(`    ${label.padEnd(24)} ${String(list.length).padStart(6)}쌍 · 표본 부족`);
+    say(`    ${label.padEnd(24)} ${String(list.length).padStart(6)}쌍 · 표본 부족`);
 
     return;
   }
@@ -194,10 +198,10 @@ const capReport = (label, list) => {
   const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
   const beat = xs.filter((x) => x > 0).length;
 
-  console.log(`    ${label.padEnd(24)} ${String(list.length).padStart(6)}쌍 · 상회 ${String(Math.round((100 * beat) / xs.length)).padStart(3)}% · 초과 ${mean >= 0 ? "+" : ""}${mean.toFixed(3)}%p`);
+  say(`    ${label.padEnd(24)} ${String(list.length).padStart(6)}쌍 · 상회 ${String(Math.round((100 * beat) / xs.length)).padStart(3)}% · 초과 ${mean >= 0 ? "+" : ""}${mean.toFixed(3)}%p`);
 };
 
-console.log(`\n짝 ${rows.length}쌍 (주도주 수급 자료 있는 것만)\n`);
+say(`\n짝 ${rows.length}쌍 (주도주 수급 자료 있는 것만)\n`);
 
 /* 먼저 교란이 실제로 있는지 확인합니다 -- 외국인이 산 주도주가 정말 더 큰가. */
 /* 2단계는 주도주 수급을 아는 행만 씁니다. 1단계는 분모를 넓게 둬야 빈도가
@@ -208,15 +212,15 @@ const mean = (list, key) => list.reduce((sum, row) => sum + Number(row[key]), 0)
 const bought = withCap.filter((row) => Number(row.leader_foreign) > 0);
 const sold = withCap.filter((row) => Number(row.leader_foreign) <= 0);
 
-console.log("교란 확인 · 주도주 시총 중앙값 (억)");
+say("교란 확인 · 주도주 시총 중앙값 (억)");
 const median = (list) => {
   const xs = list.map((row) => Number(row.leader_cap)).sort((a, b) => a - b);
 
   return xs.length ? Math.round(xs[Math.floor(xs.length / 2)] / 1e8) : 0;
 };
 
-console.log(`  외국인 순매수인 날  ${median(bought).toLocaleString("ko-KR")}억  (${bought.length}쌍)`);
-console.log(`  외국인 순매도인 날  ${median(sold).toLocaleString("ko-KR")}억  (${sold.length}쌍)`);
+say(`  외국인 순매수인 날  ${median(bought).toLocaleString("ko-KR")}억  (${bought.length}쌍)`);
+say(`  외국인 순매도인 날  ${median(sold).toLocaleString("ko-KR")}억  (${sold.length}쌍)`);
 
 /* 규모 칸 안에서 다시. 짝꿍 시총으로 나눕니다 -- 사는 것은 짝꿍이니까요. */
 const caps = [
@@ -225,12 +229,12 @@ const caps = [
   { label: "대형 1조 이상", max: Infinity, min: 1e12 }
 ];
 
-console.log("\n짝꿍 규모 칸 안에서 주도주 외국인 수급으로 갈랐을 때");
+say("\n짝꿍 규모 칸 안에서 주도주 외국인 수급으로 갈랐을 때");
 
 for (const cap of caps) {
   const inBand = known.filter((row) => row.follower_cap && Number(row.follower_cap) >= cap.min && Number(row.follower_cap) < cap.max);
 
-  console.log(`\n  ${cap.label} (${inBand.length}쌍)`);
+  say(`\n  ${cap.label} (${inBand.length}쌍)`);
   capReport("전체", inBand);
   capReport("외국인 순매수", inBand.filter((row) => Number(row.leader_foreign) > 0));
   capReport("외국인 순매도", inBand.filter((row) => Number(row.leader_foreign) <= 0));
@@ -239,7 +243,7 @@ for (const cap of caps) {
 }
 
 /* 세기를 분위로 자릅니다. 단조가 아니면 부호 갈림은 우연일 가능성이 큽니다. */
-console.log("\n주도주 외국인 순매수 세기 (거래대금 대비, 5분위)");
+say("\n주도주 외국인 순매수 세기 (거래대금 대비, 5분위)");
 
 const ratios = known
   .filter((row) => row.leader_turnover)
@@ -257,6 +261,79 @@ for (let index = 0; index < 5; index += 1) {
   const high = (slice[slice.length - 1].ratio * 100).toFixed(3);
 
   capReport(`${index + 1}분위 ${low}~${high}%`, slice);
+}
+
+
+/*
+ * ---- 되풀이해 재는 자리 (--watch) ----
+ *
+ * 사용자가 매일 장 끝나고(20:00 이후), 주 단위로, 그리고 한 달 뒤에 다시 돌려 달라고
+ * 했습니다(2026-09-27). 같은 가설을 매일 다시 재는 것은 함정이 하나 있습니다 --
+ * **칸이 열 개인 표를 스무 번 돌리면 우연히 갈리는 칸이 한두 개 나옵니다.** 그걸
+ * "드디어 갈렸다"로 읽으면 반증된 규칙을 되살리게 됩니다.
+ *
+ * 그래서 **무엇을 보면 갈렸다고 말할지 지금 적어 둡니다.** 나중에 결과를 보고 기준을
+ * 옮기면 측정이 아닙니다. 세 가지 전부 넘어야 합니다:
+ *
+ *   1) 방향     규모 세 칸(소형·중형·대형)에서 부호가 **같은 방향**일 때만. 지금은
+ *               소형이 매도 우위, 대형이 매수 우위로 뒤집혀 있어 실패합니다. 칸마다
+ *               방향이 다르면 그것은 규모를 다시 잰 것입니다.
+ *   2) 표본     각 규모 칸의 두 쪽이 모두 300쌍 이상.
+ *   3) 크기     차이가 0.30%p 이상, 그리고 세기 5분위가 단조이며 1↔5분위 차 0.50%p 이상.
+ *
+ * 그리고 **한 번 넘은 것으로는 안 됩니다** -- 사흘 연속 같은 방향으로 넘어야 보고합니다.
+ * 이 스크립트는 판정 한 줄을 로그에 덧붙이기만 하고, 연속 여부는 그 로그를 읽어
+ * 셉니다(logs/pair-flow-watch.log).
+ *
+ *   node scripts/measure-pair-flow.mjs --watch    한 줄 판정만
+ */
+if (args.includes("--watch")) {
+  const cells = [];
+
+  for (const cap of caps) {
+    const inBand = known.filter((row) => row.follower_cap
+      && Number(row.follower_cap) >= cap.min && Number(row.follower_cap) < cap.max);
+    const buy = inBand.filter((row) => Number(row.leader_foreign) > 0);
+    const sell = inBand.filter((row) => Number(row.leader_foreign) <= 0);
+    const mean = (list) => list.length
+      ? list.reduce((sum, row) => sum + Number(row.follower_excess), 0) / list.length
+      : null;
+
+    cells.push({ buy: buy.length, diff: mean(buy) === null || mean(sell) === null ? null : mean(buy) - mean(sell), label: cap.label, sell: sell.length });
+  }
+
+  const enough = cells.every((cell) => cell.buy >= 300 && cell.sell >= 300);
+  const signs = cells.map((cell) => cell.diff === null ? 0 : Math.sign(cell.diff));
+  const aligned = signs.every((sign) => sign === signs[0]) && signs[0] !== 0;
+  const big = cells.every((cell) => cell.diff !== null && Math.abs(cell.diff) >= 0.3);
+
+  /* 5분위 단조와 양끝 차이. */
+  const quintiles = [];
+
+  for (let index = 0; index < 5; index += 1) {
+    const slice = ratios.slice(index * step, index === 4 ? ratios.length : (index + 1) * step);
+
+    quintiles.push(slice.reduce((sum, row) => sum + Number(row.follower_excess), 0) / (slice.length || 1));
+  }
+
+  const up = quintiles.every((value, index) => index === 0 || value >= quintiles[index - 1]);
+  const down = quintiles.every((value, index) => index === 0 || value <= quintiles[index - 1]);
+  const spread = Math.abs(quintiles[4] - quintiles[0]);
+  const monotone = (up || down) && spread >= 0.5;
+  const verdict = enough && aligned && big && monotone ? "PASS" : "HOLD";
+  const why = [
+    enough ? null : "표본",
+    aligned ? null : `방향(${cells.map((cell) => cell.diff === null ? "?" : cell.diff.toFixed(2)).join("/")})`,
+    big ? null : "크기",
+    monotone ? null : `분위(${up || down ? "단조인데 폭 부족" : "단조 아님"})`
+  ].filter(Boolean);
+
+  console.log(`${new Date().toISOString().slice(0, 10)} ${verdict} 짝 ${known.length}쌍 · 프로그램 ${known.filter((row) => row.leader_program !== null).length}쌍`
+    + ` · 규모칸 ${cells.map((cell) => `${cell.buy}/${cell.sell}`).join(" ")}`
+    + ` · 5분위 ${quintiles.map((value) => value.toFixed(2)).join(" ")}`
+    + (why.length ? ` · 못 넘은 것: ${why.join(", ")}` : " · 사흘 연속인지 로그 확인"));
+
+  process.exit(0);
 }
 
 

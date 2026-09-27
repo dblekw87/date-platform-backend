@@ -107,6 +107,9 @@ Write-Line "watchdog on (pid $PID)"
 #>
 $databaseMissingRounds = 0
 $lastDatabaseStart = [DateTime]::MinValue
+# 오늘 밤 측정을 이미 돌렸는가. 기계가 켜진 동안만 기억하면 됩니다 -- 재부팅되면
+# 그날 20:10이 지났어도 한 번 더 도는 편이 안 도는 것보다 낫습니다.
+$lastNightlyDate = [DateTime]::MinValue
 
 while ($true) {
   if (-not (Test-Database)) {
@@ -171,6 +174,25 @@ while ($true) {
       -RedirectStandardOutput "$frontend\web.log" -RedirectStandardError "$frontend\web.err.log" `
       -WindowStyle Hidden
     Start-Sleep -Seconds 15
+  }
+
+  <#
+    장이 완전히 끝난 뒤(20:10) 다시 재는 것들.
+
+    사용자가 매일·주간·월간으로 짝꿍 수급 측정을 다시 돌려 달라고 했습니다
+    (2026-09-27). 클로드 세션 크론은 7일에 만료되고 토요일 종료 때 사라져서 한 달
+    뒤 약속을 못 지킵니다. 그래서 잊지 않는 쪽은 여기 두고, 사람에게 말하는 쪽만
+    클로드가 합니다. 이 루프는 이미 1분마다 돌고 로그온 때 자동으로 뜨므로 새
+    자동 기동 항목을 만들 필요가 없습니다.
+
+    하루 한 번만 돌게 날짜를 기억합니다 -- 루프가 1분마다 오므로 시각만 보면
+    20:10~20:59 사이에 쉰 번 돕니다.
+  #>
+  if ((Get-Date).Hour -eq 20 -and (Get-Date).Minute -ge 10 -and $lastNightlyDate -ne (Get-Date).Date) {
+    $lastNightlyDate = (Get-Date).Date
+    Write-Line "nightly measures"
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+      -File "$backend\scripts\run-nightly-measures.ps1" | Out-Null
   }
 
   Start-Sleep -Seconds 60
