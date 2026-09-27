@@ -13,6 +13,13 @@
   필요해서(restart-collector-at.ps1에 같은 이유가 적혀 있습니다) 분리 프로세스가
   자는 쪽이 간단합니다.
 
+  **로그온마다 자동으로 뜹니다** (HKCU Run의 "DATE weekend shutdown", 2026-09-27).
+  자는 프로세스는 재부팅이 지우고, 죽어도 아무 흔적을 안 남깁니다 -- 2026-09-26에
+  09-23에 걸어 둔 예약이 사라져 있었고, 사용자가 "오늘 자동으로 꺼지지?" 하고 물어서야
+  알았습니다. 안 물었으면 그 주말에 그냥 켜진 채로 있었을 겁니다. 사람이 손으로 거는
+  예약은 거는 것을 잊거나 죽은 것을 모르므로, 켜질 때마다 스스로 다시 걸립니다.
+  ("내가 감시 다시 걸어줘 안해도 되게" -- 사용자, 2026-09-23)
+
   손으로:
     powershell -ExecutionPolicy Bypass -File scripts\shutdown-after-us-close.ps1
     powershell ... -File scripts\shutdown-after-us-close.ps1 -At 09:05 -WhatIf
@@ -57,6 +64,35 @@ $target = (Get-Date).Date.AddHours([int] $parts[0]).AddMinutes([int] $parts[1])
 
 while ($target.DayOfWeek -ne $Day -or $target -le (Get-Date)) {
   $target = $target.AddDays(1)
+}
+
+<#
+  이 예약은 하나만 자고 있어야 합니다.
+
+  로그온마다 이것이 뜨게 해 뒀으므로(HKCU Run의 "DATE weekend shutdown") 로그오프·
+  재로그온이 겹치면 둘이 같은 토요일을 기다리게 됩니다. 둘이 깨면 stop-collector가
+  두 번 돌고 종료 예고도 두 번 나갑니다.
+
+  start-collector.ps1과 같은 방식입니다 -- 이름 있는 뮤텍스를 잡고, 못 잡으면
+  이미 자고 있는 것이 있다는 뜻이니 조용히 빠집니다. 주인 없이 남은 뮤텍스
+  (앞선 프로세스가 강제 종료된 경우)는 잡은 것으로 칩니다.
+
+  기다리는 동안 계속 들고 있어야 하므로 반납하지 않습니다. 프로세스가 끝나면
+  OS가 놓아줍니다.
+#>
+$runLock = New-Object System.Threading.Mutex($false, "Global\DATE-weekend-shutdown")
+$holdsLock = $false
+
+try {
+  $holdsLock = $runLock.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+  $holdsLock = $true
+}
+
+if (-not $holdsLock) {
+  Write-Line "이미 예약이 자고 있습니다 - 그냥 빠집니다"
+
+  exit 0
 }
 
 Write-Line "--- shutdown-after-us-close --- 대상 $($target.ToString('yyyy-MM-dd HH:mm')) ($Day $At)"
