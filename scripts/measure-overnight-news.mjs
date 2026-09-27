@@ -31,6 +31,27 @@ const config = readConfig();
 // 뺍니다. [[leader-pool-filters]] -- 판단 조건이 아니라 모집단 조건입니다.
 const minTurnover = 1_000_000_000;
 
+/*
+ * 재료를 되돌리는 낱말.
+ *
+ * classifyDisclosure의 `해지|취소|철회|중단|미이행`과 같은 가족에서 출발해, 공시
+ * 이름에는 안 나오고 기사 제목에만 나오는 것들을 더했습니다(무산·불발·결렬·실패·
+ * 좌절·반려·부결). 일부러 좁게 잡았습니다 -- 넓힐지는 이 측정 결과를 보고 정합니다.
+ *
+ * **낱말이 다른 낱말 안에 들어가 있는 것을 먼저 지웁니다.** 처음 돌렸을 때 걸린
+ * 46개 제목 중 여덟이 이것이었습니다: 애드바이오텍·메타이뮨텍·HS화성의 "**반려**동물"
+ * (돌려보낸 반려가 아닙니다), KT의 "무**중단** 네트워크"(끊기지 않는다는 뜻이라
+ * 반대입니다). [[news-alias-tagging]]에서 영문 낱말에 대해 배운 것과 같은 자리이고,
+ * 한글은 조사가 붙어 낱말 경계를 정규식으로 못 잡으므로 아는 합성어를 지웁니다.
+ *
+ * 남은 오탐은 문맥이라 낱말로 못 잡습니다 -- 유진이엔티 "승인취소 근거 안돼",
+ * 삼성바이오로직스 "실패 변수 줄인다". 그래서 아래 결과를 문턱이 아니라 **표시**로
+ * 쓰는 근거가 됩니다.
+ */
+const compoundPattern = /반려동물|반려견|반려묘|반려식물|무중단|중단없|중단 없/g;
+const reversalWords = /중단|무산|취소|철회|해지|불발|결렬|반려|부결|실패|좌절|미이행/;
+const reversalPattern = { test: (text) => reversalWords.test(String(text ?? "").replace(compoundPattern, "")) };
+
 const sessions = (await query(config, `
   SELECT DISTINCT session_date::text AS d FROM kr_daily_bars
   WHERE session_date >= '2026-08-14' ORDER BY 1`)).rows.map((r) => r.d);
@@ -217,6 +238,29 @@ for (const day of sessions) {
       record(`재료·${first} 나온 것`, day, row.symbol, excess.gap, excess.intraday, excess.total);
     }
 
+    /*
+     * 재료가 **되돌려진 것**인가.
+     *
+     * 2026-09-27 후보 목록에 한올바이오파마(루푸스 임상 중단)와 가비아(맥쿼리 인수
+     * 최종 무산)가 올라왔습니다. 둘 다 "임상"·"인수"라는 호재 낱말로 material에
+     * 걸리고, 그 앞뒤에 붙은 "중단"·"무산"은 아무도 안 봅니다. 공시에는 이미 같은
+     * 규칙이 있습니다 -- classifyDisclosure가 해지·취소·철회·중단이 붙으면 호재
+     * 판정으로 내려보내지 않습니다. 뉴스에는 없습니다.
+     *
+     * 낱말로 자르기 전에 잽니다. 기사 제목은 공시 이름과 달라서, "공매도 중단"·
+     * "규제 철회"처럼 되돌림 낱말이 붙은 호재가 있습니다. 규칙을 먼저 넣으면 그런
+     * 것까지 같이 버리고, 버린 것이 얼마였는지 영원히 모릅니다.
+     */
+    if (labels.has("news:material") && !labels.has("news:recap")) {
+      const reversed = (nightMaterial.get(row.symbol) ?? []).some((headline) => reversalPattern.test(headline));
+
+      record(`재료·되돌림 낱말 ${reversed ? "있음" : "없음"}`, day, row.symbol, excess.gap, excess.intraday, excess.total);
+
+      if (first === "처음") {
+        record(`재료·처음·되돌림 ${reversed ? "있음" : "없음"}`, day, row.symbol, excess.gap, excess.intraday, excess.total);
+      }
+    }
+
     if (labels.has("filing:good") && !labels.has("news:recap")) {
       record(`호재공시·${first} 나온 것`, day, row.symbol, excess.gap, excess.intraday, excess.total);
     }
@@ -251,7 +295,7 @@ console.log("");
 console.log("세션별 장중 초과수익 (%p)");
 console.log("");
 
-const watched = ["공시 있음(대조군)", "filing:good", "news:recap", "news:material만(복기 없음)", "재료·처음 나온 것", "재료·이어진 나온 것", "호재공시·처음 나온 것", "호재공시·이어진 나온 것"];
+const watched = ["공시 있음(대조군)", "filing:good", "news:recap", "news:material만(복기 없음)", "재료·처음 나온 것", "재료·이어진 나온 것", "재료·되돌림 낱말 있음", "재료·되돌림 낱말 없음", "호재공시·처음 나온 것", "호재공시·이어진 나온 것"];
 const days = [...marketByDay.keys()].sort();
 
 console.log("조건".padEnd(24) + days.map((d) => d.slice(5).padStart(7)).join(""));

@@ -22,6 +22,7 @@
 
 /* 상한가는 다음 날 사는 자리가 아닙니다. [[leader-trade-verdict]]에서 상승률
  * 상위의 +5.6%p가 전부 상한가라 못 사는 값이었던 것과 같은 이유입니다. */
+import { hasReversalWord } from "./overnight-classify.mjs";
 import { storyTokens } from "./overnight-collect.mjs";
 
 const limitUpRate = 29;
@@ -47,6 +48,9 @@ export function rankPicks(candidates, universe) {
     picks.push({
       ...entry,
       listing,
+      /* 재료가 되돌려진 것일 수 있다는 표시. 자르지 않고 적기만 합니다 -- 왜
+         자르지 않는지는 hasReversalWord 위에 적혀 있습니다(13건, 갭만 갈림). */
+      reversal: entry.material.some((article) => hasReversalWord(article.headline)),
       score: score(entry),
       sourceCount: entry.sources.size
     });

@@ -66,6 +66,34 @@ export function mentionsMaterial(headline) {
   return materialPattern.test(String(headline ?? ""));
 }
 
+/*
+ * 재료를 되돌리는 낱말이 제목에 있는가.
+ *
+ * 공시에는 이 규칙이 아래 classifyDisclosure에 있습니다 -- 해지·취소·철회·중단이
+ * 붙으면 호재로 내려보내지 않습니다. 뉴스에는 없었고, 그래서 2026-09-27 후보
+ * 목록에 한올바이오파마(루푸스 임상 중단)와 가비아(맥쿼리 인수 최종 무산)가
+ * 올라왔습니다. "임상"·"인수"가 material에 걸리고 "중단"·"무산"은 아무도 안 봅니다.
+ *
+ * **그런데 이것으로 후보를 자르지 않습니다.** 23세션으로 재보니 걸린 것은 13건뿐이고
+ * (`scripts/measure-overnight-news.mjs`), 갭은 -2.17%p로 분명히 아래인데 장중은
+ * 표본 하나(09-15 +23.2%p)가 부호를 정합니다. 13건으로 규칙을 만들면 그 하나에
+ * 규칙을 맞추는 것입니다. 표시만 하고, 표본이 쌓이면 다시 잽니다.
+ *
+ * 합성어를 먼저 지웁니다. 처음 돌렸을 때 걸린 46개 제목 중 여덟이 낱말 안에 든
+ * 낱말이었습니다 -- "반려동물"(돌려보낸 반려가 아님), "무중단 네트워크"(끊기지
+ * 않는다는 뜻이라 반대). 한글은 조사가 붙어 정규식으로 낱말 경계를 못 잡으므로
+ * 아는 합성어를 지우는 쪽으로 갑니다. [[news-alias-tagging]]과 같은 자리입니다.
+ *
+ * 남은 오탐은 문맥이라 낱말로는 못 잡습니다 -- "승인취소 근거 안돼"(유진이엔티),
+ * "실패 변수 줄인다"(삼성바이오로직스). 자르지 않고 표시만 하는 또 하나의 이유입니다.
+ */
+const compoundWords = /반려동물|반려견|반려묘|반려식물|무중단|중단없|중단 없/g;
+const reversalWords = /중단|무산|취소|철회|해지|불발|결렬|반려|부결|실패|좌절|미이행/;
+
+export function hasReversalWord(headline) {
+  return reversalWords.test(String(headline ?? "").replace(compoundWords, ""));
+}
+
 export function classifyHeadline(headline) {
   const text = String(headline ?? "");
 

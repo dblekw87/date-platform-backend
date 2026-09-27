@@ -262,6 +262,10 @@ function message(picks, window, phase, url) {
 
     if (pick.sourceCount > 1) lines.push(`  매체 ${pick.sourceCount}곳`);
 
+    /* 제목에 중단·무산 같은 낱말이 있으면 한 줄 답니다. 걸러내지 않는 것은
+       표본이 13건뿐이어서입니다(hasReversalWord 참고). 판단은 사람이 합니다. */
+    if (pick.reversal) lines.push("  ※ 되돌림 낱말 -- 재료가 취소된 기사일 수 있습니다");
+
     for (const relative of pick.relatives ?? []) {
       const turnover = relative.listing ? ` · 거래대금 ${(relative.listing.turnover / 1e8).toFixed(0)}억` : "";
 

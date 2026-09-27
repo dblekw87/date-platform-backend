@@ -47,6 +47,10 @@ export function printPicks(picks, window, target) {
 
     if (pick.sourceCount > 1) console.log(`      매체 ${pick.sourceCount}곳`);
 
+    /* 재료가 되돌려진 것일 수 있으면 적습니다. 목록에서 빼지 않는 이유는
+       hasReversalWord 위에 있습니다 -- 표본 13건으로는 자를 근거가 없습니다. */
+    if (pick.reversal) console.log("      ※ 되돌림 낱말 (중단·무산·철회…) -- 악재일 수 있으니 제목을 보세요");
+
     console.log("");
   }
 }
