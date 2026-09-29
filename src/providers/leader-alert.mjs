@@ -63,9 +63,27 @@ async function snapshot(config, day) {
   const { rows } = await query(config, `
     WITH latest AS (
       SELECT DISTINCT ON (symbol) symbol, name, change_rate, turnover, theme, market_cap
-        FROM market_price_samples
+        FROM market_price_samples s
        WHERE market = 'KR' AND session_date = $1::date AND source LIKE 'kis:krx%'
          AND turnover IS NOT NULL
+         /*
+          * 상장 당일 종목은 뺍니다.
+          *
+          * 그날의 등락률에 비교 대상이 없습니다 -- 전일 종가가 없으니 공모가나
+          * 시초가 대비로 찍히고, 그 값을 섹터 등락에 섞으면 섹터가 도는지
+          * 한 종목이 데뷔한 건지 구분이 안 됩니다. 2026-09-29 로봇 섹터가
+          * 그랬습니다: 빅웨이브로보틱스가 상장 첫날 +189%에 거래대금 3,360억으로
+          * 혼자 서 있고 나머지는 유진로봇 -2.62%, 로보스타 -1.31%, 현대무벡스
+          * -2.42%로 내리는데, 섹터 중앙 등락이 +95%로 찍혔습니다.
+          *
+          * kr_listings.listed_on은 장중에 못 씁니다 -- 오늘 상장한 종목이 아직
+          * 그 표에 없습니다(빅웨이브 0035S0). 대신 **어제까지의 일봉이 있는가**로
+          * 봅니다. 장중에 답할 수 있고, 백필된 종목은 전부 옛 봉을 갖고 있습니다.
+          */
+         AND EXISTS (
+           SELECT 1 FROM kr_daily_bars b
+            WHERE b.symbol = s.symbol AND b.session_date < $1::date
+         )
        ORDER BY symbol, observed_at DESC
     ),
     -- 외국인은 추정치이고 구간별로 들어옵니다. 가장 최근 구간만 씁니다.
@@ -118,14 +136,37 @@ function bySector(rows) {
       const representable = members.filter((member) =>
         !Number.isFinite(Number(member.market_cap)) || Number(member.market_cap) < maximumLeadCap);
 
+      const shown = (representable.length > 0 ? representable : members).slice(0, perSector);
+      const moves = shown.map((member) => Number(member.change_rate)).filter(Number.isFinite).sort((a, b) => a - b);
+
       return {
         count: members.length,
         lead: representable.length > 0 ? Number(representable[0].turnover) : 0,
-        members: (representable.length > 0 ? representable : members).slice(0, perSector),
+        members: shown,
+        /* 보여줄 종목들의 중앙 등락. 평균으로 하면 한 종목의 +20%가 나머지 둘의
+           하락을 덮습니다 -- 섹터가 도는지 한 종목이 도는지를 가르려는 값입니다. */
+        move: moves.length ? moves[Math.floor(moves.length / 2)] : null,
         sector
       };
     })
     .filter((group) => group.lead > 0)
+    /*
+     * 내리는 섹터는 주도 섹터가 아닙니다.
+     *
+     * 거래대금만으로 줄을 세우고 있었습니다. 2026-09-29에 재생에너지가 상위로
+     * 나갔는데 그 섹터 상위 다섯이 전부 마이너스였습니다(한화솔루션 -3.75%,
+     * SK이터닉스 -2.44%, 씨에스윈드 -7.47%, 유니슨 -7.87%, 동국S&C -1.96%).
+     * 사용자가 알림을 보자마자 지적했습니다 -- "거래대금이 높더라도 마이너스면
+     * 주도 섹터가 아니다."
+     *
+     * 드문 일이 아니었습니다. 9월 거래일의 거래대금 상위 3섹터 57건 중 11건(19%)이
+     * 중앙 등락 마이너스였습니다. 다섯 번에 한 번은 내리는 섹터를 주도라고 불렀습니다.
+     * 돈이 몰리는 것과 오르는 것은 다릅니다 -- 차익 실현으로도 거래대금은 터집니다.
+     *
+     * 전부 내리는 날에는 한 통도 안 나갑니다. 그런 날은 주도 섹터가 없는 것이 맞고,
+     * 없는 것을 지어내는 것보다 조용한 쪽이 낫습니다.
+     */
+    .filter((group) => group.move !== null && group.move > 0)
     .sort((left, right) => right.lead - left.lead)
     .slice(0, showSectors);
 }
@@ -162,8 +203,11 @@ function line(group, rank, at) {
   }).join("\n");
 
   const sector = group.sector.replace(/\s*\(.*?\)\s*/g, "").trim() || group.sector;
+  /* 섹터 등락을 머리에 답니다. 걸러낸 근거를 문장에서 바로 볼 수 있어야
+     "이게 왜 주도냐"를 다시 묻지 않습니다. */
+  const move = group.move === null ? "" : ` ${group.move > 0 ? "+" : ""}${group.move.toFixed(2)}%`;
 
-  return `[주도 섹터 #${rank + 1}] ${sector} · ${at}\n${group.count}종목 · 거래대금 100위\n\n${names}`;
+  return `[주도 섹터 #${rank + 1}] ${sector}${move} · ${at}\n${group.count}종목 · 거래대금 100위\n\n${names}`;
 }
 
 /** 절대 던지지 않습니다 -- 알림 때문에 수집 틱이 멈추면 그 분의 분봉을 잃습니다. */
