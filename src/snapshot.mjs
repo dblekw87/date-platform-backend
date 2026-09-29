@@ -119,13 +119,29 @@ export async function publishBoardSnapshot(board, { config, repoPath = snapshotR
  * 실패해도 게시 자체를 막지 않습니다 -- 다음 틱이 다시 시도합니다.
  */
 async function purgeJsdelivrCache() {
-  try {
-    const response = await fetch("https://purge.jsdelivr.net/gh/dblekw87/date-board-snapshot@main/board.json", {
-      signal: AbortSignal.timeout(5000)
-    });
+  /*
+   * meta.json도 같이 비웁니다.
+   *
+   * board.json만 비우고 있었습니다. 프론트가 읽는 것이 그것뿐이니 화면은 맞았는데,
+   * **사람이 신선도를 확인할 때 보는 파일은 meta.json입니다.** 그래서 board.json이
+   * 방금 것인데 meta.json은 몇 시간 전 것으로 보이는 상태가 계속 생겼고, 2026-09-28과
+   * 29에 이틀 연속으로 "운영 데이터가 멈췄다"는 오진을 만들었습니다. 두 번 다 실제로는
+   * 정상이었고 board.json 해시가 원본과 같았습니다.
+   *
+   * 둘을 따로 비우면 또 어긋나므로 한 번에 비웁니다. 한쪽이 실패해도 게시를 막지
+   * 않습니다 -- 다음 틱이 다시 시도합니다.
+   */
+  const paths = ["board.json", "meta.json"];
 
-    if (!response.ok) console.warn(`jsdelivr purge ${response.status}`);
-  } catch (error) {
-    console.warn("jsdelivr purge failed", error instanceof Error ? error.message : error);
-  }
+  await Promise.all(paths.map(async (path) => {
+    try {
+      const response = await fetch(`https://purge.jsdelivr.net/gh/dblekw87/date-board-snapshot@main/${path}`, {
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (!response.ok) console.warn(`jsdelivr purge ${path} ${response.status}`);
+    } catch (error) {
+      console.warn(`jsdelivr purge ${path} failed`, error instanceof Error ? error.message : error);
+    }
+  }));
 }

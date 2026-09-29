@@ -11,6 +11,7 @@ import { recordKrListings } from "./providers/kr-listings.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes, refreshThemes, themeDictionaryAgeMs } from "./providers/naver-themes.mjs";
 import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
+import { loadNaverMoverSymbols } from "./providers/naver-movers.mjs";
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
@@ -77,6 +78,9 @@ const timeZone = "Asia/Seoul";
  * 헤드라인을 다시 읽는 데 하루를 쓰게 됩니다.
  */
 const newsIntervalMs = 3 * 60_000;
+/* 한 틱에 시세를 새로 물을 종목 수의 상한. KIS는 두 개씩 묶어 200ms를 쉬므로 40이면
+   4초쯤입니다. 2026-09-29 기준 10% 이상 오른 종목이 하루 37개라 상한에 잘 안 닿습니다. */
+const moverSampleCap = 40;
 const offHoursNewsIntervalMs = 10 * 60_000;
 const idleIntervalMs = 60_000;
 
@@ -265,6 +269,53 @@ async function samplePrices(config) {
     // The leaders are already written. A follower pass that fails costs the
     // followers for one tick, not the tick.
     console.warn("collector: follower sample failed", error instanceof Error ? error.message : error);
+  }
+
+  /*
+   * 많이 올랐는데 KIS 랭킹에 없는 종목.
+   *
+   * 랭킹은 60종목이고 거래대금 순입니다. 오늘 크게 오른 작은 종목이 그 안에 못 들면
+   * 표본이 한 줄도 안 쌓이고, 표본이 없으면 상따 감시가 그 종목을 못 봅니다 --
+   * 2026-09-29 테라뷰가 +30% 상한가로 마감했는데 우리 표본은 0건이었고, 사용자가
+   * 그것을 직접 잡는 동안 우리 알림은 나갈 수가 없었습니다.
+   *
+   * 네이버 상승률 목록에서 **코드만** 얻고 시세는 KIS에 다시 물어 채웁니다. 네이버
+   * 숫자를 그대로 넣으면 같은 표에 두 자로 잰 값이 섞입니다.
+   *
+   * 앞의 두 무리와 source를 나눕니다. 이쪽은 거래대금 순위가 아니라 등락률로 뽑은
+   * 것이라 leader_rank가 없고, 셋을 한 모집단으로 읽으면 순위가 뜻을 잃습니다.
+   */
+  try {
+    const seen = new Set(stocks.map((stock) => stock.symbol));
+    const movers = await loadNaverMoverSymbols();
+    const missing = movers.filter((mover) => !seen.has(mover.symbol)).slice(0, moverSampleCap);
+
+    if (missing.length > 0) {
+      const quotes = await loadKrQuotes(config, missing.map((mover) => mover.symbol), venue === "kis:nxt" ? "NX" : "J");
+      /*
+       * 이름은 네이버 것을 씁니다.
+       *
+       * 종목 지정 조회(inquire-price)는 한글 이름을 안 돌려줍니다 -- name 자리에
+       * 코드가 그대로 들어옵니다. 그대로 저장하면 알림에 "950250 +29.1%"처럼 찍히고,
+       * 코드만 온 알림은 그 순간 무엇인지 알 수 없습니다. 랭킹 쪽은 hts_kor_isnm이
+       * 같이 와서 이 문제가 없었습니다.
+       */
+      const names = new Map(missing.map((mover) => [mover.symbol, mover.name]));
+      const named = quotes.map((quote) => ({ ...quote, name: names.get(quote.symbol) ?? quote.name }));
+
+      if (named.length > 0) {
+        saved += await saveMarketPriceSamples(config, {
+          market: "KR",
+          observedAt,
+          ranked: false,
+          sessionDate: day,
+          source: `${venue}:up`,
+          stocks: named
+        });
+      }
+    }
+  } catch (error) {
+    console.warn("collector: mover sample failed", error instanceof Error ? error.message : error);
   }
 
   return saved;
