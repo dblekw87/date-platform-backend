@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { query } from "./db/client.mjs";
 import { startMarketCollector } from "./collector.mjs";
 import { loadSymbolThemes } from "./providers/naver-themes.mjs";
 import { naverThemeMap, setNaverThemes } from "./providers/themes.mjs";
@@ -109,7 +110,42 @@ async function route(request, response) {
   if (url.pathname === "/api/themes/symbols") {
     const symbols = Object.fromEntries(naverThemeMap());
 
-    sendJson(response, 200, { count: Object.keys(symbols).length, symbols }, headers);
+    /*
+     * 오늘 상장한 종목도 같이 줍니다.
+     *
+     * market_watch.py가 급등 알림에서 이들을 빼기 위해서입니다. 상장 첫날은 전일
+     * 종가가 없어 등락률에 비교 대상이 없고, 그 값을 다른 종목과 같은 축에 놓으면
+     * 알림이 그 종목으로 덮입니다 -- 2026-09-29에 빅웨이브로보틱스(+84%)와
+     * 글로벌테크놀로지(+71%)가 급등 알림 여덟 통 중 셋을 차지했고, 거래대금 1조도
+     * 첫날 회전율이었습니다. 사용자가 그 알림을 보고 지적했습니다.
+     *
+     * 판별은 **어제까지의 일봉이 있는가**로 합니다. kr_listings.listed_on은 장중에
+     * 못 씁니다 -- 오늘 상장한 종목이 아직 그 표에 없습니다(2026-09-29 빅웨이브
+     * 0035S0). 같은 규칙을 leader-alert.mjs도 씁니다.
+     *
+     * 파이썬 쪽은 표준 라이브러리만 쓰므로 DB에 못 붙습니다. 그래서 이미 한 시간에
+     * 한 번 받아 가는 이 응답에 얹습니다 -- 엔드포인트를 늘리면 그쪽도 호출을
+     * 늘려야 하고, 둘이 따로 늙으면 어느 쪽이 맞는지 알 수 없게 됩니다.
+     */
+    let listedToday = [];
+
+    try {
+      const { rows } = await query(config, `
+        SELECT DISTINCT s.symbol
+          FROM market_price_samples s
+         WHERE s.market = 'KR' AND s.session_date = current_date
+           AND NOT EXISTS (
+             SELECT 1 FROM kr_daily_bars b
+              WHERE b.symbol = s.symbol AND b.session_date < current_date
+           )`);
+
+      listedToday = rows.map((row) => row.symbol);
+    } catch (error) {
+      // 사전은 돌려줘야 합니다. 이 목록이 비면 예전처럼 동작할 뿐입니다.
+      console.warn("listed-today lookup failed", error instanceof Error ? error.message : error);
+    }
+
+    sendJson(response, 200, { count: Object.keys(symbols).length, listedToday, symbols }, headers);
     return;
   }
 
