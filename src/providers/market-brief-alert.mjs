@@ -36,6 +36,51 @@ let running = false;
 const pct = (value) => `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
 const eok = (won) => `${Math.round(Number(won) / 1e8).toLocaleString("ko-KR")}억`;
 
+/*
+ * 국내장에 옮겨붙는 미국 종목을 묶어서 봅니다.
+ *
+ * 지수 숫자만으로는 오늘 국내에서 무엇이 갈지 안 보입니다. 사용자가 보는 다른
+ * 브리핑이 이 모양이고(2026-09-30), 우리가 잰 것과도 맞습니다:
+ *
+ *   반도체   SOX가 나스닥보다 국내 반도체를 더 끕니다(0.42 대 0.36). 둘이 갈리면
+ *            힘이 죽습니다 [[us-to-kr-semis]].
+ *   AI 인프라 방아쇠는 미국 **전력주**지 NVDA가 아닙니다 [[us-ai-infra-to-kr]].
+ *   광통신    같은 측정에서 **국내로 안 옮겨붙었습니다.** 그래도 적는 것은 시황이고,
+ *            안 옮겨붙는다는 사실도 읽을 값이기 때문입니다.
+ *
+ * 티커는 고정입니다. 매일 상위 몇 개를 뽑으면 그날그날 다른 종목이 올라와 어제와
+ * 비교가 안 됩니다. 같은 자리에 같은 이름이 있어야 "어제보다 식었나"가 보입니다.
+ */
+const usGroups = [
+  { label: "메모리", tickers: [["MU", "마이크론"], ["SNDK", "샌디스크"], ["WDC", "웨스턴디지털"]] },
+  { label: "반도체 장비", tickers: [["AMAT", "어플라이드"], ["KLAC", "KLA"], ["LRCX", "램리서치"], ["ASML", "ASML"]] },
+  { label: "AI 인프라·전력", tickers: [["VST", "비스트라"], ["CEG", "콘스텔레이션"], ["GEV", "GE버노바"], ["BE", "블룸에너지"]] },
+  { label: "광통신", tickers: [["GLW", "코닝"], ["COHR", "코히런트"], ["LITE", "루멘텀"]] },
+  { label: "대형", tickers: [["NVDA", "엔비디아"], ["AVGO", "브로드컴"], ["TSM", "TSMC"], ["TSLA", "테슬라"]] }
+];
+
+async function usGroupLines(config) {
+  const wanted = usGroups.flatMap((group) => group.tickers.map(([ticker]) => ticker));
+  const { rows } = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol, change_rate::float8 AS rate
+      FROM market_price_samples
+     WHERE market = 'US' AND symbol = ANY($1) AND change_rate IS NOT NULL
+       AND observed_at > now() - interval '20 hours'
+     ORDER BY symbol, observed_at DESC`, [wanted]);
+  const byTicker = new Map(rows.map((row) => [row.symbol, Number(row.rate)]));
+  const lines = [];
+
+  for (const group of usGroups) {
+    const parts = group.tickers
+      .filter(([ticker]) => byTicker.has(ticker))
+      .map(([ticker, name]) => `${name} ${pct(byTicker.get(ticker))}`);
+
+    if (parts.length) lines.push(`  ${group.label} · ${parts.join(" · ")}`);
+  }
+
+  return lines;
+}
+
 /* 밤사이 미국. 우리가 이미 1분마다 찍는 값이라 새로 받아올 것이 없습니다. */
 async function macroLines(config) {
   const { rows } = await query(config, `
@@ -80,7 +125,7 @@ async function yesterdayLines(config, day) {
            count(*) FILTER (WHERE close < prev) AS down,
            round(avg((close / prev - 1) * 100)::numeric, 2)::float8 AS avg_move,
            count(*) FILTER (WHERE close / prev >= 1.295) AS locked
-      FROM b WHERE session_date = (SELECT d FROM last) AND prev > 0`);
+      FROM b WHERE session_date = (SELECT d FROM last) AND prev > 0`, [day]);
   const row = rows[0];
 
   if (!row?.day) return { lines: [], day: null };
@@ -125,6 +170,46 @@ async function premarketLines(config, day) {
   if (movers.length === 0) return [`  아직 조용합니다 (표본 ${rows.length}종목)`];
 
   return movers.map((row) => `  ${pct(row.rate)} ${row.name} ${eok(row.turnover)}${row.theme && row.theme !== "미분류" ? ` · ${row.theme}` : ""}`);
+}
+
+/*
+ * 밤사이 미국에서 나온 재료.
+ *
+ * 미국 칸에 지수 숫자만 있으면 "어제 미국이 올랐다/내렸다"로 끝납니다. 국내장에
+ * 옮겨붙는 것은 지수가 아니라 사건입니다 -- 2026-09-30 새벽 록히드 $297M·$724M,
+ * DroneShield $500M, HII 항모 수주가 줄줄이 나왔고, 같은 아침 국내 뉴스에도
+ * 1.9조 KF-21 미사일 수주전이 있었습니다. 둘을 같이 보면 오늘 방산이 왜 움직이는지
+ * 읽히지만, 따로 보면 우연으로 보입니다.
+ *
+ * **금액이나 승인이 있는 것만** 고릅니다. 미국 기사는 하루 천 건이 들어오고
+ * 그중 대부분이 내부자 매수·부동산·행사 안내입니다. 달러 금액이 적힌 수주와
+ * FDA·승인류만 남기면 2026-09-30 새벽에는 열 건 중 넷이 남았습니다.
+ */
+async function usOvernightNews(config) {
+  const { rows } = await query(config, `
+    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline
+      FROM market_news_items
+     WHERE region = 'US' AND published_at > now() - interval '14 hours'
+       -- \y가 단어 경계입니다. 포스트그레스에서 \b는 백스페이스라 아무것도 안 걸립니다.
+       AND (headline ~* '\$[0-9][0-9.,]*\s*(million|billion|[MB]\y)'
+            OR headline ~* '(FDA|EMA)\s+(approval|approves|clearance|cleared)'
+            OR headline ~* '(awarded|secures|wins)\s+.*(contract|order|deal)')
+     ORDER BY published_at DESC LIMIT 12`);
+  const seen = new Set();
+  const lines = [];
+
+  for (const row of rows) {
+    const key = row.headline.replace(/\s/g, "").slice(0, 18).toLowerCase();
+
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    lines.push(`  ${row.at} ${row.headline.slice(0, 56)}`);
+
+    if (lines.length >= 4) break;
+  }
+
+  return lines;
 }
 
 /* 마감 뒤에 나온 재료성 기사. 복기 기사는 뺍니다 -- 오른 것을 다시 쓴 글입니다. */
@@ -177,6 +262,22 @@ export async function notifyMarketBrief(config, { minute, url } = {}) {
     if (macro.length) {
       lines.push("미국 밤사이");
       for (const line of macro) lines.push(`  ${line}`);
+
+      const groups = await usGroupLines(config);
+
+      if (groups.length) {
+        lines.push("");
+        for (const line of groups) lines.push(line);
+      }
+
+      const usNews = await usOvernightNews(config);
+
+      if (usNews.length) {
+        lines.push("");
+        lines.push("  밤사이 재료");
+        for (const line of usNews) lines.push(`  ${line}`);
+      }
+
       lines.push("");
     }
 
