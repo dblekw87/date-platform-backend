@@ -26,6 +26,7 @@ import { notifyLimitUps, recordLimitUps } from "./providers/limit-up-alert.mjs";
 import { notifyPreMarketSurges } from "./providers/premarket-surge-alert.mjs";
 import { notifySangttaWatch } from "./providers/sangtta-watch.mjs";
 import { notifyKrListings } from "./providers/kr-listing-alert.mjs";
+import { notifyMarketBrief } from "./providers/market-brief-alert.mjs";
 import { notifyNewDelistNotices } from "./providers/us-delist-notice-alert.mjs";
 import { notifyMorningFeedback } from "./providers/morning-feedback.mjs";
 import { notifyWeekendBrief } from "./providers/weekend-brief.mjs";
@@ -1735,6 +1736,10 @@ export function startMarketCollector(config) {
     // 아침 06:20~07:00 한 번. 어제 일봉·유니버스 종가를 KIS 공식 값으로 되받습니다.
     // 07:00 채점이 그 종가를 쓰므로 그 전에 끝나게 창을 앞에 둡니다.
     startMorningCatchUp(config, seoulMinute(new Date()).minute);
+    // 아침 08:00 한 번. 밤사이 미국·어제 국내장·프리마켓·재료를 한 통으로
+    // (2026-09-30 사용자 요청). 07:00 복기, 07:10 주말, 07:30 상장 뒤가 비어 있습니다.
+    notifyMarketBrief(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: market brief failed", error instanceof Error ? error.message : error));
     // 아침 07:00 한 번. 어제 들어간 것과 그저께 판단의 채점. 창과 하루 잠금은 provider가 봅니다.
     notifyMorningFeedback(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: morning feedback failed", error instanceof Error ? error.message : error));
