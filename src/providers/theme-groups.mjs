@@ -152,7 +152,7 @@ export async function loadThemeStocks(config, sessionDate, { window = "regular" 
   const result = await query(config, `
     SELECT DISTINCT ON (symbol) symbol,
            coalesce(nullif(name, symbol), symbol) AS name,
-           theme, change_rate, turnover, volume, market_cap
+           theme, change_rate, turnover, volume, market_cap, observed_at
       FROM market_price_samples
      WHERE session_date = $1 AND market = 'KR'
        AND source LIKE $2
@@ -162,19 +162,41 @@ export async function loadThemeStocks(config, sessionDate, { window = "regular" 
      ORDER BY symbol, observed_at DESC
   `, [sessionDate, bounds.source, bounds.from, bounds.to]);
 
-  return result.rows.map((row) => ({
-    changeRateValue: Number(row.change_rate),
-    id: `${window}-${row.symbol}`,
-    market: "KR",
-    marketCapValue: row.market_cap === null ? undefined : Number(row.market_cap),
-    marketLabel: window === "after" ? "NXT" : "KRX",
-    name: row.name,
-    symbol: row.symbol,
-    theme: row.theme,
-    turnoverValue: row.turnover === null ? 0 : Number(row.turnover),
-    venue: window === "after" ? "NXT" : "KRX",
-    volumeValue: row.volume === null ? undefined : Number(row.volume)
-  }));
+  return result.rows.map((row) => {
+    const venue = window === "after" ? "NXT" : "KRX";
+    const changeRateValue = Number(row.change_rate);
+    const turnoverValue = row.turnover === null ? 0 : Number(row.turnover);
+    const turnover = formatTradingAmount(turnoverValue, "KRW");
+    const volume = row.volume === null ? null : Number(row.volume);
+
+    // 숫자만 돌려주면 화면은 그 숫자를 못 씁니다. leaderChangeRate는 burst와
+    // intraday 문장에서 퍼센트를 뽑아 읽으므로, 둘이 없으면 테마 카드의 멤버가
+    // 전부 "확인"으로 찍히고 거래대금 칸은 통째로 빕니다 -- 2026-09-30 정규장
+    // 강세 테마 1위 철강 중소형 10종목이 그렇게 나갔습니다. 바로 아래
+    // loadKrSessionUniverse가 이미 같은 문장들을 만들고 있으니 모양을 맞춥니다.
+    return {
+      burst: volume === null
+        ? "장중 표본 없음"
+        : `당일 거래량 ${volume.toLocaleString("ko-KR")}주`,
+      caution: "뉴스·공시 원문과 장중 거래대금 유지 여부 확인",
+      changeRateValue,
+      id: `${window}-${row.symbol}`,
+      intraday: `${venue} 체결 · ${changeRateValue > 0 ? "+" : ""}${changeRateValue.toFixed(2)}%`,
+      market: "KR",
+      marketCapValue: row.market_cap === null ? undefined : Number(row.market_cap),
+      marketLabel: venue,
+      name: row.name,
+      reason: `${row.theme} · 당일 거래대금 ${turnover} · ${venue}`,
+      source: "kis",
+      symbol: row.symbol,
+      theme: row.theme,
+      timestamp: new Date(row.observed_at).toISOString(),
+      turnover,
+      turnoverValue,
+      venue,
+      volumeValue: volume === null ? undefined : volume
+    };
+  });
 }
 
 /**
