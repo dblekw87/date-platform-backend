@@ -192,7 +192,7 @@ async function premarketLines(config, day) {
  */
 async function usOvernightNews(config) {
   const { rows } = await query(config, `
-    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline
+    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline, original_url
       FROM market_news_items
      WHERE region = 'US' AND published_at > now() - interval '14 hours'
        -- \y가 단어 경계입니다. 포스트그레스에서 \b는 백스페이스라 아무것도 안 걸립니다.
@@ -210,11 +210,31 @@ async function usOvernightNews(config) {
 
     seen.add(key);
     lines.push(`  ${row.at} ${row.headline.slice(0, 56)}`);
+    const link = cleanUrl(row.original_url);
 
-    if (lines.length >= 4) break;
+    if (link) lines.push(`     ${link}`);
+
+    if (seen.size >= 4) break;
   }
 
   return lines;
+}
+
+/* 추적 파라미터는 뗍니다 -- utm_ 셋이 붙으면 URL 하나가 두 줄을 먹습니다. */
+function cleanUrl(value) {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+
+    for (const key of [...url.searchParams.keys()]) {
+      if (key.startsWith("utm_") || key === "ref") url.searchParams.delete(key);
+    }
+
+    return url.toString();
+  } catch {
+    return value;
+  }
 }
 
 /*
@@ -237,7 +257,7 @@ async function usOvernightNews(config) {
  */
 async function overnightPolicyNews(config) {
   const { rows } = await query(config, `
-    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline
+    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline, original_url
       FROM market_news_items
      WHERE region = 'KR' AND published_at > now() - interval '17 hours'
        AND headline ~ '관세|반덤핑|쿼터|보조금|세액공제|인허가|규제 완화|법안|한미|대미 ?투자|수출 ?통제|국가전략|정부[^ ]{0,4} ?(지원|발표|추진)'
@@ -253,11 +273,14 @@ async function overnightPolicyNews(config) {
 
     seen.add(key);
     lines.push(`  ${row.at} ${row.headline.slice(0, 56)}`);
+    const link = cleanUrl(row.original_url);
 
-    if (lines.length >= 4) break;
+    if (link) lines.push(`     ${link}`);
+
+    if (seen.size >= 4) break;
   }
 
-  return lines;
+  return { keys: seen, lines };
 }
 
 /*
@@ -311,9 +334,9 @@ async function premarketThemes(config, day) {
 }
 
 /* 마감 뒤에 나온 재료성 기사. 복기 기사는 뺍니다 -- 오른 것을 다시 쓴 글입니다. */
-async function overnightNews(config) {
+async function overnightNews(config, alreadyShown = new Set()) {
   const { rows } = await query(config, `
-    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline
+    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline, original_url
       FROM market_news_items
      WHERE region = 'KR' AND published_at > now() - interval '17 hours'
        AND (headline LIKE '%수주%' OR headline LIKE '%공급계약%' OR headline LIKE '%승인%'
@@ -324,13 +347,17 @@ async function overnightNews(config) {
   const lines = [];
 
   for (const row of rows) {
-    /* 같은 기사를 여러 매체가 쓰면 제목이 거의 같습니다. 앞 20자로 한 번만 씁니다. */
-    const key = row.headline.replace(/\s/g, "").slice(0, 20);
+    /* 같은 기사를 여러 매체가 쓰면 제목이 거의 같습니다. 앞 16자로 한 번만 씁니다. */
+    const key = row.headline.replace(/\s/g, "").slice(0, 16);
 
-    if (seen.has(key)) continue;
+    /* 정책 칸이 이미 쓴 기사. 울산 인허가가 두 칸에 나란히 찍혔습니다. */
+    if (seen.has(key) || alreadyShown.has(key)) continue;
 
     seen.add(key);
     lines.push(`  ${row.at} ${row.headline.slice(0, 58)}`);
+    const link = cleanUrl(row.original_url);
+
+    if (link) lines.push(`     ${link}`);
   }
 
   return lines;
@@ -407,13 +434,14 @@ export async function notifyMarketBrief(config, { minute, url } = {}) {
 
     const policy = await overnightPolicyNews(config);
 
-    if (policy.length) {
+    if (policy.lines.length) {
       lines.push("밤사이 정책·국가 재료");
-      for (const line of policy) lines.push(line);
+      for (const line of policy.lines) lines.push(line);
       lines.push("");
     }
 
-    const news = await overnightNews(config);
+    /* 정책 칸이 이미 쓴 기사는 넘기고 받습니다 -- 울산 인허가가 두 칸에 찍혔습니다. */
+    const news = await overnightNews(config, policy.keys);
 
     if (news.length) {
       lines.push("마감 뒤 재료 (종목)");
@@ -425,8 +453,8 @@ export async function notifyMarketBrief(config, { minute, url } = {}) {
 
     if (!await notify(config, { text: lines.join("\n"), url })) return 0;
 
-    await markAlertSent(config, "market_brief", day, "done", { note: `매크로 ${macro.length}줄 · 정책 ${policy.length}건 · 종목 ${news.length}건` });
-    console.log(`알림: 아침 시황 · 매크로 ${macro.length}줄 · 정책 ${policy.length}건 · 종목 ${news.length}건`);
+    await markAlertSent(config, "market_brief", day, "done", { note: `매크로 ${macro.length}줄 · 정책 ${policy.keys.size}건 · 종목 ${Math.round(news.length / 2)}건` });
+    console.log(`알림: 아침 시황 · 매크로 ${macro.length}줄 · 정책 ${policy.keys.size}건 · 종목 ${Math.round(news.length / 2)}건`);
 
     return 1;
   } catch (error) {
