@@ -33,6 +33,8 @@ const windows = {
 };
 
 const minimumMembers = 2;
+/* 상한가 판정. 29.0은 30% 제한폭에 호가 단위로 붙은 자리까지 담습니다. */
+const limitUpFloor = 29.0;
 const maximumThemes = 12;
 const maximumCandidates = 8;
 
@@ -195,6 +197,69 @@ export async function loadThemeStocks(config, sessionDate, { window = "regular" 
       turnoverValue,
       venue,
       volumeValue: volume === null ? undefined : volume
+    };
+  });
+}
+
+/**
+ * 정규장에서 상한가로 마감한 종목이 저녁에 어떻게 됐나.
+ *
+ * 강세 테마 저녁 패널은 NXT 애프터마켓 책에서 체결된 종목만 보여줍니다. 그런데
+ * 상한가로 잠긴 종목은 파는 사람이 없어 저녁에 체결이 안 나고, 그래서 순위에도
+ * 안 들고 표본도 없습니다 -- 2026-09-30 정규장 상한가 4종목(빅웨이브로보틱스·
+ * KBI동양철관·동일스틸럭스·윈팩)이 저녁 화면에서 통째로 사라졌습니다. 그날
+ * 가장 궁금한 종목들이 정확히 빠진 것입니다.
+ *
+ * 이것들을 저녁 테마 목록에 그냥 끼워 넣으면 안 됩니다. 그 패널의 숫자는 저녁
+ * 숫자인데 정규장 +29.9%가 거기 섞이면 저녁에 오른 것처럼 읽힙니다. 그래서
+ * 목록이 아니라 **따로 한 줄**로 내보내고, 저녁에 거래가 있었는지 없었는지를
+ * 그대로 말합니다.
+ *
+ * `after`가 null인 것은 "버텼다"가 아니라 **"저녁 책에서 체결이 없었다"**입니다.
+ * 둘은 다릅니다 -- 파는 사람이 없어 안 풀린 것일 수도, 애초에 아무도 안 건드린
+ * 것일 수도 있습니다. 화면에도 그렇게 적어야 합니다.
+ */
+export async function loadLimitUpEvening(config, sessionDate) {
+  if (!config.databaseUrl) return [];
+
+  const result = await query(config, `
+    WITH regular AS (
+      SELECT DISTINCT ON (symbol) symbol,
+             coalesce(nullif(name, symbol), symbol) AS name,
+             change_rate, turnover, theme
+        FROM market_price_samples
+       WHERE market = 'KR' AND session_date = $1::date AND source LIKE 'kis:krx%'
+         AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN time '09:00' AND time '15:40'
+         AND change_rate IS NOT NULL
+       ORDER BY symbol, observed_at DESC
+    ),
+    evening AS (
+      SELECT DISTINCT ON (symbol) symbol, change_rate
+        FROM market_price_samples
+       WHERE session_date = $1::date AND source = 'kis:nxt:after' AND change_rate IS NOT NULL
+       ORDER BY symbol, observed_at DESC
+    )
+    SELECT r.symbol, r.name, r.theme, r.change_rate, r.turnover, e.change_rate AS evening_rate
+      FROM regular r
+      LEFT JOIN evening e ON e.symbol = r.symbol
+     WHERE r.change_rate >= $2
+     ORDER BY r.turnover DESC NULLS LAST
+  `, [sessionDate, limitUpFloor]);
+
+  return result.rows.map((row) => {
+    const regular = Number(row.change_rate);
+    const evening = row.evening_rate === null ? null : Number(row.evening_rate);
+
+    return {
+      after: evening,
+      /* 저녁에 얼마나 풀렸나. 체결이 없으면 null이지 0이 아닙니다. */
+      gap: evening === null ? null : Number((evening - regular).toFixed(2)),
+      name: row.name,
+      regular,
+      symbol: row.symbol,
+      theme: row.theme,
+      traded: evening !== null,
+      turnover: formatTradingAmount(row.turnover === null ? 0 : Number(row.turnover), "KRW")
     };
   });
 }

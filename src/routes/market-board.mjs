@@ -17,7 +17,7 @@ import { attachPairCandidates, buildPairBoard } from "../providers/pairing.mjs";
 import { attachKrUniverseTags, attachLeaderNewsTags, attachUsUniverseTags, loadLeaderNewsHeadlines, loadNewsHeadlines } from "../providers/news.mjs";
 import { loadMarketData } from "../providers/market.mjs";
 import { loadSecDisclosures } from "../providers/sec.mjs";
-import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
+import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadLimitUpEvening, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
@@ -100,6 +100,7 @@ function baseMarketBoardData(providerStatuses) {
     krCloseBetCandidates: [],
     krLimitPairs: [],
     krHaltedStocks: [],
+    krLimitUpEvening: [],
     krSessionThemeStocks: { after: [], regular: [] },
     smallCapScanner: []
   };
@@ -137,6 +138,7 @@ function mergeMarketBoardData(base, payload) {
     krCloseBetCandidates: payload.krCloseBetCandidates ?? base.krCloseBetCandidates,
     krLimitPairs: payload.krLimitPairs ?? base.krLimitPairs,
     krHaltedStocks: payload.krHaltedStocks ?? base.krHaltedStocks,
+    krLimitUpEvening: payload.krLimitUpEvening ?? base.krLimitUpEvening,
     krSessionThemeStocks: payload.krSessionThemeStocks ?? base.krSessionThemeStocks,
     smallCapScanner: payload.smallCapScanner ?? base.smallCapScanner,
     usSurgeCandidates: payload.usSurgeCandidates ?? base.usSurgeCandidates,
@@ -961,6 +963,12 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // book is open, so after 15:40 the panel headed 국내 강세 테마 was quietly
     // describing the NXT evening and the regular session had no panel at all.
     // Both come out of the record so each is true to the hours it names.
+    // 저녁 패널이 구조적으로 못 보여주는 것 -- 잠긴 채 끝난 종목.
+    krLimitUpEvening: await (async () => {
+      const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
+
+      return loadLimitUpEvening(config, day).catch(() => []);
+    })(),
     krSessionThemeStocks: await (async () => {
       const day = await latestKrSessionDate(config, sessionDate("KR")).catch(() => sessionDate("KR"));
 
