@@ -25,8 +25,13 @@ import { sessionDate } from "./market-session.mjs";
  *               같이 적습니다 -- 돈이 몰린 장인지 고르게 오른 장인지가 갈립니다.
  */
 
-const alertMinute = 8 * 60;
-const stopMinute = 8 * 60 + 20;
+/*
+ * 08:20입니다. 08:00이었는데, 그 순간은 NXT 프리마켓이 막 열린 참이라 프리마켓
+ * 칸이 늘 비었습니다 -- 사용자는 08:00 도착해서 08:30에 처음 봅니다. 읽는 시각이
+ * 같다면 20분 더 기다려 실제 체결이 담긴 쪽이 낫습니다.
+ */
+const alertMinute = 8 * 60 + 20;
+const stopMinute = 8 * 60 + 40;
 /* 어제 상위를 셀 때의 거래대금 바닥. 이보다 얇으면 호가 몇 개로 만들어진 등락이라
    "어제 무엇이 갔나"를 왜곡합니다. */
 const minTurnover = 3e10;
@@ -212,6 +217,99 @@ async function usOvernightNews(config) {
   return lines;
 }
 
+/*
+ * 밤사이 나온 정책·국가 단위 재료.
+ *
+ * 기존 재료 칸은 **종목 단위 사건만** 봤습니다 -- 수주·공급계약·승인·허가·체결·인수.
+ * 그래서 2026-10-01 새벽 05:52 "트럼프, 알래스카 LNG 투자 공식 발표"와 08:06
+ * "한미 2000억불 대미투자 팩트시트"가 한 줄도 안 들어갔는데, 그날 아침 프리마켓에서
+ * 대한제강이 상한가, 동국제강 +20%, 세아제강 +12%로 제강·강관이 통째로 올랐습니다.
+ * 섹터를 통째로 움직이는 재료가 정확히 안 보이던 것입니다.
+ *
+ * 연결은 짓지 않습니다. "알래스카 LNG니까 강관"은 사람이 하는 판단이고 기계가
+ * 하면 틀립니다([[story-links-deferred]], [[leading-theme-detection]]). 여기서는
+ * 기사를 그대로 올리고, 바로 아래 프리마켓에서 실제로 오르는 테마를 나란히 둡니다.
+ * 둘을 잇는 것은 읽는 사람 몫입니다.
+ *
+ * 한미약품·한미사이언스는 '한미'에 걸려 들어옵니다. 회사 이름이라 뺍니다.
+ * 증권사 의견도 뺍니다 -- "LG CNS, 금융 규제 완화에 매수 의견-다올"이 '규제 완화'로
+ * 걸렸는데, 정책이 아니라 그 정책을 두고 쓴 남의 판단입니다.
+ */
+async function overnightPolicyNews(config) {
+  const { rows } = await query(config, `
+    SELECT to_char(published_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at, headline
+      FROM market_news_items
+     WHERE region = 'KR' AND published_at > now() - interval '17 hours'
+       AND headline ~ '관세|반덤핑|쿼터|보조금|세액공제|인허가|규제 완화|법안|한미|대미 ?투자|수출 ?통제|국가전략|정부[^ ]{0,4} ?(지원|발표|추진)'
+       AND headline !~ '특징주|급등|급락|강세|약세|마감|증시|코스피|코스닥|개장|리뷰|전망|칼럼|사설|기고|인터뷰|일지|한미약품|한미사이언스|한미글로벌|매수 의견|투자의견|목표가|목표주가|커버리지|리포트'
+     ORDER BY published_at DESC LIMIT 12`);
+  const seen = new Set();
+  const lines = [];
+
+  for (const row of rows) {
+    const key = row.headline.replace(/\s/g, "").slice(0, 16);
+
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    lines.push(`  ${row.at} ${row.headline.slice(0, 56)}`);
+
+    if (lines.length >= 4) break;
+  }
+
+  return lines;
+}
+
+/*
+ * 프리마켓에서 실제로 돈이 붙는 테마.
+ *
+ * 종목 여섯 줄만 보면 그것들이 한 덩어리인지 제각각인지 모릅니다. 2026-10-01
+ * 아침은 대한제강·동국제강·고려제강·한국철강이 나란히 올랐고 그건 여섯 줄이
+ * 아니라 **한 줄짜리 사건**이었습니다.
+ *
+ * 중앙값이 양수인 테마만 씁니다. 거래대금만 보면 크게 빠진 섹터가 1위로 올라오는
+ * 일이 생깁니다 -- 2026년 9월 주도섹터 상위 3칸의 19%가 중앙값 음수였습니다.
+ */
+async function premarketThemes(config, day) {
+  const { rows } = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol, theme, change_rate::float8 AS rate, turnover::float8 AS turnover
+      FROM market_price_samples
+     WHERE market = 'KR' AND session_date = $1::date AND source LIKE 'kis:nxt%'
+       AND theme IS NOT NULL AND theme NOT IN ('미분류', 'ETF') AND change_rate IS NOT NULL
+     ORDER BY symbol, observed_at DESC`, [day]);
+  const byTheme = new Map();
+
+  for (const row of rows) {
+    if (Number(row.rate) <= 0) continue;
+    if (!byTheme.has(row.theme)) byTheme.set(row.theme, []);
+    byTheme.get(row.theme).push(row);
+  }
+
+  const groups = [];
+
+  for (const [theme, members] of byTheme) {
+    if (members.length < 2) continue;
+
+    const moves = members.map((m) => Number(m.rate)).sort((a, b) => a - b);
+    const median = moves[Math.floor(moves.length / 2)];
+
+    if (!(median > 0)) continue;
+
+    groups.push({
+      median,
+      money: members.reduce((sum, m) => sum + Number(m.turnover ?? 0), 0),
+      names: members.sort((a, b) => b.rate - a.rate).slice(0, 3).map((m) => m.symbol),
+      size: members.length,
+      theme
+    });
+  }
+
+  return groups
+    .sort((left, right) => right.money - left.money)
+    .slice(0, 3)
+    .map((g) => `  ${g.theme} ${g.size}종목 · 중앙 ${pct(g.median)} · ${eok(g.money)}`);
+}
+
 /* 마감 뒤에 나온 재료성 기사. 복기 기사는 뺍니다 -- 오른 것을 다시 쓴 글입니다. */
 async function overnightNews(config) {
   const { rows } = await query(config, `
@@ -295,14 +393,30 @@ export async function notifyMarketBrief(config, { minute, url } = {}) {
       lines.push("");
     }
 
-    lines.push("프리마켓 (개장 직후)");
+    lines.push("프리마켓");
     for (const line of await premarketLines(config, day)) lines.push(line);
+
+    const themes = await premarketThemes(config, day);
+
+    if (themes.length) {
+      lines.push("  — 돈이 붙은 테마");
+      for (const line of themes) lines.push(line);
+    }
+
     lines.push("");
+
+    const policy = await overnightPolicyNews(config);
+
+    if (policy.length) {
+      lines.push("밤사이 정책·국가 재료");
+      for (const line of policy) lines.push(line);
+      lines.push("");
+    }
 
     const news = await overnightNews(config);
 
     if (news.length) {
-      lines.push("마감 뒤 재료");
+      lines.push("마감 뒤 재료 (종목)");
       for (const line of news) lines.push(line);
       lines.push("");
     }
@@ -311,8 +425,8 @@ export async function notifyMarketBrief(config, { minute, url } = {}) {
 
     if (!await notify(config, { text: lines.join("\n"), url })) return 0;
 
-    await markAlertSent(config, "market_brief", day, "done", { note: `매크로 ${macro.length}줄 · 재료 ${news.length}건` });
-    console.log(`알림: 아침 시황 · 매크로 ${macro.length}줄 · 재료 ${news.length}건`);
+    await markAlertSent(config, "market_brief", day, "done", { note: `매크로 ${macro.length}줄 · 정책 ${policy.length}건 · 종목 ${news.length}건` });
+    console.log(`알림: 아침 시황 · 매크로 ${macro.length}줄 · 정책 ${policy.length}건 · 종목 ${news.length}건`);
 
     return 1;
   } catch (error) {
