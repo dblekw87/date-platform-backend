@@ -119,9 +119,35 @@ for (const item of evidence.news) {
 
 for (const caution of evidence.cautions ?? []) console.log(`      주의 ${caution}`);
 
+/* 걸러낸 악재. 이유로는 안 쓰지만 사람은 봐야 합니다. */
+for (const bad of evidence.warnings ?? []) {
+  console.log(`      ⚠ 악재 ${bad.at} ${bad.headline.slice(0, 60)}`);
+}
+
+/*
+ * 기사가 움직임보다 먼저였는지. 2026-10-01 LK삼양이 "주가 훨훨" 기사로 재료
+ * 판정을 받았는데 그 시각 이미 +22%였습니다. 뒤에 온 기사는 그 움직임의 이유가
+ * 아닙니다 -- 실측으로 다음 날 초과가 선행 -0.31%p, 후행 -0.97%p로 갈리고
+ * 시가총액 세 칸 모두에서 같은 방향입니다.
+ */
+const timing = evidence.timing;
+
+if (timing) {
+  console.log("");
+  console.log(timing.lead
+    ? `  ⏱ 선행 · 기사 ${timing.newsAt} → +10% 도달 ${timing.moveAt}`
+    : `  ⏱ 후행 · +10% 도달 ${timing.moveAt} → 기사 ${timing.newsAt}  (오른 뒤에 쓴 글입니다)`);
+}
+
 console.log("");
-console.log(real
-  ? "  들어갈 근거는 있습니다. 자리와 손절선은 따로 정하세요."
-  : "  관망입니다. grouped·theme는 기본(34%)보다 낮아 재료로 치지 않습니다.");
+
+if (!real) {
+  console.log("  관망입니다. grouped·theme는 기본(34%)보다 낮아 재료로 치지 않습니다.");
+} else if (timing && !timing.lead) {
+  console.log("  근거가 움직임보다 늦게 왔습니다. 재료라기보다 복기일 수 있습니다.");
+  console.log("  실측: 후행 152건 초과 -0.97%p(상회 35%) · 선행 74건 -0.31%p(상회 38%).");
+} else {
+  console.log("  들어갈 근거는 있습니다. 자리와 손절선은 따로 정하세요.");
+}
 console.log("");
 process.exit(0);

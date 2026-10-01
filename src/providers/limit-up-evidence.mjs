@@ -1,4 +1,4 @@
-import { classifyDisclosure, classifyHeadline, isReasonHeadline } from "./overnight-classify.mjs";
+import { classifyDisclosure, classifyHeadline, isMachineHeadline, isReasonHeadline, mentionsBadNews } from "./overnight-classify.mjs";
 import { query } from "../db/client.mjs";
 import { loadListedRelatives } from "./ownership-links.mjs";
 
@@ -41,6 +41,45 @@ const peerMinimumMove = 5;
  * 다음 장 후보의 규칙은 그대로입니다 -- 거기서는 복기가 반증된 조건입니다.
  */
 const isReason = isReasonHeadline;
+
+/*
+ * 기사가 움직임보다 **먼저** 왔는가.
+ *
+ * 2026-10-01 LK삼양이 13:10 "주가 '훨훨'" 기사로 `direct` 판정을 받았는데 그
+ * 시각 주가는 이미 +22%였습니다. 오른 것을 보고 쓴 글이 오른 이유로 올라온
+ * 것입니다. `isReasonHeadline`은 복기로 **확정된** 것만 거르고 나머지를 전부
+ * 통과시키는데, "훨훨"은 복기 낱말 목록에 없습니다.
+ *
+ * 낱말을 더 넣는 길은 다섯 번 실패했습니다([[news-to-theme-verdict]]). 대신
+ * 인과를 씁니다 -- 기사가 움직임보다 늦었으면 그 움직임의 이유가 아닙니다.
+ *
+ * 실측(30거래일, 10%↑·거래대금 100억↑ 급등주의 다음 날 초과):
+ *
+ *   선행   74건 · -0.31%p · 중앙 -0.62 · 상회 38%
+ *   후행  152건 · -0.97%p · 중앙 -2.18 · 상회 35%
+ *
+ * 그리고 이것은 규모가 하던 일이 아닙니다. 시가총액 세 칸 모두에서 선행이
+ * 위였습니다(대형 -0.11 vs -0.75, 중형 -0.89 vs -1.88, 소형 -0.22 vs -0.62).
+ *
+ * **판정을 뒤집지는 않습니다.** 선행도 평균은 마이너스라 "선행이면 사라"가
+ * 아니고, 후행 152건을 통째로 버리면 윈팩처럼 진짜 재료가 하루 늦게 걸린 것도
+ * 같이 날아갑니다. 사실만 돌려주고 읽는 쪽이 쓰게 합니다.
+ */
+async function leadTiming(config, symbol, day, reasons) {
+  if (!reasons.length) return { timing: null };
+
+  const { rows } = await query(config, `
+    SELECT to_char(min(observed_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+      FROM market_price_samples
+     WHERE symbol = $1 AND session_date = $2::date AND change_rate >= 10`, [symbol, day]);
+  const moveAt = rows[0]?.at ?? null;
+
+  if (!moveAt) return { timing: null };
+
+  const earliest = reasons[0].at;
+
+  return { timing: { lead: String(earliest) <= moveAt, moveAt, newsAt: earliest } };
+}
 
 export async function loadLimitUpEvidence(config, lock, day) {
   const from = new Date(`${day}T08:00:00+09:00`);
@@ -95,8 +134,21 @@ export async function loadLimitUpEvidence(config, lock, day) {
      ORDER BY left(regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'), 30), published_at`,
     [lock.symbol, from, to]);
 
+  /*
+   * 걸러낸 악재는 버리지 않습니다. 이유로는 못 쓰지만 사람은 봐야 하는 사실이고,
+   * 판정이 theme·none으로 떨어졌다고 경고까지 사라지면 안 됩니다 -- 코스모로보틱스가
+   * 정확히 그랬습니다.
+   */
+  const warnings = direct.rows.filter((row) => mentionsBadNews(row.headline)).slice(0, 2);
+
+  /*
+   * 회사가 나쁜 일에 걸린 기사는 이유가 될 수 없습니다.
+   *
+   * 2026-10-01 코스모로보틱스가 "35억 허위매출 의혹 수사"로 `direct` 판정을
+   * 받았습니다. 사람이 읽으면 1초에 아는 것을 규칙이 못 걸렀습니다.
+   */
   const reasons = direct.rows
-    .filter((row) => isReason(row.headline))
+    .filter((row) => isReason(row.headline) && !mentionsBadNews(row.headline) && !isMachineHeadline(row.headline))
     .sort((a, b) => a.published_at - b.published_at);
 
   if (filings.length || reasons.length) {
@@ -104,7 +156,9 @@ export async function loadLimitUpEvidence(config, lock, day) {
       kind: filings.length ? "filing" : "direct",
       filings: filings.slice(0, 2),
       cautions: cautions.slice(0, 2),
-      news: reasons.slice(0, 2)
+      news: reasons.slice(0, 2),
+      warnings,
+      ...(await leadTiming(config, lock.symbol, day, reasons))
     };
   }
 
@@ -164,7 +218,7 @@ export async function loadLimitUpEvidence(config, lock, day) {
     for (const row of family) if (!onePerRelative.has(row.peer)) onePerRelative.set(row.peer, row);
 
     if (onePerRelative.size) {
-      return { kind: "family", filings: [], cautions, news: [...onePerRelative.values()].slice(0, 2) };
+      return { kind: "family", filings: [], cautions, news: [...onePerRelative.values()].slice(0, 2), warnings };
     }
   }
 
@@ -173,10 +227,10 @@ export async function loadLimitUpEvidence(config, lock, day) {
     .sort((a, b) => a.published_at - b.published_at);
 
   if (grouped.length) {
-    return { kind: "grouped", filings: [], cautions, news: grouped.slice(0, 2) };
+    return { kind: "grouped", filings: [], cautions, news: grouped.slice(0, 2), warnings };
   }
 
-  if (!lock.theme || lock.theme === "미분류") return { kind: "none", filings: [], cautions, news: [] };
+  if (!lock.theme || lock.theme === "미분류") return { kind: "none", filings: [], cautions, news: [], warnings };
 
   const peers = await query(config, `
     WITH peers AS (
@@ -226,5 +280,5 @@ export async function loadLimitUpEvidence(config, lock, day) {
     if (!perPeer.has(row.peer)) perPeer.set(row.peer, row);
   }
 
-  return { kind: perPeer.size ? "theme" : "none", filings: [], cautions, news: [...perPeer.values()].slice(0, 2) };
+  return { kind: perPeer.size ? "theme" : "none", filings: [], cautions, news: [...perPeer.values()].slice(0, 2), warnings };
 }
