@@ -1,0 +1,157 @@
+import { query } from "../db/client.mjs";
+
+/**
+ * 상한가로 닫힌 종목을 하룻밤 들고 갈 자리인가.
+ *
+ * 사용자는 장중매매를 접고 종가배팅·상따만 합니다("회사를 다니다보니 장중매매는
+ * 좀 힘들것 같아", 2026-10-02). 그러면 남는 판단은 하나입니다 -- **잠긴 것을
+ * 들고 가서 다음 날 아침에 파는가.** 그 자리를 가르는 것을 쟀습니다.
+ *
+ * 두 가지가 나왔습니다. 둘 다 그날 종가에 사서 익일 시가에 판 초과수익(시장 평균
+ * 갭 제거) 기준이고, 종가가 상한가인 것만 봅니다 -- 장중에 찍었다 풀린 것은
+ * 다른 사건입니다.
+ *
+ *   **언제 잠겼나.** 일찍 잠기면 하루 종일 못 산 수요가 쌓입니다.
+ *     09시대 111건 +10.74%p(92%) · 10시대 18건 +8.91%p(94%)
+ *     11~12시 20건 +8.93%p(90%) · 13시 이후 43건 +6.06%p(77%)
+ *
+ *   **줄이 얼마나 길었나.** 마감 매수 1호가 잔량 ÷ 그날 거래량. 절대 수량으로는
+ *   비교가 안 됩니다 -- 52만 주가 어디선 하루 거래량의 10%이고 어디선 두 배입니다.
+ *     하위 1/3 18건 +1.32%p(50%) · 중간 18건 +7.01%p(83%) · 상위 20건 +14.45%p(90%)
+ *
+ * **그런데 둘은 대등하지 않습니다.** 2026-10-02 티엠씨가 10:23에 잠겼는데 잔량비는
+ * 6%(하위 1/3)로 신호가 반대였습니다. 58건을 2×2로 쪼개니 순서가 보였습니다.
+ *
+ *     오전 잠김 · 줄 두터움   34건 +11.30%p 상회 88%
+ *     오전 잠김 · 줄 얇음      7건  +5.56%p      86%
+ *     오후 잠김 · 줄 두터움    4건 +15.73%p      75%
+ *     오후 잠김 · 줄 얇음     12건  +0.24%p      42%   ← 유일하게 나쁜 칸
+ *
+ * 잔량비 하위 1/3이 나빴던 것은 **오후 잠김이 거기 몰려 있었기 때문**입니다.
+ * 일찍 잠기면 줄이 얇아도 멀쩡합니다. 그래서 잠긴 시각을 먼저 보고, 잔량은
+ * 오후에 잠긴 것을 가릴 때만 씁니다. 잔량비만 보고 "하위 1/3이니 나쁘다"고
+ * 읽으면 틀립니다 -- 티엠씨를 그렇게 읽어 +1.32%p/50%라고 말했고, 해당 칸은
+ * 실제로 +5.56%p/86%였습니다.
+ *
+ * **마감 전 잔량의 방향은 신호가 아닙니다.** 줄어듦 16건 +7.29%p(63%),
+ * 비슷 31건 +9.65%p(90%), 늘어남 11건 +6.33%p(55%)로 단조롭지 않습니다.
+ * '잔량 이탈' 계열은 이것으로 두 번째 탈락이니 다시 제안하지 않습니다 --
+ * 잔량은 **크기**만 값이 있고 **변화**는 없습니다.
+ *
+ * 표본은 호가 수집이 2026-09-15부터라 13거래일 58건입니다. 칸당 4~34건이라
+ * **가름으로만 쓰고 문턱으로 박지 않습니다.** 숫자는 사람이 보게 같이 돌려줍니다.
+ */
+const limitUpFloor = 29.0;
+/* 잔량비 하위 1/3과 중간의 경계. 58건 기준 7%입니다. */
+const thinRatio = 0.07;
+/* 오전/오후를 가르는 시각. 09·10시대가 92~94%로 붙어 있어 11시에서 끊습니다. */
+const morningHour = 11;
+
+const cells = {
+  "오전·두터움": { note: "34건 초과 +11.30%p · 상회 88%", rank: "좋음" },
+  "오전·얇음": { note: "7건 초과 +5.56%p · 상회 86%", rank: "좋음" },
+  "오후·두터움": { note: "4건 초과 +15.73%p · 상회 75% (표본 4건, 숫자는 믿지 말 것)", rank: "보통" },
+  "오후·얇음": { note: "12건 초과 +0.24%p · 상회 42%", rank: "나쁨" }
+};
+
+/**
+ * 그날 상한가로 닫힌 종목의 잠긴 시각과 마감 잔량비. 닫힘이 아니면 null입니다.
+ *
+ * 잠긴 시각은 순위권 표본에서만 보이므로 **실제보다 늦게 보일 수 있습니다** --
+ * 윈팩은 09:02:54 첫 표본이 이미 +29.98%였습니다. 그 오차는 이른 것을 늦은 칸으로
+ * 밀기만 하므로, 오전으로 분류된 것은 확실히 오전입니다.
+ */
+export async function readLockQueue(config, symbol, day) {
+  if (!config.databaseUrl) return null;
+
+  const { rows: bars } = await query(config, `
+    WITH b AS (
+      SELECT session_date, close, volume,
+             lag(close) OVER (ORDER BY session_date) AS prev
+        FROM kr_daily_bars WHERE symbol = $1
+    )
+    SELECT volume::float8 AS volume, ((close / prev - 1) * 100)::float8 AS rate
+      FROM b WHERE session_date = $2::date AND prev > 0`, [symbol, day]);
+  const volume = Number(bars[0]?.volume ?? 0);
+  const rate = Number(bars[0]?.rate ?? 0);
+
+  /*
+   * 일봉이 아직 없는 그날 저녁에도 답해야 합니다. 분 표본의 마지막 등락률과
+   * 누적 거래량으로 대신합니다 -- 15:30 뒤의 KRX 표본은 종가에 멈춰 있습니다.
+   */
+  if (!(volume > 0)) {
+    const { rows: live } = await query(config, `
+      SELECT DISTINCT ON (symbol) change_rate::float8 AS rate, volume::float8 AS volume
+        FROM market_price_samples
+       WHERE market = 'KR' AND symbol = $1 AND session_date = $2::date
+         AND source LIKE 'kis:krx%'
+       ORDER BY symbol, observed_at DESC`, [symbol, day]);
+
+    if (!live.length || Number(live[0].rate) < limitUpFloor || !(Number(live[0].volume) > 0)) return null;
+
+    return describe(config, symbol, day, Number(live[0].volume));
+  }
+
+  if (rate < limitUpFloor) return null;
+
+  return describe(config, symbol, day, volume);
+}
+
+/** 잠긴 시각과 잔량을 읽어 칸을 정합니다. */
+async function describe(config, symbol, day, volume) {
+  const { rows: book } = await query(config, `
+    SELECT bid_qty1::float8 AS queue,
+           to_char(observed_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+      FROM kr_order_book_samples
+     WHERE symbol = $1 AND session_date = $2::date
+     ORDER BY observed_at DESC LIMIT 1`, [symbol, day]);
+  const { rows: hit } = await query(config, `
+    SELECT to_char(min(observed_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+      FROM market_price_samples
+     WHERE symbol = $1 AND session_date = $2::date AND change_rate >= $3`,
+    [symbol, day, limitUpFloor]);
+  const lockedAt = hit[0]?.at ?? null;
+  const queue = Number(book[0]?.queue ?? 0);
+
+  /*
+   * 둘 중 하나가 없으면 칸을 말하지 않습니다. 호가는 문턱(24%) 위에 있던 종목만
+   * 찍히고 잠긴 시각은 순위권 표본에만 있어, 둘 다 비는 경우가 있습니다. 모르는
+   * 것을 '보통'으로 적으면 모른다는 사실이 사라집니다.
+   */
+  if (!lockedAt && !(queue > 0)) return null;
+
+  const morning = lockedAt ? Number(lockedAt.slice(0, 2)) < morningHour : null;
+  const ratio = queue > 0 ? queue / volume : null;
+  const thin = ratio === null ? null : ratio <= thinRatio;
+  const key = morning === null || thin === null ? null : `${morning ? "오전" : "오후"}·${thin ? "얇음" : "두터움"}`;
+
+  return {
+    cell: key,
+    lockedAt,
+    morning,
+    note: key ? cells[key].note : null,
+    observedAt: book[0]?.at ?? null,
+    queue: queue > 0 ? queue : null,
+    rank: key ? cells[key].rank : null,
+    ratio,
+    thin,
+    volume
+  };
+}
+
+/** 사람이 읽을 한 줄. 모르는 부분은 비워 둡니다. */
+export function describeLockQueue(read) {
+  if (!read) return null;
+
+  const parts = [];
+
+  if (read.lockedAt) parts.push(`${read.lockedAt} 잠김(${read.morning ? "오전" : "오후"})`);
+  if (read.ratio !== null) {
+    parts.push(`마감 잔량 ${read.queue.toLocaleString("ko-KR")}주 · 거래량 대비 ${(100 * read.ratio).toFixed(0)}%`
+      + `(${read.thin ? "얇음" : "두터움"})`);
+  }
+
+  if (!read.cell) return parts.join(" · ") || null;
+
+  return `${parts.join(" · ")}\n    → ${read.cell} ${read.rank} · 실측 ${read.note}`;
+}

@@ -1,3 +1,4 @@
+import { describeLockQueue, readLockQueue } from "../src/providers/limit-up-queue.mjs";
 import { loadLimitUpEvidence } from "../src/providers/limit-up-evidence.mjs";
 import { query } from "../src/db/client.mjs";
 import { readConfig } from "../src/config.mjs";
@@ -139,6 +140,18 @@ for (const bad of evidence.warnings ?? []) {
  * 아닙니다 -- 실측으로 다음 날 초과가 선행 -0.31%p, 후행 -0.97%p로 갈리고
  * 시가총액 세 칸 모두에서 같은 방향입니다.
  */
+/*
+ * 상한가로 달혔으면 하룰밤 들고 갈 자리인지도 같이 봅니다. 사용자가 장중매매를
+ * 접었으므로 남는 판단이 그것밖에 없습니다. 잔량보다 잔긴 시각이 앞이고, 잔량은
+ * 오후에 잔긴 것을 가를 때만 섭니다 -- 실제 수치는 limit-up-queue.mjs에 있습니다.
+ */
+const lockQueue = describeLockQueue(await readLockQueue(config, stock.symbol, day));
+
+if (lockQueue) {
+  console.log("");
+  console.log(`  잠김 ${lockQueue}`);
+}
+
 const timing = evidence.timing;
 
 if (timing) {
