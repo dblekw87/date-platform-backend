@@ -119,6 +119,15 @@ for (const item of evidence.news) {
 
 for (const caution of evidence.cautions ?? []) console.log(`      주의 ${caution}`);
 
+/*
+ * 재료로 안 치는 정정 공시. 실측상 값이 없지만(원본의 1/9) 오늘 펨트론처럼
+ * 그 안에 답이 있을 때가 있어, 판단은 사람이 하게 보여만 줍니다.
+ */
+for (const item of evidence.amended ?? []) {
+  console.log(`      참고 ${item.at} ${(item.report_name ?? "").slice(0, 60)}`);
+  if (item.original_url) console.log(`           ${item.original_url}`);
+}
+
 /* 걸러낸 악재. 이유로는 안 쓰지만 사람은 봐야 합니다. */
 for (const bad of evidence.warnings ?? []) {
   console.log(`      ⚠ 악재 ${bad.at} ${bad.headline.slice(0, 60)}`);

@@ -106,8 +106,31 @@ export async function loadLimitUpEvidence(config, lock, day) {
    */
   const filings = [];
   const cautions = [];
+  /*
+   * [기재정정]은 재료로 치지 않되 **눈에서 지우지도 않습니다.**
+   *
+   * 2026-10-02 아침 펨트론이 +16.49% 갭으로 열렸고 근거는 전날 15:45의
+   * `[기재정정]단일판매ㆍ공급계약체결`이었습니다 -- 대만 KTG 52.7억, 매출 대비
+   * 9.25%, 납기가 당겨진 건입니다. 그런데 `classifyDisclosure`가 [기재정정]을
+   * 통째로 버려서 조회해도 공시가 아예 안 보였고, 사람이 DART를 손으로 뒤져야
+   * 했습니다.
+   *
+   * **되살리지는 않습니다.** 실측에서 정정은 원본의 1/9입니다
+   * (원본 248건 +1.37%p · 정정 382건 +0.16%p, 상회는 둘 다 47%). 정정 사유를
+   * 읽어 '실질'만 추려도 95건 -0.05%p로 사실상 0이라, 사유로 가르는 것도
+   * 안 됩니다. 펨트론은 95건 중 하나가 크게 터진 것이지 규칙이 아닙니다.
+   *
+   * 그래서 판정에는 안 넣고 목록으로만 돌려줍니다. 알림 수는 그대로이고,
+   * 사람이 물어봤을 때 답이 바로 나옵니다.
+   */
+  const amended = [];
 
   for (const row of filed.rows) {
+    if (String(row.report_name ?? "").startsWith("[기재정정]")) {
+      amended.push(row);
+      continue;
+    }
+
     const kind = classifyDisclosure(row.report_name, row.title);
 
     if (kind === "good") filings.push(row);
@@ -156,6 +179,7 @@ export async function loadLimitUpEvidence(config, lock, day) {
       kind: filings.length ? "filing" : "direct",
       filings: filings.slice(0, 2),
       cautions: cautions.slice(0, 2),
+      amended: amended.slice(0, 2),
       news: reasons.slice(0, 2),
       warnings,
       ...(await leadTiming(config, lock.symbol, day, reasons))
@@ -218,7 +242,7 @@ export async function loadLimitUpEvidence(config, lock, day) {
     for (const row of family) if (!onePerRelative.has(row.peer)) onePerRelative.set(row.peer, row);
 
     if (onePerRelative.size) {
-      return { kind: "family", filings: [], cautions, news: [...onePerRelative.values()].slice(0, 2), warnings };
+      return { kind: "family", filings: [], cautions, news: [...onePerRelative.values()].slice(0, 2), warnings, amended: amended.slice(0, 2) };
     }
   }
 
@@ -227,10 +251,10 @@ export async function loadLimitUpEvidence(config, lock, day) {
     .sort((a, b) => a.published_at - b.published_at);
 
   if (grouped.length) {
-    return { kind: "grouped", filings: [], cautions, news: grouped.slice(0, 2), warnings };
+    return { kind: "grouped", filings: [], cautions, news: grouped.slice(0, 2), warnings, amended: amended.slice(0, 2) };
   }
 
-  if (!lock.theme || lock.theme === "미분류") return { kind: "none", filings: [], cautions, news: [], warnings };
+  if (!lock.theme || lock.theme === "미분류") return { kind: "none", filings: [], cautions, news: [], warnings, amended: amended.slice(0, 2) };
 
   const peers = await query(config, `
     WITH peers AS (
@@ -280,5 +304,5 @@ export async function loadLimitUpEvidence(config, lock, day) {
     if (!perPeer.has(row.peer)) perPeer.set(row.peer, row);
   }
 
-  return { kind: perPeer.size ? "theme" : "none", filings: [], cautions, news: [...perPeer.values()].slice(0, 2), warnings };
+  return { kind: perPeer.size ? "theme" : "none", filings: [], cautions, news: [...perPeer.values()].slice(0, 2), warnings, amended: amended.slice(0, 2) };
 }
