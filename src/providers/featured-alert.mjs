@@ -1,3 +1,4 @@
+import { heldMark, heldWindow } from "./alert-digest.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -90,6 +91,28 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
 
     const quotes = await latestRates(config, day, fresh.map((row) => row.symbol));
     const names = await namesOf(config, day, fresh.map((row) => row.symbol));
+
+    /*
+     * 장중에는 보내지 않고 **적어만 둡니다.** 사용자가 장중매매를 접었으므로 이
+     * 시각에 받아도 할 수 있는 것이 없고, 특징주는 하루 52통으로 가장 많이 옵니다.
+     * 15:20 창에서 alert-digest.mjs가 한 통으로 묶어 보냅니다.
+     *
+     * 기록을 남기는 것이 중요합니다 -- 발송을 끊으면 표본이 끊깁니다. 그리고
+     * 적어 두지 않으면 다음 틱에 같은 기사가 또 후보가 됩니다.
+     */
+    if (heldWindow()) {
+      for (const row of fresh) {
+        const name = names.get(row.symbol) ?? row.symbol;
+
+        await markAlertSent(config, "featured", day, row.key,
+          { note: `${heldMark}${row.at} ${name} ${row.headline.slice(0, 44)}` });
+      }
+
+      console.log(`알림: 특징주 ${fresh.length}건 보류 (15:20 요약으로)`);
+
+      return 0;
+    }
+
     const text = message(fresh, quotes, names, url);
 
     if (!await notify(config, { text })) return 0;

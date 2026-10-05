@@ -1,3 +1,4 @@
+import { heldMark, heldWindow } from "./alert-digest.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadLimitPairCandidates } from "./limit-pair.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -159,6 +160,24 @@ export async function notifyNewPairs(config, { day, url } = {}) {
 
       // 같은 짝이 같은 등급 이하로 다시 오면 조용히 넘깁니다.
       if ((sent.get(key) ?? 0) >= rank) continue;
+
+      /*
+       * 장중에는 보내지 않고 **적어만 둡니다.** 짝꿍의 장중 구간은 실측에서
+       * 대조군과 구별되지 않고([[pair-intraday-verdict]], 149건) 등급은 종가매수
+       * 전용인데, 하루 38통이 전부 장중에 옵니다. 15:20 창에서 한 통으로 묶습니다.
+       *
+       * 아래 "보낸 것만 기록합니다"는 **실패**를 성공으로 적지 않으려는 규칙입니다.
+       * 보류는 실패가 아니라 일부러 안 보낸 것이므로 적는 것이 맞습니다 -- 적지
+       * 않으면 다음 틱에 같은 짝이 또 후보가 되고, 요약도 무엇을 묶었는지 모릅니다.
+       */
+      if (heldWindow()) {
+        await markAlertSent(config, "limit_pair", day, key, { rank,
+          note: `${heldMark}${pair.leader.name} → ${pair.second.name} [${pair.tier}]` });
+        sent.set(key, rank);
+        posted += 1;
+        console.log(`알림: 짝꿍 보류 · ${pair.leader.name} → ${pair.second.name} [${pair.tier}]`);
+        continue;
+      }
 
       const shared = await sharedThemes(config, pair).catch(() => []);
       const ok = await notify(config, { text: line(pair, shared), url });

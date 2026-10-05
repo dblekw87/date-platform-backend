@@ -19,6 +19,7 @@ import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { notifyOffHighCloseBet } from "./providers/offhigh-close-bet.mjs";
+import { notifyIntradayDigest } from "./providers/alert-digest.mjs";
 import { featuredAlertDue, notifyFeatured } from "./providers/featured-alert.mjs";
 import { notifyLeaders } from "./providers/leader-alert.mjs";
 import { loadAfterHoursWatchlist } from "./providers/after-hours-watch.mjs";
@@ -1550,6 +1551,10 @@ export function startMarketCollector(config) {
         // 그중 재료가 있는 것만 보냅니다. 412세션 실측 초과 +1.37%p.
         notifyOffHighCloseBet(config, { minute, url: config.publicSiteUrl })
           .catch((error) => console.warn("collector: offhigh close bet alert failed", error instanceof Error ? error.message : error));
+        // 같은 창. 장중에 묶어 둔 특징주·짝꿍을 한 통으로 보냅니다. 사용자가
+        // 장중매매를 접어서 그 시각 알림은 쓸모가 없고, 묶인 게 없으면 안 보냅니다.
+        notifyIntradayDigest(config, { day: sessionDate("KR"), minute, url: config.publicSiteUrl })
+          .catch((error) => console.warn("collector: intraday digest failed", error instanceof Error ? error.message : error));
         startLimitUpAlert(config);
         // 표본을 쓰기 **전에** 부릅니다. 라벨이 이 표본에 찍히므로, 뒤에 두면 갱신이
         // 언제나 한 틱 늦게 반영됩니다.
