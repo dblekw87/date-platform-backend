@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { query } from "../db/client.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
+import { describeHold, readLockQueue, readOvernightMaterial } from "./limit-up-queue.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { sessionDate } from "./market-session.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -87,6 +88,8 @@ export async function buildMorningFeedback(config, { day = sessionDate("KR") } =
     loadReminders(day)
   ]);
 
+  await attachHoldReads(config, entered);
+
   return message({ cumulative, day, entered, graded, reminders });
 }
 
@@ -149,6 +152,39 @@ async function loadEntered(config) {
       JOIN latest l ON o.session_date = l.day
       LEFT JOIN kr_daily_universe u ON u.symbol = o.symbol AND u.session_date = o.session_date
      ORDER BY o.kind, o.symbol`);
+
+  return rows;
+}
+
+/*
+ * 들고 있는 것이 어떤 자리인지 같이 읽습니다.
+ *
+ * 이 토막은 "오늘 09:05~09:10에 팔 것"이고, limit-up-queue.mjs의 측정은 전부
+ * 같은 트레이드(종가 매수 -> 익일 시가 매도)로 잰 값입니다. 자리를 고르는 데는
+ * 쓰지 않습니다 -- 거기는 장중 수익으로 잰 다른 규칙이 있습니다.
+ *
+ * 한 줄이라도 못 읽으면 조용히 비웁니다. 들고 있는 종목이 상한가가 아니거나
+ * 많이 오른 것이 아니면 읽을 것이 없는 게 정상입니다.
+ */
+async function attachHoldReads(config, rows) {
+  for (const row of rows) {
+    /*
+     * 사람이 실제로 들고 있는 것에만 붙입니다.
+     *
+     * 처음에 모든 kind에 붙였더니 종가배팅 신호 목록(하루 수십 종목)까지 두 줄씩
+     * 늘어나 메시지가 비대해졌습니다. 이 토막에서 사람이 오늘 팔 것은
+     * user_close_bet뿐이고, 나머지는 채점용 기록입니다.
+     */
+    if (row.kind !== "user_close_bet") continue;
+    if (isIntraday(row)) continue;
+
+    const [lockQueue, material] = await Promise.all([
+      readLockQueue(config, row.symbol, row.day).catch(() => null),
+      readOvernightMaterial(config, row.symbol, row.day).catch(() => null)
+    ]);
+
+    row.hold = describeHold(lockQueue, material);
+  }
 
   return rows;
 }
@@ -304,6 +340,7 @@ function enteredSection(allRows) {
     for (const row of group) {
       lines.push(`  ${row.name ?? row.symbol} ${row.symbol}  ${signed(row.change_rate ?? row.entry_rate)}% · ${won(row.close)}`);
       if ((kind === "user_close_bet" || kind === "offhigh_close_bet") && row.theme) lines.push(`  └ ${row.theme}`);
+      for (const line of row.hold ?? []) lines.push(`  └ ${line}`);
     }
   }
 

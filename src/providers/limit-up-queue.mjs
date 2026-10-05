@@ -1,3 +1,4 @@
+import { isMachineHeadline, isReasonHeadline, mentionsBadNews } from "./overnight-classify.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -154,4 +155,96 @@ export function describeLockQueue(read) {
   if (!read.cell) return parts.join(" · ") || null;
 
   return `${parts.join(" · ")}\n    → ${read.cell} ${read.rank} · 실측 ${read.note}`;
+}
+
+/**
+ * 밤에 **새** 재료가 붙었는가.
+ *
+ * 2026-10-05 18:15 "속도 내는 티엠씨 美 사업…텍사스 공장 이미 풀가동"이 떴는데
+ * 주말 브리핑이 안 잡았습니다. `blockReason`이 "복기 기사 8건"으로 막았습니다 --
+ * 금요일 상한가 복기 기사가 여덟 건 붙어 있었기 때문입니다.
+ *
+ * **그 규칙은 그대로 둡니다.** 근거가 되는 측정(복기 -0.69%p·승률 40%)은
+ * **장중(시가→종가)** 초과수익이고, 그 트레이드에서는 맞는 말입니다.
+ *
+ * 그런데 사용자가 하는 트레이드는 그것이 아닙니다 -- 종가에 사서 **다음 날
+ * 시가에** 팝니다. 그 자리로 다시 재니 방향이 반대입니다. 그날 +10% 이상 오른
+ * 종목 안에서, 밤 창(15:40~익일 08:00)에 isReasonHeadline을 통과하고 기계기사·
+ * 악재가 아닌 기사가 붙었는가로 갈랐습니다.
+ *
+ *   상한가 · 재료 있음     78건  익일 시가 초과 +10.33%p  중앙 8.11  상회 86%
+ *   상한가 · 없음         184건                 +7.65%p  중앙 5.46  상회 84%
+ *   10~29% · 재료 있음   180건                 +1.55%p  중앙 0.71  상회 61%
+ *   10~29% · 없음       1065건                 +0.74%p  중앙 0.41  상회 57%
+ *
+ * 상한가를 통제해도 +2.68%p 남고 중앙값도 8.11 대 5.46으로 같이 움직입니다
+ * (몇 건이 끌어올린 것이 아님). **단 상회율은 86% 대 84%로 거의 같습니다** --
+ * 더 자주 맞는 것이 아니라 크기가 달라집니다. 자리를 늘릴 근거는 아닙니다.
+ *
+ * 두 측정이 모순이 아닙니다. 갭은 개장 전에 생기고 장중에 녹습니다. 그래서 이것은
+ * **파는 쪽에만** 붙입니다(morning-feedback의 "오늘 09:05~09:10 청산" 토막).
+ * 사는 자리를 고르는 데 쓰면 서로 다른 트레이드의 숫자를 섞는 일이 됩니다.
+ */
+const loudRate = 10.0;
+
+const materialCells = {
+  "10~29%·없음": "1065건 +0.74%p · 상회 57%",
+  "10~29%·있음": "180건 +1.55%p · 상회 61%",
+  "상한가·없음": "184건 +7.65%p · 상회 84%",
+  "상한가·있음": "78건 +10.33%p · 상회 86%"
+};
+
+/**
+ * 그날 많이 오른 종목에 밤 새 재료가 붙었는지. 많이 오르지 않았으면 null입니다.
+ *
+ * 창의 끝은 **지금**입니다. 측정은 익일 08:00까지 봤지만 이 함수는 07:00에
+ * 불리므로, 그 사이에 올 기사는 아직 없습니다. 더 좁은 창이라 과장되지 않습니다.
+ */
+export async function readOvernightMaterial(config, symbol, day, now = new Date()) {
+  if (!config.databaseUrl) return null;
+
+  const { rows: bars } = await query(config, `
+    WITH b AS (
+      SELECT session_date, close,
+             lag(close) OVER (ORDER BY session_date) AS prev
+        FROM kr_daily_bars WHERE symbol = $1
+    )
+    SELECT ((close / prev - 1) * 100)::float8 AS rate
+      FROM b WHERE session_date = $2::date AND prev > 0`, [symbol, day]);
+  const rate = Number(bars[0]?.rate ?? 0);
+
+  if (!(rate >= loudRate)) return null;
+
+  const { rows: news } = await query(config, `
+    SELECT DISTINCT ON (left(regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'), 30))
+           to_char(published_at AT TIME ZONE 'Asia/Seoul', 'DD HH24:MI') AS at, headline, original_url
+      FROM market_news_items, LATERAL unnest(related_symbols) s
+     WHERE region = 'KR' AND s = $1
+       AND published_at >= ($2::date + time '15:40') AT TIME ZONE 'Asia/Seoul'
+       AND published_at < $3
+     ORDER BY left(regexp_replace(lower(headline), '[^가-힣a-z0-9]', '', 'g'), 30), published_at`,
+    [symbol, day, now]);
+  const fresh = news.filter((row) => isReasonHeadline(row.headline)
+    && !isMachineHeadline(row.headline) && !mentionsBadNews(row.headline));
+  const key = `${rate >= limitUpFloor ? "상한가" : "10~29%"}·${fresh.length ? "있음" : "없음"}`;
+
+  return { cell: key, fresh: fresh.slice(0, 2), limitUp: rate >= limitUpFloor, note: materialCells[key], rate };
+}
+
+/** 파는 쪽에 붙일 줄들. 아무것도 읽히지 않으면 빈 배열입니다. */
+export function describeHold(lockQueue, material) {
+  const lines = [];
+  const queue = describeLockQueue(lockQueue);
+
+  if (queue) for (const line of queue.split("\n")) lines.push(line.trim());
+
+  if (!material) return lines;
+
+  lines.push(material.fresh.length
+    ? `밤 새 재료 ${material.fresh.length}건 · ${material.cell} ${material.note}`
+    : `밤 새 재료 없음 · ${material.cell} ${material.note}`);
+
+  for (const row of material.fresh) lines.push(`· ${row.at} ${row.headline.slice(0, 52)}`);
+
+  return lines;
 }
