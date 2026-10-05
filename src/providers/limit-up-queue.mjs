@@ -49,9 +49,9 @@ const thinRatio = 0.07;
 const morningHour = 11;
 
 const cells = {
-  "오전·두터움": { note: "34건 초과 +11.30%p · 상회 88%", rank: "좋음" },
-  "오전·얇음": { note: "7건 초과 +5.56%p · 상회 86%", rank: "좋음" },
-  "오후·두터움": { note: "4건 초과 +15.73%p · 상회 75% (표본 4건, 숫자는 믿지 말 것)", rank: "보통" },
+  "오전·두터움": { note: "33건 초과 +9.82%p · 상회 88%", rank: "좋음" },
+  "오전·얇음": { note: "6건 초과 +6.45%p · 상회 83%", rank: "좋음" },
+  "오후·두터움": { note: "4건 초과 +15.12%p · 상회 75% (표본 4건, 숫자는 믿지 말 것)", rank: "보통" },
   "오후·얇음": { note: "12건 초과 +0.24%p · 상회 42%", rank: "나쁨" }
 };
 
@@ -111,8 +111,30 @@ async function describe(config, symbol, day, volume) {
       FROM market_price_samples
      WHERE symbol = $1 AND session_date = $2::date AND change_rate >= $3`,
     [symbol, day, limitUpFloor]);
+  /*
+   * 잔량이 상장주식수를 넘으면 그 잔량은 못 믿습니다.
+   *
+   * 앤씨앤 09-17·09-18이 그랬습니다 -- 마감 잔량 787만·938만 주인데 환산
+   * 상장주식수가 503만·501만이고, 그날 거래량은 5만 주(주식수의 1%)뿐입니다.
+   * 잔량비가 15657%·17647%로 나와 상위 1/3의 맨 위에 앉았습니다.
+   *
+   * 매수 주문은 주식을 들고 있지 않아도 낼 수 있으니 이론상 주식수를 넘을 수는
+   * 있습니다. 다만 거래가 1%만 되고 잔량이 전부를 넘는 모양은 실제 수요라기보다
+   * 수집 쪽 문제로 보입니다. 쟤서 확인했습니다 -- 그 둘을 빼도 사다리는
+   * 그대로입니다(하위 +1.32%p/50% · 중간 +7.01/83% · 상위 +13.61/90%). 그래서
+   * **판정만 비우고 숫자는 보여줍니다.** 사람이 보면 이상한 것을 알아봅니다.
+   *
+   * 국내엔 상장주식수 컬럼이 없어 `market_cap / 종가`로 환산합니다. 환산값이
+   * 없으면(시총·종가가 없는 날) 이 가드는 걸지 않습니다 -- 모르는 것을 틀렸다고
+   * 할 수는 없습니다.
+   */
+  const { rows: listed } = await query(config, `
+    SELECT (market_cap / nullif(close_price, 0))::float8 AS shares
+      FROM kr_daily_universe WHERE symbol = $1 AND session_date = $2::date`, [symbol, day]);
+  const shares = Number(listed[0]?.shares ?? 0);
   const lockedAt = hit[0]?.at ?? null;
   const queue = Number(book[0]?.queue ?? 0);
+  const overShares = shares > 0 && queue > shares;
 
   /*
    * 둘 중 하나가 없으면 칸을 말하지 않습니다. 호가는 문턱(24%) 위에 있던 종목만
@@ -123,7 +145,7 @@ async function describe(config, symbol, day, volume) {
 
   const morning = lockedAt ? Number(lockedAt.slice(0, 2)) < morningHour : null;
   const ratio = queue > 0 ? queue / volume : null;
-  const thin = ratio === null ? null : ratio <= thinRatio;
+  const thin = ratio === null || overShares ? null : ratio <= thinRatio;
   const key = morning === null || thin === null ? null : `${morning ? "오전" : "오후"}·${thin ? "얇음" : "두터움"}`;
 
   return {
@@ -132,9 +154,11 @@ async function describe(config, symbol, day, volume) {
     morning,
     note: key ? cells[key].note : null,
     observedAt: book[0]?.at ?? null,
+    overShares,
     queue: queue > 0 ? queue : null,
     rank: key ? cells[key].rank : null,
     ratio,
+    shares: shares > 0 ? shares : null,
     thin,
     volume
   };
@@ -149,7 +173,12 @@ export function describeLockQueue(read) {
   if (read.lockedAt) parts.push(`${read.lockedAt} 잠김(${read.morning ? "오전" : "오후"})`);
   if (read.ratio !== null) {
     parts.push(`마감 잔량 ${read.queue.toLocaleString("ko-KR")}주 · 거래량 대비 ${(100 * read.ratio).toFixed(0)}%`
-      + `(${read.thin ? "얇음" : "두터움"})`);
+      + (read.overShares ? "(못 믿음)" : `(${read.thin ? "얇음" : "두터움"})`));
+  }
+
+  /* 왜 칸이 없는지 적습니다. 비워 두면 "판정이 없다"와 "판정이 보통"이 섞입니다. */
+  if (read.overShares) {
+    return `${parts.join(" · ")}\n    → 잔량이 상장주식수(${Math.round(read.shares).toLocaleString("ko-KR")}주)를 넘어 잔량 판정은 비웁니다`;
   }
 
   if (!read.cell) return parts.join(" · ") || null;
