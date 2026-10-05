@@ -191,6 +191,22 @@ function Invoke-DailyAnalysis {
   when nothing is missing - backfill-news.mjs measures the gap itself and exits
   in a second if the newest article is under six hours old.
 
+  **분석보다 먼저 부릅니다 (2026-10-05).** 평소에는 순서가 보이지 않습니다 --
+  run-analysis.ps1이 할 일이 없으면 0~2초에 끝나고(09-22 ~ 10-03 로그 전부
+  backup 직후 1초 안에 news 줄이 찍혔습니다), 백필도 구멍이 없으면 바로 빠집니다.
+
+  사흘을 끄고 켠 날 그것이 드러났습니다. 2026-10-05 18:51에 백업이 끝났는데
+  19:05까지도 분석이 돌고 있었고, 그 뒤에 있는 백필은 시작조차 못 했습니다.
+  측정은 이미 "4 day(s)"로 나와 있었는데 메울 것을 못 메우고 기다린 셈입니다.
+
+  **하필 백필이 가장 필요한 날에만 늦어집니다** -- 분석이 오래 걸리는 이유가
+  바로 며칠치가 밀렸다는 것이고, 그 며칠은 뉴스도 밀린 며칠입니다. 일요일 밤에
+  켜면 07:10 주말 브리핑이 빈 뉴스로 나갈 수 있습니다.
+
+  뉴스는 시각에 걸리고(07:10 브리핑, 08:20 시황) 분석은 안 걸립니다. 분석은
+  하루 한 번 돌면 되고 몇 분 늦어도 읽는 사람이 없습니다. 백업은 그대로 맨
+  앞입니다 -- 86초이고, 백필 중에 기계가 죽어도 어제까지는 지켜야 합니다.
+
   Push-Location is load-bearing, the same way -WorkingDirectory is for the
   server below: config.mjs reads the .env through existsSync(".env"), so this
   resolves against whatever directory the caller happened to be in. Started
@@ -291,8 +307,8 @@ if (-not $lockHeld) {
 if (Test-Port -Port $backendPort) {
   Write-Line "backend already listening on :$backendPort - nothing to start"
   Invoke-DailyBackup
-  Invoke-DailyAnalysis
   Invoke-NewsBackfill
+  Invoke-DailyAnalysis
   exit 0
 }
 
@@ -350,8 +366,8 @@ Measure-NewsGap -NodePath $node
 if (Test-Port -Port $backendPort) {
   Write-Line "backend came up on :$backendPort while waiting - nothing to start"
   Invoke-DailyBackup
-  Invoke-DailyAnalysis
   Invoke-NewsBackfill
+  Invoke-DailyAnalysis
   exit 0
 }
 
@@ -390,8 +406,8 @@ if (Wait-Port -Port $backendPort -Seconds $ServerWaitSeconds -Label "backend") {
   # 5.1, which reads a BOM-less UTF-8 script as ANSI and mangles anything else.
   Write-Line "backend listening on :$backendPort - log $serverLog"
   Invoke-DailyBackup
-  Invoke-DailyAnalysis
   Invoke-NewsBackfill
+  Invoke-DailyAnalysis
   exit 0
 }
 
