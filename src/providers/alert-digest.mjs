@@ -126,5 +126,15 @@ export async function buildIntradayDigest(config, day) {
   lines.push("장중 구간은 실측에서 대조군과 구별되지 않습니다(짝꿍 149건).");
   lines.push("주도주도 하룻밤 +0.38%p뿐이고 D+2부터 마이너스입니다.");
 
+  /*
+   * 오른 테마와 그 재료. 2026-10-06에 보안·양자가 통째로 올랐는데 아침 브리핑이
+   * 못 띄웠습니다 -- 재료가 전날 공휴일 15:44에 터졌고 기사에 수혜 종목 이름이
+   * 없었습니다. 개장 전 탐지기는 두 번 반증됐으므로(theme-why.mjs 참고) 움직임이
+   * 테마를 고르게 하고 설명만 붙입니다.
+   */
+  const why = await buildThemeWhy(config, day).catch(() => []);
+
+  if (why.length) lines.push("", ...why);
+
   return { text: lines.join("\n"), total };
 }
