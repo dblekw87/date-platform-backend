@@ -81,12 +81,28 @@ async function movingThemes(config, day) {
      ORDER BY 3 DESC, 5 DESC`, [day, minSymbols, minTurnover, bigMove, minBig]);
 
   /*
-   * 가운데도 올랐어야 테마가 움직인 것입니다.
+   * **중앙값으로 자르지 않습니다.**
    *
-   * 넓이만 보면 '유전자 치료제/분석'이 걸렸습니다 -- 9종목 중 셋이 +10% 이상인데
-   * 중앙은 -0.5%p였습니다. 세 종목이 간 것이지 테마가 간 것이 아닙니다.
+   * 처음에 "가운데도 올랐어야 한다"고 `excess >= 0`을 걸었습니다. 장중(14:17) 데이터로
+   * 보면 '유전자 치료제/분석'이 9종목 중 셋만 올랐는데 걸려 있었고 그것을 빼려던
+   * 가드였습니다.
+   *
+   * 15:20 실제 실행 시각에 돌려 보니 **반대로 동작했습니다.** 그 시각에 유전자
+   * 치료제는 이미 조건에서 빠지고(종가 기준 10%↑가 셋 미만), 가드가 자른 것은
+   * 정작 그날의 테마였습니다:
+   *
+   *   보안주(정보)  28종목 · 10%↑ 4개 · 중앙 -0.0%p · 3,175억   <- 잘렸음
+   *   2차전지       35종목 · 10%↑ 3개 · 중앙 +1.2%p · 10,840억
+   *
+   * 라온시큐어가 상한가(+29.98%)이고 지니언스 +20.83%, 안랩 +15.58%인데 나머지가
+   * 시장 수준으로 식어서 중앙이 3.73%, 시장이 3.75%였습니다. 0.02%p 차이로 그날의
+   * 주인공이 사라집니다.
+   *
+   * 큰 테마는 멤버가 많아 꼬리가 시장 수준으로 눌리는 것이 정상이고, 그게 "테마가
+   * 안 움직였다"는 뜻은 아닙니다. 넓이(10%↑ 멤버 수)와 거래대금 문턱이 이미 그 일을
+   * 합니다. **다시 넣지 말 것.**
    */
-  return rows.filter((row) => Number(row.excess) >= 0);
+  return rows;
 }
 
 /** 그 테마에서 오늘 많이 오른 종목. 이름으로 테마를 설명하지 않고 종목으로 말합니다. */
@@ -189,7 +205,26 @@ export async function buildThemeWhy(config, day, now = new Date()) {
   const window = upcomingWindow(sessions.filter((session) => session < day), now);
   const lines = [`■ 오늘 오른 테마와 그 재료 (${window.previous} 15:40 이후 기사)`];
 
-  for (const theme of themes.slice(0, 3)) {
+  /*
+   * 같은 이야기가 두 칸을 먹지 않게 합니다.
+   *
+   * 2026-10-06에 '2차전지'와 '2차전지(소재/부품)'가 나란히 올랐고 붙은 기사까지
+   * 같았습니다("포스코퓨처엠·엘앤에프, LFP 전환 속도"). 괄호를 떼면 같은 이름이니
+   * 앞의 것만 두고 뒤는 넘깁니다. 칸이 셋뿐이라 하나를 낭비하면 다른 테마가 밀립니다.
+   */
+  const shown = new Set();
+  const bareOf = (name) => name.replace(/\([^)]*\)/g, "").trim();
+  const picked = themes.filter((theme) => {
+    const bare = bareOf(theme.theme);
+
+    if (shown.has(bare)) return false;
+
+    shown.add(bare);
+
+    return true;
+  });
+
+  for (const theme of picked.slice(0, 3)) {
     const movers = await themeMovers(config, day, theme.theme);
     const news = await themeNews(config, theme.theme, window);
     const head = movers
