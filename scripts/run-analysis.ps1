@@ -7,6 +7,7 @@
   있었던 것이 이 파일을 만든 이유입니다.
 
     run_persistence.py        틱 차분 상관으로 나온 쌍이 며칠에 걸쳐 반복되는가
+    pullback.py               눌림 숫자가 창이 길어질수록 어디로 가는가 + 축 발굴
     explore-news-groups.mjs   기사 키워드가 여러 날 반복되는 씨앗을 만드는가
 
   날짜로 잠급니다. 시간마다 부르는 start-collector가 하루 한 번만 실제로 돌립니다.
@@ -75,6 +76,21 @@ if (Test-Path $python) {
   $out = Join-Path $outDir "persistence-$stamp.txt"
   & $python (Join-Path $Root "analysis\run_persistence.py") 2>&1 | Out-File -FilePath $out -Encoding utf8
   Write-Line "persistence -> $out"
+
+  # 눌림 트랙. 사용자가 "데이터 수집하고 학습 부탁해 매일매일"이라 한 자리입니다.
+  #
+  # 판정이 아니라 기록입니다 -- 눌림은 319개 장에서 중앙 -1.57%p로 반증돼 있고,
+  # 이 실행이 보는 것은 **창이 길어질 때 숫자가 어디로 가는가**와 **모델이 내가
+  # 안 본 축을 집어내는가**뿐입니다. 창 사다리가 40장에서만 플러스고 60장부터
+  # 마이너스로 돌아서는 것이 지금의 답이라, 그 모양이 바뀌는지를 매일 봅니다.
+  #
+  # 사다리 계산이 전 구간을 훑으므로 persistence보다 오래 걸립니다(2~3분).
+  # 정시마다 부르는 start-collector 입장에서는 하루 한 번뿐이라 괜찮습니다.
+  $out = Join-Path $outDir "pullback-$stamp.txt"
+  $env:PYTHONPATH = Join-Path $Root "analysis"
+  & $python (Join-Path $Root "analysis\pullback.py") 2>&1 | Out-File -FilePath $out -Encoding utf8
+  $env:PYTHONPATH = $null
+  Write-Line "pullback -> $out"
 } else {
   # venv가 없으면 만들라고 적어만 둡니다. 여기서 pip install을 돌리면 아침에
   # 수집기가 네트워크를 기다리며 서 있게 됩니다.
