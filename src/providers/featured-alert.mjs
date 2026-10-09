@@ -1,4 +1,5 @@
 import { heldMark, heldWindow } from "./alert-digest.mjs";
+import { isKrMarketOpen } from "./kis.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -91,6 +92,36 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
 
     const quotes = await latestRates(config, day, fresh.map((row) => row.symbol));
     const names = await namesOf(config, day, fresh.map((row) => row.symbol));
+
+    /*
+     * 휴장일에는 적어만 둡니다. **heldWindow보다 먼저 봐야 합니다** -- heldWindow는
+     * 시계만 보므로 휴장일 10:00 기사도 보류로 들어가고, 그러면 15:20 요약이 그것을
+     * 한 통으로 내보냅니다. 그래서 묶음 표시(heldMark)가 아닌 다른 표시를 씁니다.
+     *
+     * 2026-10-09 한글날 18:35에 "특징주 더블유씨피 2차전지 나트륨이온 테마 상승세에
+     * 7.46%"가 나갔습니다. 그 7.46%는 **10/8 가격**입니다 -- 언론사가 휴장일에 올린
+     * 복기 기사라, 보고도 할 수 있는 것이 없고 오늘 장이 있었던 것처럼 읽힙니다.
+     *
+     * 재료 쪽(material-alert.mjs)은 **일부러 휴장일에도 보냅니다** -- 정책·사건은
+     * 다음 장 재료가 되고 월요일 진입을 미리 볼 수 있습니다. 여기만 막는 것은
+     * 특징주가 그 반대이기 때문입니다: 위에 적은 대로 복기는 승률 40%로 반증됐고,
+     * 장이 없는 날의 특징주 기사는 복기 말고는 있을 수가 없습니다.
+     *
+     * 기록은 남깁니다 -- 발송을 끊어도 표본은 끊지 않는다는 같은 이유이고, 적어
+     * 두지 않으면 다음 틱에 같은 기사가 또 후보가 됩니다.
+     */
+    if (!await isKrMarketOpen(config)) {
+      for (const row of fresh) {
+        const name = names.get(row.symbol) ?? row.symbol;
+
+        await markAlertSent(config, "featured", day, row.key,
+          { note: `휴장:${row.at} ${name} ${row.headline.slice(0, 44)}` });
+      }
+
+      console.log(`알림: 특징주 ${fresh.length}건 휴장이라 보내지 않음`);
+
+      return 0;
+    }
 
     /*
      * 장중에는 보내지 않고 **적어만 둡니다.** 사용자가 장중매매를 접었으므로 이
