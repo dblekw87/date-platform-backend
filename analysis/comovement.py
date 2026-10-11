@@ -33,6 +33,12 @@ MINIMUM_SYMBOLS = 30
 # 걷어낼 공통 방향의 수. 1개로는 부족했습니다 -- remove_common_factor 주석의 사다리
 # 참고. 손으로 고른 상수이고, 지금 데이터로는 이보다 잘 고를 방법이 없습니다.
 COMMON_FACTORS = 3
+# 지분으로 이어졌다고 볼 문턱과 거리. ownership-links.mjs와 같은 10%이고, 거리는 두
+# 단계까지입니다 -- HLB → HLB생명과학(16.98%) → HLB제약(16.2%)처럼 그룹 안에서
+# 손자회사로 이어지는 쌍이 한 단계로는 안 잡힙니다. 세 단계부터는 지주사 하나가
+# 수십 종목을 묶어 버려 "그룹"이 아무것도 가르지 못합니다.
+MINIMUM_STAKE_PCT = 10
+GROUP_HOPS = 2
 
 
 def load_day(session_date: str, market: str = "KR") -> pd.DataFrame:
@@ -188,6 +194,62 @@ def theme_membership() -> dict[str, set[str]]:
     return _MEMBERSHIP
 
 
+_GROUP: dict[str, set[str]] | None = None
+
+
+def group_links() -> dict[str, set[str]]:
+    """Every listed symbol within GROUP_HOPS of each other through ownership.
+
+    The theme dictionary groups by business, not by owner, so it can never hold
+    HLB and HLB제약 together: one is 면역항암제 and the other 제약업체, and the ten
+    listed HLB names share no theme at all. They move together on HLB's own news.
+    Counting such a pair as "the dictionary missed this" sends a learning run
+    after a relation that ownership already explains (2026-10-11, the third pair
+    to reach four days).
+
+    Names are matched the way ownership-links.mjs matches them, because
+    kr_ownership_edges records the investee by name only. Links are undirected:
+    the parent's news moves the child and the child's value moves the parent.
+    """
+    global _GROUP
+
+    if _GROUP is None:
+        frame = db.read(
+            """
+            WITH clean AS (
+              SELECT holder_symbol,
+                     trim(regexp_replace(split_part(investee_name, '(', 1), '[㈜㈔]|주식회사', '', 'g')) AS investee
+                FROM kr_ownership_edges WHERE stake_pct >= %s
+            )
+            SELECT DISTINCT c.holder_symbol AS holder, l.symbol AS investee
+              FROM clean c JOIN kr_listings l ON l.name = c.investee
+             WHERE l.symbol <> c.holder_symbol
+            """,
+            (MINIMUM_STAKE_PCT,),
+        )
+        neighbours: dict[str, set[str]] = {}
+
+        for holder, investee in zip(frame["holder"], frame["investee"]):
+            neighbours.setdefault(holder, set()).add(investee)
+            neighbours.setdefault(investee, set()).add(holder)
+
+        reach: dict[str, set[str]] = {}
+
+        for symbol in neighbours:
+            seen = {symbol}
+            frontier = {symbol}
+
+            for _ in range(GROUP_HOPS):
+                frontier = {step for node in frontier for step in neighbours.get(node, set())} - seen
+                seen |= frontier
+
+            reach[symbol] = seen - {symbol}
+
+        _GROUP = reach
+
+    return _GROUP
+
+
 def day_pairs(session_date: str, market: str = "KR") -> pd.DataFrame:
     frame = load_day(session_date, market)
 
@@ -196,6 +258,7 @@ def day_pairs(session_date: str, market: str = "KR") -> pd.DataFrame:
 
     liquid = liquid_symbols(frame)
     members = theme_membership()
+    group = group_links()
     returns = tick_returns(frame)
     shared = [symbol for symbol in returns.columns if symbol in liquid.index]
 
@@ -237,6 +300,8 @@ def day_pairs(session_date: str, market: str = "KR") -> pd.DataFrame:
             "same_theme": bool(liquid.loc[leader, "theme"] == liquid.loc[follower, "theme"]),
             # 같은 라벨인가가 아니라, 사전이 둘을 어디서든 함께 두는가입니다.
             "shared_theme": bool(members.get(leader, set()) & members.get(follower, set())),
+            # 지분으로 두 단계 안에 이어졌는가. 사전이 아니라 소유가 설명하는 쌍입니다.
+            "same_group": follower in group.get(leader, set()),
             "session_date": session_date,
         })
 
@@ -254,7 +319,7 @@ def persistence(market: str = "KR") -> tuple[pd.DataFrame, pd.DataFrame]:
 
     every = pd.concat(frames, ignore_index=True)
     repeated = (every
-                .groupby(["leader", "leader_name", "follower", "follower_name", "same_theme", "shared_theme"])
+                .groupby(["leader", "leader_name", "follower", "follower_name", "same_theme", "shared_theme", "same_group"])
                 .agg(days=("session_date", "nunique"),
                      mean_correlation=("correlation", "mean"))
                 .reset_index()

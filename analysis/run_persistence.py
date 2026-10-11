@@ -56,6 +56,9 @@ def main() -> None:
         if row["shared_theme"] and not row["same_theme"]:
             mark = "같은 테마(라벨만 다름)"
 
+        if not row["shared_theme"] and row["same_group"]:
+            mark = "같은 그룹(지분)"
+
         print(f"  {str(row['leader_name'])[:16]:<17} -> {str(row['follower_name'])[:16]:<17}"
               f" {row['days']}일  corr {row['mean_correlation']:.3f}  {mark}")
 
@@ -63,10 +66,16 @@ def main() -> None:
     # 사전이 이미 잡고 있고, 화면이 대표 라벨 하나만 고르는 문제입니다 -- 고칠 곳이
     # 서로 달라 같이 세면 안 됩니다. 로봇 아홉 종목이 그 예입니다: 라벨은 넷으로
     # 갈리지만 kr_theme_members에서는 전부 로봇(산업용/협동로봇 등)에 함께 있습니다.
-    missed = returning[~returning["shared_theme"]]
+    #
+    # 지분으로 이어진 쌍도 뺍니다(2026-10-11). HLB → HLB제약은 테마를 하나도 공유하지
+    # 않지만 HLB생명과학을 사이에 둔 손자회사입니다 -- 사전이 놓친 것이 아니라 사전이
+    # 다루지 않는 관계이고, 학습이 찾아야 할 것도 아닙니다.
+    missed = returning[~returning["shared_theme"] & ~returning["same_group"]]
+    grouped = returning[~returning["shared_theme"] & returning["same_group"]]
     relabelled = returning[returning["shared_theme"] & ~returning["same_theme"]]
 
-    print(f"\n  이 중 {len(missed)}쌍은 공유 테마가 하나도 없습니다 — 분류가 놓친 곳입니다.")
+    print(f"\n  이 중 {len(missed)}쌍은 공유 테마도 지분 관계도 없습니다 — 분류가 놓친 곳입니다.")
+    print(f"  {len(grouped)}쌍은 테마는 없지만 지분으로 두 단계 안에 이어집니다 — 그룹 동조입니다.")
     print(f"  {len(relabelled)}쌍은 사전에는 함께 있는데 화면 라벨만 갈립니다 — 대표 라벨 문제입니다.\n")
 
 
