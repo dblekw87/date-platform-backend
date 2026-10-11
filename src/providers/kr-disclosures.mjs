@@ -15,6 +15,10 @@ import { query } from "../db/client.mjs";
  * 시각을 못 받은 건은 처음 관측한 시각을 대신 적고 filed_at_source에 그렇다고
  * 남깁니다. 폴링 간격만큼 늦은 상한값이라 근사치로 쓸 수는 있지만, 근사치인 줄 모르고
  * 쓰면 위의 6분짜리 판단이 그대로 틀립니다.
+ *
+ * `date-only`는 과거 백필분 중 화면에서도 시각을 못 찾은 줄입니다(펀드·채권 발행
+ * 서류가 대부분). 날짜만 맞고 시각은 그날 23:59로 둡니다 -- 장 전 공시로 잘못
+ * 잡히지 않게 장 마감 뒤에 둔 것입니다. scripts/backfill-kr-filing-times.mjs 참고.
  */
 
 // 당일공시 화면은 탭마다 목록이 갈립니다. mainAll은 이름과 달리 전체가 아니라
@@ -162,7 +166,7 @@ export async function saveKrDisclosures(config, rows) {
       SET filed_at = EXCLUDED.filed_at,
           filed_at_source = 'dart',
           updated_at = now()
-      WHERE market_disclosures.filed_at_source = 'first-seen'
+      WHERE market_disclosures.filed_at_source IN ('first-seen', 'date-only')
         AND EXCLUDED.filed_at_source = 'dart'
   `, [
     rows.map((row) => row.id),
