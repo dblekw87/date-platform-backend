@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 
 import { query } from "../db/client.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
-import { describeHold, readLockQueue, readOvernightMaterial } from "./limit-up-queue.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { sessionDate } from "./market-session.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -15,7 +14,10 @@ import { notify, notifyConfigured } from "./notify.mjs";
  * 그 전날 판단이 어떻게 됐는지. 채점은 다음 거래일 봉이 들어온 15:55에
  * nightly-review가 하므로, 07:00에 채점이 끝나 있는 것은 그저께 판단입니다.
  *
- * 사람의 판단(user_close_bet)을 맨 위에 둡니다 -- 이 알림이 있는 이유라서입니다.
+ * **사람의 매매(user_close_bet)는 보내지 않습니다**(2026-10-11 사용자 요청: "내가
+ * 투자한거 관련해서는 안보내줘도 돼"). log-pick으로 적는 기록과 15:55 채점은 그대로
+ * 돌고 kr_signal_outcomes에 쌓입니다 -- 알림에서 빠질 뿐 표본은 끊기지 않습니다.
+ *
  * 기계 후보(close_bet·sector_follower)와 나머지 신호는 전부 "종가에 샀다면"이라는
  * 같은 자로 잽니다: 다음날 시가 갭에서 그날 밤 시장 평균 갭을 뺀 초과분. 짝꿍이나
  * 상한가는 장중에 잡히는 신호지만 등급이 종가매수 전용으로 재어졌으니
@@ -29,7 +31,6 @@ const alertMinute = 7 * 60;
 const stopMinute = 7 * 60 + 15;
 
 const kinds = [
-  { kind: "user_close_bet", label: "사람" },
   { kind: "close_bet", label: "종가배팅" },
   { kind: "offhigh_close_bet", label: "재료(미돌파)" },
   { kind: "sector_follower", label: "섹터 대조군" },
@@ -40,7 +41,7 @@ const kinds = [
   { kind: "intraday_material", label: "장중 재료" }
 ];
 // 종가에 실제로 사는 셋은 종목까지 적고, 나머지는 건수와 평균만 적습니다.
-const listedKinds = new Set(["close_bet", "offhigh_close_bet", "sector_follower", "user_close_bet"]);
+const listedKinds = new Set(["close_bet", "offhigh_close_bet", "sector_follower"]);
 
 let running = false;
 
@@ -88,9 +89,9 @@ export async function buildMorningFeedback(config, { day = sessionDate("KR") } =
     loadReminders(day)
   ]);
 
-  await attachHoldReads(config, entered);
+  const machine = (rows) => rows.filter((row) => row.kind !== "user_close_bet");
 
-  return message({ cumulative, day, entered, graded, reminders });
+  return message({ cumulative, day, entered: machine(entered), graded: machine(graded), reminders });
 }
 
 /**
@@ -124,8 +125,6 @@ async function loadGraded(config) {
            ((o.next_open / nullif(b.close, 0) - 1) * 100)::float8 AS gap,
            ((o.next_close / nullif(b.close, 0) - 1) * 100)::float8 AS to_close,
            o.market_next_open::float8 AS market_gap,
-           o.entry_price::float8 AS entry_price,
-           o.exit_price::float8 AS exit_price,
            u.name
       FROM kr_signal_outcomes o
       JOIN latest l ON o.session_date = l.day
@@ -152,39 +151,6 @@ async function loadEntered(config) {
       JOIN latest l ON o.session_date = l.day
       LEFT JOIN kr_daily_universe u ON u.symbol = o.symbol AND u.session_date = o.session_date
      ORDER BY o.kind, o.symbol`);
-
-  return rows;
-}
-
-/*
- * 들고 있는 것이 어떤 자리인지 같이 읽습니다.
- *
- * 이 토막은 "오늘 09:05~09:10에 팔 것"이고, limit-up-queue.mjs의 측정은 전부
- * 같은 트레이드(종가 매수 -> 익일 시가 매도)로 잰 값입니다. 자리를 고르는 데는
- * 쓰지 않습니다 -- 거기는 장중 수익으로 잰 다른 규칙이 있습니다.
- *
- * 한 줄이라도 못 읽으면 조용히 비웁니다. 들고 있는 종목이 상한가가 아니거나
- * 많이 오른 것이 아니면 읽을 것이 없는 게 정상입니다.
- */
-async function attachHoldReads(config, rows) {
-  for (const row of rows) {
-    /*
-     * 사람이 실제로 들고 있는 것에만 붙입니다.
-     *
-     * 처음에 모든 kind에 붙였더니 종가배팅 신호 목록(하루 수십 종목)까지 두 줄씩
-     * 늘어나 메시지가 비대해졌습니다. 이 토막에서 사람이 오늘 팔 것은
-     * user_close_bet뿐이고, 나머지는 채점용 기록입니다.
-     */
-    if (row.kind !== "user_close_bet") continue;
-    if (isIntraday(row)) continue;
-
-    const [lockQueue, material] = await Promise.all([
-      readLockQueue(config, row.symbol, row.day).catch(() => null),
-      readOvernightMaterial(config, row.symbol, row.day).catch(() => null)
-    ]);
-
-    row.hold = describeHold(lockQueue, material);
-  }
 
   return rows;
 }
@@ -234,10 +200,8 @@ function gradedSection(rows) {
   const day = rows[0].day;
   const marketGap = rows.find((row) => Number.isFinite(row.market_gap))?.market_gap;
   const lines = [`■ ${dayLabel(day)} 판단 채점 · 종가 매수 → 다음 장 시가 · 시장 갭 ${signed(marketGap)}%`];
-  const overnight = rows.filter((row) => !isIntraday(row));
-
   for (const { kind, label } of kinds) {
-    const group = overnight.filter((row) => row.kind === kind);
+    const group = rows.filter((row) => row.kind === kind);
 
     if (!group.length) {
       if (listedKinds.has(kind)) lines.push(`${label} —`);
@@ -258,65 +222,18 @@ function gradedSection(rows) {
     for (const row of group) {
       lines.push(`  ${row.name ?? row.symbol} ${row.symbol}  갭 ${signed(row.gap)}% (초과 ${signed(row.gap - row.market_gap)}%p) · 종가까지 ${signed(row.to_close)}%`);
 
-      /*
-       * 갭은 **종가**를 진입가로 잡습니다. 상따는 장중에 사므로 그 줄이 사람이 실제로
-       * 낸 값이 아닙니다 -- 2026-09-22 토마토시스템은 평단 3,300원인데 종가가 3,315원이라
-       * 갭 -0.2%로 찍히고 실현은 +1.4%였습니다. 체결가를 적어 둔 행은 그 값으로 한 줄 더
-       * 냅니다. 규칙의 성적과 사람의 성적을 같은 자리에서 따로 읽을 수 있어야 합니다.
-       */
-      if (row.entry_price && row.exit_price) {
-        const realized = (row.exit_price / row.entry_price - 1) * 100;
-
-        lines.push(`  └ 평단 ${won(row.entry_price)} → ${won(row.exit_price)} · 실현 ${signed(realized)}% (초과 ${signed(realized - row.market_gap)}%p)`);
-      }
-
-      // 사람의 판단은 이유가 같이 있어야 맞았을 때와 틀렸을 때를 나중에 가를 수 있습니다.
-      if ((kind === "user_close_bet" || kind === "offhigh_close_bet") && row.theme) lines.push(`  └ ${row.theme}`);
+      // 재료 판단은 이유가 같이 있어야 맞았을 때와 틀렸을 때를 나중에 가를 수 있습니다.
+      if (kind === "offhigh_close_bet" && row.theme) lines.push(`  └ ${row.theme}`);
     }
   }
 
-  lines.push(...intradayLines(rows.filter(isIntraday)));
-
   return lines;
 }
 
-/*
- * 장중매매는 같은 날 끝납니다.
- *
- * 2026-09-23에 사람 매매 기록에 종류가 생기면서(`사람 · 장중매매`) 이 표에 들어오기
- * 시작했는데, 이 알림의 두 토막은 **둘 다 오버나이트를 전제**합니다 -- 채점은 "종가
- * 매수 → 다음 장 시가"이고, 아래 토막은 "오늘 09:05~09:10에 팔 것"입니다. 장중매매를
- * 그대로 두면 이미 끝난 자리를 팔라고 띄우고, 평균에도 무관한 갭이 섞입니다.
- * 그래서 갈라내고 실제 체결가로만 적습니다. 값이 없으면 종목만 적습니다.
- */
-function isIntraday(row) {
-  return String(row.tier ?? "").includes("장중매매");
-}
+function enteredSection(rows) {
+  if (!rows.length) return ["■ 어제 들어간 기록이 없습니다"];
 
-function intradayLines(rows) {
-  if (!rows.length) return [];
-
-  const lines = [`장중매매 ${rows.length}건 · 당일에 끝나 밤 채점과 무관합니다`];
-
-  for (const row of rows) {
-    const realized = row.entry_price && row.exit_price ? (row.exit_price / row.entry_price - 1) * 100 : null;
-
-    lines.push(`  ${row.name ?? row.symbol} ${row.symbol}`
-      + (realized === null ? "  (체결가 미기록)" : `  실현 ${signed(realized)}%`));
-  }
-
-  return lines;
-}
-
-function enteredSection(allRows) {
-  if (!allRows.length) return ["■ 어제 들어간 기록이 없습니다"];
-
-  const day = allRows[0].day;
-  // 장중매매는 어제 안에 청산됐으므로 오늘 팔 것이 없습니다.
-  const rows = allRows.filter((row) => !isIntraday(row));
-
-  if (!rows.length) return [`■ ${dayLabel(day)}에 오버나이트로 들고 간 것이 없습니다 (장중매매 ${allRows.length}건)`];
-
+  const day = rows[0].day;
   const lines = [`■ ${dayLabel(day)} 종가에 들어간 것 · 오늘 09:05~09:10 청산`];
   const others = [];
 
@@ -329,9 +246,7 @@ function enteredSection(allRows) {
     }
 
     if (!group.length) {
-      lines.push(kind === "user_close_bet"
-        ? `${label} — (어제 산 게 있으면 node scripts/log-pick.mjs <종목> "<이유>" --date ${day})`
-        : `${label} —`);
+      lines.push(`${label} —`);
       continue;
     }
 
@@ -339,8 +254,7 @@ function enteredSection(allRows) {
 
     for (const row of group) {
       lines.push(`  ${row.name ?? row.symbol} ${row.symbol}  ${signed(row.change_rate ?? row.entry_rate)}% · ${won(row.close)}`);
-      if ((kind === "user_close_bet" || kind === "offhigh_close_bet") && row.theme) lines.push(`  └ ${row.theme}`);
-      for (const line of row.hold ?? []) lines.push(`  └ ${line}`);
+      if (kind === "offhigh_close_bet" && row.theme) lines.push(`  └ ${row.theme}`);
     }
   }
 
