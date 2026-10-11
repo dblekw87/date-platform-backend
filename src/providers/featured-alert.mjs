@@ -1,4 +1,4 @@
-import { heldMark, heldWindow } from "./alert-digest.mjs";
+import { heldMark, heldWindow, nightMark, nightWindow } from "./alert-digest.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -18,7 +18,9 @@ import { query } from "../db/client.mjs";
  * 양: 하루 70~80건, 09~10시에 45+23건이 몰립니다(2026-08-31~09-04 실측). 5분마다
  * 새 것만 한 통으로 묶으면 개장 직후 한 통에 서너 줄입니다.
  *
- * 하루 종일 돕니다. 장 밖에는 특징주가 드물어 저절로 조용하지만, 나오면 갑니다.
+ * 하루 종일 돕니다. 다만 바로 나가는 것은 프리마켓(08:00~08:50)뿐이고, 장중은
+ * 15:20에, 15:15 뒤로 밤사이 것은 다음 날 08:00에 한 통으로 묶여 갑니다
+ * (alert-digest.mjs).
  */
 
 const alertIntervalMs = 5 * 60_000;
@@ -140,6 +142,24 @@ export async function notifyFeatured(config, { day, url, force = false } = {}) {
       }
 
       console.log(`알림: 특징주 ${fresh.length}건 보류 (15:20 요약으로)`);
+
+      return 0;
+    }
+
+    /*
+     * 장 마감 뒤부터 다음 날 08:00까지도 적어만 둡니다. 이 시각의 특징주는 그날
+     * 오른 것을 다시 쓴 복기이고(10/06~08 실발송 33통 중 23통이 15~19시), 받아도
+     * 할 것이 없습니다. 다음 날 08:00에 한 통으로 갑니다.
+     */
+    if (nightWindow()) {
+      for (const row of fresh) {
+        const name = names.get(row.symbol) ?? row.symbol;
+
+        await markAlertSent(config, "featured", day, row.key,
+          { note: `${nightMark}${row.at} ${name} ${row.headline.slice(0, 44)}` });
+      }
+
+      console.log(`알림: 특징주 ${fresh.length}건 보류 (08:00 밤사이 요약으로)`);
 
       return 0;
     }

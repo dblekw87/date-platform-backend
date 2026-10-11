@@ -1,6 +1,7 @@
 import { buildThemeWhy } from "./theme-why.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
+import { query } from "../db/client.mjs";
 import { seoulMinuteNow } from "./market-session.mjs";
 
 /**
@@ -45,11 +46,39 @@ const heldToMinute = 15 * 60 + 15;
 const digestFromMinute = 15 * 60 + 20;
 const digestToMinute = 15 * 60 + 32;
 
+/*
+ * 특징주만 밤에도 묶습니다. 15:15부터 다음 날 프리마켓 시작(08:00)까지.
+ *
+ * 장중 묶기를 올린 뒤 사흘(10/06~08) featured 실발송 33통 중 23통이 15~19시였습니다.
+ * 특징주 기사는 장 마감 뒤에 더 많이 나오고, 장 끝나고 나온 특징주는 **정의상
+ * 복기**입니다 -- 승률 40%로 반증된 그것입니다([[overnight-material-verdict]]).
+ * 00시·05시에 오던 것도 같은 자리입니다. 프리마켓(08:00~08:50)은 출근 직후라 그대로
+ * 보냅니다.
+ *
+ * 짝꿍은 여기 넣지 않습니다. 정규장에만 돌아(collector의 startPairAlert) 밤에 나올
+ * 것이 없고, 15:15~15:30 등급은 종가매수 창이라 지금 봐야 합니다.
+ */
+const nightFromMinute = heldToMinute;
+const nightToMinute = 8 * 60;
+/* 밤사이 묶은 것을 보내는 창. 프리마켓 첫 틱이 08:00이고 사용자는 08:30에 처음 봅니다. */
+const nightDigestFromMinute = 8 * 60;
+const nightDigestToMinute = 8 * 60 + 12;
+
+/** 밤에 묶은 줄의 표시. 15:20 요약이 이것을 집지 않게 heldMark와 갈라 둡니다. */
+export const nightMark = "night:";
+
 /** 지금 보낸 것이 사용자에게 쓸모가 없는 시각인가. */
 export function heldWindow(now = new Date()) {
   const minute = seoulMinuteNow(now);
 
   return minute >= heldFromMinute && minute < heldToMinute;
+}
+
+/** 특징주를 밤사이 요약으로 미룰 시각인가. */
+export function nightWindow(now = new Date()) {
+  const minute = seoulMinuteNow(now);
+
+  return minute >= nightFromMinute || minute < nightToMinute;
 }
 
 /** 요약을 보낼 창인가. */
@@ -81,6 +110,61 @@ export async function notifyIntradayDigest(config, { day, minute, url } = {}) {
   console.log(`알림: 장중 요약 ${digest.total}건`);
 
   return digest.total;
+}
+
+/**
+ * 밤사이 묶은 특징주를 아침 08:00에 한 통으로. 거래일에 하루 한 번입니다.
+ *
+ * 날짜로 고르지 않고 **지난 요약 뒤로 묶인 것**을 고릅니다. 금요일 저녁 것은
+ * 금요일 날짜로, 월요일 새벽 것은 월요일 날짜로 적히고, 그 사이 주말·연휴에는
+ * 이 창이 돌지 않습니다(collector가 거래일에만 틱을 돕니다). "어제와 오늘"로
+ * 고르면 월요일 아침에 금요일 저녁 것이 빠집니다.
+ */
+export async function notifyNightDigest(config, { day, minute, url } = {}) {
+  if (!notifyConfigured(config) || minute < nightDigestFromMinute || minute >= nightDigestToMinute) return 0;
+  if ((await loadAlertSent(config, "night_digest", day)).has("done")) return 0;
+
+  const digest = await buildNightDigest(config);
+
+  if (!digest) return 0;
+  if (!await notify(config, { text: digest.text, url })) return 0;
+
+  await markAlertSent(config, "night_digest", day, "done", { note: `${digest.total}건` });
+  console.log(`알림: 밤사이 특징주 요약 ${digest.total}건`);
+
+  return digest.total;
+}
+
+/**
+ * 본문만. buildIntradayDigest와 같은 이유로 notify와 갈라 둡니다.
+ *
+ * 지난 요약이 없으면(처음 도는 날) 나흘 전까지만 봅니다 -- 연휴를 건너도 그 안에
+ * 들고, 처음 켠 날 몇 주 치가 한 통에 쏟아지지 않습니다.
+ */
+export async function buildNightDigest(config) {
+  const { rows } = await query(config, `
+    SELECT note, to_char(session_date, 'MM-DD') AS day
+      FROM alert_sent
+     WHERE kind = 'featured' AND note LIKE $1
+       AND sent_at > COALESCE(
+             (SELECT max(sent_at) FROM alert_sent WHERE kind = 'night_digest'),
+             now() - interval '4 days')
+     ORDER BY session_date, note`, [`${nightMark}%`]);
+
+  if (!rows.length) return null;
+
+  const lines = [`[밤사이 특징주] ${rows.length}건 · 장 끝난 뒤 나온 복기 기사입니다`, ""];
+
+  /* 열다섯 건까지만. 15:20 요약과 같은 이유로, 세는 것은 위 숫자가 합니다. */
+  for (const row of rows.slice(0, 15)) lines.push(`  ${row.day} ${String(row.note).slice(nightMark.length)}`);
+
+  if (rows.length > 15) lines.push(`  … 외 ${rows.length - 15}건`);
+
+  lines.push("");
+  lines.push("복기 기사는 다음 날 승률 40%로 반증됐습니다(10세션 실측).");
+  lines.push("무엇이 움직였는지 보는 자리이지 사는 자리가 아닙니다.");
+
+  return { text: lines.join("\n"), total: rows.length };
 }
 
 /**
