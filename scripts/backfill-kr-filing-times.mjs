@@ -18,6 +18,16 @@ import { readConfig } from "../src/config.mjs";
  * first-seen인 줄만 고칩니다. 몇 번을 다시 돌려도 이미 고친 줄은 건드리지 않으므로
  * 중간에 끊겨도 그대로 다시 돌리면 됩니다. 최근 날짜부터 훑습니다.
  *
+ * 2026-10-11 첫 실행: 324,249건 중 295,692건에 시각이 붙었습니다(676초). 남은
+ * 28,557건은 거의 전부 [기재정정]일괄신고서·투자설명서·증권발행실적보고서 같은
+ * 펀드·채권 서류로, 당일공시 화면에 안 나옵니다.
+ *
+ * 화면에서도 못 찾은 줄은 마지막에 **날짜만** 고칩니다. first-seen이 다른 날짜를
+ * 가리키면 그건 관측 상한이 아니라 넣은 날일 뿐이라 쓸 데가 없습니다. 그날 23:59로
+ * 두고 `date-only`로 표시합니다 -- 장 마감 뒤에 두어야 "장 전에 나온 공시"를 묻는
+ * 측정에 끼어들지 않습니다. 수집기가 나중에 진짜 시각을 받으면 덮어씁니다.
+ * 관측 날짜가 session_date와 같은 first-seen(라이브에서 놓친 몇 건)은 그대로 둡니다.
+ *
  *   node scripts/backfill-kr-filing-times.mjs [--from 2025-01-01] [--to 2026-10-10] [--pages 15]
  */
 
@@ -84,12 +94,23 @@ for (const [index, { day, pending }] of days.entries()) {
   }
 }
 
+const { rowCount: dateOnly } = await query(config, `
+  UPDATE market_disclosures
+     SET filed_at = (session_date + time '23:59') AT TIME ZONE 'Asia/Seoul',
+         filed_at_source = 'date-only',
+         updated_at = now()
+   WHERE market = 'KR' AND filed_at_source = 'first-seen'
+     AND session_date BETWEEN $1::date AND $2::date
+     AND (filed_at AT TIME ZONE 'Asia/Seoul')::date <> session_date
+`, [from, to]);
+
 const { rows: [summary] } = await query(config, `
   SELECT count(*) FILTER (WHERE filed_at_source = 'dart')::int AS dart,
+         count(*) FILTER (WHERE filed_at_source = 'date-only')::int AS date_only,
          count(*) FILTER (WHERE filed_at_source = 'first-seen')::int AS first_seen
     FROM market_disclosures WHERE market = 'KR'
 `);
 
-console.log(`\n고침 ${fixed}건 · 못 맞춘 것 ${missed}건 · 빈 화면 ${empty}일 · ${Math.round((Date.now() - started) / 1000)}초`);
-console.log(`  표 전체: dart ${summary.dart}건 · first-seen ${summary.first_seen}건`);
+console.log(`\n고침 ${fixed}건 · 못 맞춘 것 ${missed}건(그중 날짜만 고침 ${dateOnly}건) · 빈 화면 ${empty}일 · ${Math.round((Date.now() - started) / 1000)}초`);
+console.log(`  표 전체: dart ${summary.dart}건 · date-only ${summary.date_only}건 · first-seen ${summary.first_seen}건`);
 process.exit(0);
