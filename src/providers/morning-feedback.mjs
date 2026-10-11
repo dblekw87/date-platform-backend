@@ -40,8 +40,10 @@ const kinds = [
   { kind: "overnight_material", label: "밤 재료" },
   { kind: "intraday_material", label: "장중 재료" }
 ];
-// 종가에 실제로 사는 셋은 종목까지 적고, 나머지는 건수와 평균만 적습니다.
-const listedKinds = new Set(["close_bet", "offhigh_close_bet", "sector_follower"]);
+// 종가에 사는 후보 둘만 종목까지 적고, 나머지는 건수와 평균만 적습니다.
+// 섹터 대조군은 하루 70여 종목이라 한 줄씩 적으면 메시지가 그것으로 채워집니다
+// (2026-10-11 사용자 요청으로 건수·평균만). 종목별 기록은 kr_signal_outcomes에 있습니다.
+const listedKinds = new Set(["close_bet", "offhigh_close_bet"]);
 
 let running = false;
 
