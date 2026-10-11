@@ -1,6 +1,7 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadCloseBetCandidates } from "./close-bet.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
+import { query } from "../db/client.mjs";
 import { sessionDate } from "./market-session.mjs";
 
 /**
@@ -19,6 +20,8 @@ import { sessionDate } from "./market-session.mjs";
  */
 
 const alertMinute = 15 * 60 + 20;
+/* 상한가로 보는 문턱. limit-up-queue.mjs와 같은 값입니다. */
+const limitUpRate = 29.5;
 const stopMinute = 15 * 60 + 32;
 
 let running = false;
@@ -55,7 +58,10 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
      */
     if (!today.length) return 0;
 
-    const ok = await notify(config, { text: closeBetMessage(today, day), url });
+    const queues = await loadLockedQueues(config, day, today.filter((row) => row.changeRateValue >= limitUpRate).map((row) => row.symbol))
+      .catch(() => new Map());
+    const marked = today.map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row));
+    const ok = await notify(config, { text: closeBetMessage(marked, day), url });
 
     if (!ok) return 0;
 
@@ -73,6 +79,30 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 }
 
 const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
+
+/*
+ * 상한가에 잠긴 종목의 매수 잔량 -- 그 줄 뒤에 서는 것이라 종가에 체결되기 어렵습니다.
+ *
+ * 2026-10-11 실측(09-15~ 상한가 종가배팅 24건): 15:19에 23건이 잠겨 있었고, 15:20
+ * 이후 마감 체결량은 줄 선 매수잔량의 **중앙 6%**였습니다. 새 매수가 체결될 만큼
+ * 마감 물량이 나온 4건은 다음날 초과 중앙 **−0.68%p·상회 25%**, 못 사는 14건은
+ * +3.45·79%였습니다 -- 체결되는 날이 상한가가 무너지는 날입니다([[sangtta-verdict]]).
+ * 그래서 "사라"는 목록 안에서 이 줄만은 "사기 어렵고, 사지면 조심"이라고 적습니다.
+ *
+ * 매도1호가 잔량이 없으면 잠긴 것으로 봅니다. 호가는 24% 위 종목만 1분마다 찍히므로
+ * 상한가 후보에는 거의 늘 있습니다. 없으면 잔량 없이 표시만 합니다.
+ */
+async function loadLockedQueues(config, day, symbols) {
+  if (!symbols.length) return new Map();
+
+  const { rows } = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol, bid_qty1::float8 AS queue, ask_qty1::float8 AS ask
+      FROM kr_order_book_samples
+     WHERE session_date = $1::date AND symbol = ANY($2)
+     ORDER BY symbol, observed_at DESC`, [day, symbols]);
+
+  return new Map(rows.map((row) => [row.symbol, { locked: !(row.ask > 0), queue: row.queue }]));
+}
 
 /*
  * 성적은 종목이 아니라 등급에 붙는 값입니다. 종목마다 적으면 같은 문장이 후보
@@ -107,6 +137,12 @@ export function closeBetMessage(candidates, day) {
         + ` (${row.changeRateValue > 0 ? "+" : ""}${row.changeRateValue}%)`
         + ` 회전 ${row.turnoverRatio}%`
       );
+
+      if (row.lock && row.lock.locked !== false) {
+        const queue = row.lock.queue > 0 ? ` · 매수잔량 ${won(Math.round(row.lock.queue))}주` : "";
+
+        lines.push(`    └ 상한가 잠김 · 종가 체결 어려움${queue}. 체결되면 무너지는 날 (실측 4건 중앙 −0.68%p)`);
+      }
 
       for (const item of (row.evidence ?? []).slice(0, 1)) {
         if (!item.headline) continue;
