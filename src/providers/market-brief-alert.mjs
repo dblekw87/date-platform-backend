@@ -1,8 +1,10 @@
+import { classifyTheme } from "./themes.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
 import { sessionDate } from "./market-session.mjs";
+import { themeForSicCode } from "./us-industry.mjs";
 
 /**
  * 아침 시황 한 통 -- 밤사이 미국, 어제 국내장, 프리마켓, 밤사이 재료.
@@ -84,6 +86,99 @@ async function usGroupLines(config) {
   }
 
   return lines;
+}
+
+/*
+ * 밤사이 미국에서 어느 섹터가 올랐나.
+ *
+ * 위 묶음은 티커가 고정이라 거기 없는 섹터는 안 보입니다. 2026-10-09(금) 미국장은
+ * 바이오(116종목 중 80% 상승)와 광통신(루멘텀 +5.5, 시에나 +5.9)이 갔는데, 아침
+ * 시황에는 바이오 칸이 없었습니다 -- 사용자가 차트를 보고 먼저 알았습니다(10-11).
+ * 그래서 밤새 찍은 전 종목 표본을 섹터로 묶어 순위를 매깁니다.
+ *
+ * 섹터는 보드와 같은 것을 씁니다: 손으로 고른 테마(themes.mjs)가 먼저고, 거기 없는
+ * 종목은 SEC 업종(us-industry.mjs)으로 떨어집니다. 업종은 **저장된 것만** 읽습니다 --
+ * 아침 알림이 SEC에 수백 번 묻고 있을 수는 없습니다.
+ *
+ * 미국 일봉(us_daily_bars)은 쓸 수 없습니다. 파이프라인이 UTC 날짜가 넘어간 뒤
+ * (한국 09:00)에야 전날 세션을 받아서, 08:20에는 늘 하루 전 것입니다. 장중 표본의
+ * 마지막 값이 정규장 종가 등락이고, 거래대금은 표본에 없어 전날 종가 × 거래량으로
+ * 어림합니다 -- 거르는 데만 쓰니 그 정도면 됩니다.
+ *
+ * 보통주만 셉니다. ETF가 섞이면 XBI(바이오 ETF)가 바이오 종목 하나로 들어갑니다.
+ * 섹터 값은 **중앙값**입니다 -- 한 종목이 +30% 가면 평균이 섹터를 대신 말합니다.
+ */
+const sectorMinTurnover = 2e7;
+const sectorMinMembers = 5;
+/* SEC 업종의 통신장비(SIC 366)에 루멘텀·시에나가 들어갑니다. 국내에서 읽는 이름으로. */
+const sectorAliases = { "통신장비": "광통신·네트워크" };
+
+export async function usSectorLines(config) {
+  const { rows } = await query(config, `
+    WITH latest AS (
+      SELECT max(session_date) AS day FROM market_price_samples
+       WHERE market = 'US' AND source = 'yahoo:us:regular:seen'
+    )
+    SELECT DISTINCT ON (s.symbol) s.symbol, s.name, s.change_rate::float8 AS rate,
+           (s.volume * p.close)::float8 AS turnover, i.sic
+      FROM market_price_samples s
+      JOIN latest l ON s.session_date = l.day
+      JOIN LATERAL (
+        SELECT cik FROM us_tickers t
+         WHERE t.symbol = s.symbol AND t.active AND t.type = 'CS'
+         ORDER BY as_of DESC LIMIT 1
+      ) k ON true
+      JOIN LATERAL (
+        SELECT close FROM us_daily_bars d
+         WHERE d.symbol = s.symbol AND d.session_date < s.session_date
+         ORDER BY d.session_date DESC LIMIT 1
+      ) p ON true
+      LEFT JOIN us_company_industry i ON i.cik = k.cik
+     WHERE s.market = 'US' AND s.source = 'yahoo:us:regular:seen' AND s.change_rate IS NOT NULL
+     ORDER BY s.symbol, s.observed_at DESC`);
+  const sectors = new Map();
+
+  for (const row of rows) {
+    if (!(row.turnover >= sectorMinTurnover)) continue;
+
+    let sector = classifyTheme(row.symbol, row.name);
+
+    if (sector === "미분류") sector = themeForSicCode(row.sic) ?? sector;
+    if (sector === "미분류" || sector === "ETF") continue;
+
+    sector = sectorAliases[sector] ?? sector;
+
+    if (!sectors.has(sector)) sectors.set(sector, []);
+
+    sectors.get(sector).push(row);
+  }
+
+  const ranked = [...sectors]
+    .filter(([, members]) => members.length >= sectorMinMembers)
+    .map(([sector, members]) => {
+      const rates = members.map((row) => row.rate).sort((a, b) => a - b);
+      const leaders = [...members].sort((a, b) => b.turnover - a.turnover).slice(0, 3);
+
+      return {
+        leaders: leaders.map((row) => `${row.symbol} ${pct(row.rate)}`).join(" · "),
+        median: rates[Math.floor(rates.length / 2)],
+        n: members.length,
+        sector,
+        up: Math.round(100 * rates.filter((rate) => rate > 0).length / rates.length)
+      };
+    })
+    .sort((a, b) => b.median - a.median);
+
+  if (ranked.length < 4) return [];
+
+  const line = (item) => `  ${item.sector} ${pct(item.median)} (${item.n}종목 중 ${item.up}% 상승) · ${item.leaders}`;
+
+  return [
+    "  오른 섹터 (중앙값)",
+    ...ranked.slice(0, 4).map(line),
+    "  내린 섹터",
+    ...ranked.slice(-2).reverse().map(line)
+  ];
 }
 
 /* 밤사이 미국. 우리가 이미 1분마다 찍는 값이라 새로 받아올 것이 없습니다. */
@@ -393,6 +488,13 @@ export async function notifyMarketBrief(config, { minute, url } = {}) {
       if (groups.length) {
         lines.push("");
         for (const line of groups) lines.push(line);
+      }
+
+      const sectors = await usSectorLines(config).catch(() => []);
+
+      if (sectors.length) {
+        lines.push("");
+        for (const line of sectors) lines.push(line);
       }
 
       const usNews = await usOvernightNews(config);
