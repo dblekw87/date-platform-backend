@@ -39,6 +39,13 @@ COMMON_FACTORS = 3
 # 수십 종목을 묶어 버려 "그룹"이 아무것도 가르지 못합니다.
 MINIMUM_STAKE_PCT = 10
 GROUP_HOPS = 2
+# 반복이 퍼져 있는가. 날 수만 세면 두 주에 몰린 에피소드와 몇 주에 걸친 관계가 같은
+# "5일"이 됩니다 -- 금호건설 → 금호전기는 5일이 전부 08-20~09-04(12장)에 몰렸고 그 뒤
+# 5주간 0일, 리가켐바이오 → 알지노믹스는 같은 5일이 08-24~10-02(28장)에 고르게 퍼졌습니다
+# (2026-10-11). 첫날부터 마지막 날까지 15장(3주) 이상이어야 퍼진 것으로 셉니다.
+SPREAD_SESSIONS = 15
+# 최근에도 나오는가. 지금도 살아 있는 관계인지, 지난 일인지를 가릅니다.
+RECENT_SESSIONS = 20
 
 
 def load_day(session_date: str, market: str = "KR") -> pd.DataFrame:
@@ -321,8 +328,16 @@ def persistence(market: str = "KR") -> tuple[pd.DataFrame, pd.DataFrame]:
     repeated = (every
                 .groupby(["leader", "leader_name", "follower", "follower_name", "same_theme", "shared_theme", "same_group"])
                 .agg(days=("session_date", "nunique"),
+                     first=("session_date", "min"),
+                     last=("session_date", "max"),
                      mean_correlation=("correlation", "mean"))
                 .reset_index()
                 .sort_values(["days", "mean_correlation"], ascending=False))
+
+    # 장 수로 잽니다. 달력 날로 재면 추석 연휴 같은 빈 주가 퍼짐으로 셈해집니다.
+    order = {day: index for index, day in enumerate(sorted(every["session_date"].unique()))}
+    repeated["span"] = [order[last] - order[first] + 1 for first, last in zip(repeated["first"], repeated["last"])]
+    repeated["spread"] = repeated["span"] >= SPREAD_SESSIONS
+    repeated["recent"] = [order[last] >= len(order) - RECENT_SESSIONS for last in repeated["last"]]
 
     return every, repeated

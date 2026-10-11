@@ -78,6 +78,24 @@ def main() -> None:
     print(f"  {len(grouped)}쌍은 테마는 없지만 지분으로 두 단계 안에 이어집니다 — 그룹 동조입니다.")
     print(f"  {len(relabelled)}쌍은 사전에는 함께 있는데 화면 라벨만 갈립니다 — 대표 라벨 문제입니다.\n")
 
+    # 게이트가 세는 것. 날 수만으로는 두 주에 몰린 에피소드도 관계로 셉니다(금호건설 →
+    # 금호전기, 2026-10-11). 퍼진 것은 첫날~마지막 날이 SPREAD_SESSIONS장 이상인 쌍입니다.
+    lasting = missed[missed["days"] >= 4]
+    spread = lasting[lasting["spread"]]
+
+    print(f"게이트 · 놓침 4일+ {len(lasting)}쌍 중 퍼진 것 {len(spread)}쌍"
+          f" (첫날~마지막 {comovement.SPREAD_SESSIONS}장 이상), 그중 최근"
+          f" {comovement.RECENT_SESSIONS}장 안에 나온 것 {int(spread['recent'].sum())}쌍\n")
+
+    for _, row in missed[missed["days"] >= 3].iterrows():
+        shape = "퍼짐" if row["spread"] else "몰림"
+        recency = "최근" if row["recent"] else "지난 일"
+
+        print(f"  {str(row['leader_name'])[:16]:<17} -> {str(row['follower_name'])[:16]:<17}"
+              f" {row['days']}일 · {row['first']}~{row['last']} {row['span']}장 · {shape} · {recency}")
+
+    print()
+
 
 if __name__ == "__main__":
     main()
