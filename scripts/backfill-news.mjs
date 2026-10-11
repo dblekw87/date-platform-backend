@@ -2,8 +2,8 @@ import { readConfig } from "../src/config.mjs";
 import { query } from "../src/db/client.mjs";
 import { saveMarketNewsItems } from "../src/db/repositories.mjs";
 import { dedupeNews, normalizeNewsItem } from "../src/providers/news-normalizer.mjs";
-import { attachKrUniverseTags, isArticleLikeSource, isMarketRelevant, koreanRssQueries, loadListedNames, naverQueries, themeLabelFor } from "../src/providers/news.mjs";
-import { loadKrNameIndex } from "../src/providers/kr-universe.mjs";
+import { attachKrUniverseTags, attachUsUniverseTags, isArticleLikeSource, isMarketRelevant, koreanRssQueries, loadListedNames, naverQueries, newsApiQueries, themeLabelFor } from "../src/providers/news.mjs";
+import { loadKrNameIndex, loadUsTickerSet } from "../src/providers/kr-universe.mjs";
 
 /**
  * 꺼져 있던 동안 나온 기사를 되받아옵니다.
@@ -32,6 +32,17 @@ import { loadKrNameIndex } from "../src/providers/kr-universe.mjs";
  * 씁니다. 여기가 갈리면 메운 기사와 평소 기사가 다른 corpus가 되어, 뉴스로 재는
  * 측정이 요일에 따라 다른 것을 재게 됩니다. id는 URL·시각·제목의 해시라 이미
  * 있는 기사는 저장 단계에서 겹쳐 쓰이고 중복이 쌓이지 않습니다.
+ *
+ * **미국 기사도 메웁니다(2026-10-11부터).** 그 전에는 국내만 메워서, 10/10 저녁
+ * ~10/11 저녁 꺼져 있던 동안의 미국 기사는 켠 직후 첫 틱이 각 피드의 최신 몇 건을
+ * 집어온 것이 전부였습니다. 같은 구간을 영문 구글 RSS로 물으니 355건이 있었고
+ * 그중 우리가 가진 것은 40건 남짓이었습니다.
+ *
+ * 다만 **평소 미국 수집과 소스가 다릅니다.** 평소엔 NewsAPI·Finnhub·보도자료 RSS이고
+ * 여기는 영문 구글 RSS입니다 -- NewsAPI 무료 키는 최근 24시간을 검색에서 주지 않아
+ * 켠 직후에는 같은 소스로 메울 수가 없습니다. 검색어는 NewsAPI와 같은 것을 씁니다.
+ * 저장된 줄로는 가를 수 없습니다(provider는 전부 'news', 평소 미국 기사도 7천 건이
+ * news.google.com 주소입니다). 미국 뉴스로 잴 때 꺼져 있던 구간은 날짜로 거르세요.
  */
 
 const config = readConfig();
@@ -100,13 +111,17 @@ function shift(day, delta) {
  * 그러면 이웃 날짜가 함께 딸려오는데, 저장 단계에서 겹쳐 쓰이므로 문제가 되지
  * 않고 오히려 경계에 걸친 기사를 놓치지 않습니다.
  */
-async function fetchDay(topic, day) {
+const locales = {
+  KR: { ceid: "KR:ko", gl: "KR", hl: "ko" },
+  US: { ceid: "US:en", gl: "US", hl: "en-US" }
+};
+
+async function fetchDay(topic, day, region = "KR") {
   const url = new URL("https://news.google.com/rss/search");
 
   url.searchParams.set("q", `${topic} after:${shift(day, -1)} before:${shift(day, 1)}`);
-  url.searchParams.set("hl", "ko");
-  url.searchParams.set("gl", "KR");
-  url.searchParams.set("ceid", "KR:ko");
+
+  for (const [key, value] of Object.entries(locales[region])) url.searchParams.set(key, value);
 
   const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
 
@@ -127,7 +142,7 @@ async function fetchDay(topic, day) {
       originalUrl: value(match[1], "link"),
       provider: "Google News",
       pubDate: value(match[1], "pubDate"),
-      region: "KR",
+      region,
       source: value(match[1], "source") || "Google News",
       title: value(match[1], "title")?.replace(/<[^>]+>/g, "").trim()
     }))
@@ -191,26 +206,31 @@ async function fetchNaverPage(topic, start) {
 
 const listed = await loadListedNames(config);
 const nameIndex = await loadKrNameIndex(config).catch(() => []);
+const usTickers = await loadUsTickerSet(config).catch(() => new Set());
 const before = (await query(config, "SELECT count(*) AS n FROM market_news_items")).rows[0].n;
 const targets = Array.from({ length: days }, (unused, index) => seoulDay(index));
 
 console.log("");
 console.log(`구글 뉴스 RSS · 검색어 ${koreanRssQueries.length}개 × ${days}일 = ${koreanRssQueries.length * days}회 요청`);
+console.log(`영문 구글 뉴스 RSS(미국) · 검색어 ${newsApiQueries.length}개 × ${days}일 = ${newsApiQueries.length * days}회 요청`);
 console.log(naverOn ? `네이버 ${viaDevelopers ? "개발자센터" : "API Hub"} · 검색어 ${naverQueries.length}개 × 최대 ${naverMaxStart}건` : "네이버 검색 키가 없습니다 - 구글만 훑습니다");
 console.log(`날짜 ${targets[targets.length - 1]} ~ ${targets[0]}`);
 console.log(`상장 이름 ${listed.length.toLocaleString("ko-KR")}개로 관련성 판정, ${nameIndex.length.toLocaleString("ko-KR")}개로 종목 태깅`);
 console.log("");
 
 const collected = [];
-const jobs = targets.flatMap((day) => koreanRssQueries.map((topic) => ({ day, topic })));
+const jobs = targets.flatMap((day) => [
+  ...koreanRssQueries.map((topic) => ({ day, region: "KR", topic })),
+  ...newsApiQueries.map((topic) => ({ day, region: "US", topic }))
+]);
 let failed = 0;
 
 for (let i = 0; i < jobs.length; i += perSecond) {
   const tick = Date.now();
 
-  await Promise.all(jobs.slice(i, i + perSecond).map(async ({ day, topic }) => {
+  await Promise.all(jobs.slice(i, i + perSecond).map(async ({ day, region, topic }) => {
     try {
-      collected.push(...await fetchDay(topic, day));
+      collected.push(...await fetchDay(topic, day, region));
     } catch (error) {
       failed += 1;
       console.warn(`  ${day} ${topic} 실패: ${error instanceof Error ? error.message : error}`);
@@ -282,7 +302,8 @@ const normalized = dedupeNews(collected.map(normalizeNewsItem).filter(Boolean));
 const relevant = normalized
   .filter((item) => isMarketRelevant(item, listed))
   .map((item) => ({ ...item, label: themeLabelFor(item, listed) }));
-const tagged = attachKrUniverseTags(relevant, nameIndex);
+// 라이브와 같은 태깅 -- 국내는 이름, 미국은 티커(market-board.mjs 참고).
+const tagged = attachUsUniverseTags(attachKrUniverseTags(relevant, nameIndex), usTickers);
 
 console.log("");
 console.log(`  받은 기사 ${collected.length.toLocaleString("ko-KR")}건 → 중복 제거 ${normalized.length.toLocaleString("ko-KR")}건 → 시장 관련 ${tagged.length.toLocaleString("ko-KR")}건`);
@@ -297,15 +318,16 @@ console.log(`  새로 저장 ${(Number(after) - Number(before)).toLocaleString("
 
 const span = await query(config, `
   SELECT date(published_at AT TIME ZONE 'Asia/Seoul')::text AS d,
-         count(*) AS n,
-         count(*) FILTER (WHERE array_length(related_symbols, 1) > 0) AS tagged
+         count(*) FILTER (WHERE region = 'KR') AS n,
+         count(*) FILTER (WHERE region = 'KR' AND array_length(related_symbols, 1) > 0) AS tagged,
+         count(*) FILTER (WHERE region = 'US') AS us
     FROM market_news_items
-   WHERE published_at > now() - ($1 || ' days')::interval AND region = 'KR'
+   WHERE published_at > now() - ($1 || ' days')::interval
    GROUP BY 1 ORDER BY 1`, [days + 1]);
 
 console.log("");
-console.log("날짜별 국내 기사 보유량 (괄호는 종목이 붙은 것)");
+console.log("날짜별 기사 보유량 (괄호는 종목이 붙은 국내 기사)");
 console.log("");
-span.rows.forEach((row) => console.log(`  ${row.d}  ${String(row.n).padStart(5)}건  (${row.tagged})`));
+span.rows.forEach((row) => console.log(`  ${row.d}  국내 ${String(row.n).padStart(5)}건  (${row.tagged}) · 미국 ${String(row.us).padStart(4)}건`));
 
 process.exit(0);

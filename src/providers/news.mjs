@@ -42,7 +42,8 @@ export const naverQueries = ["국내 증시", "코스피 코스닥", "미국 증
 //
 // Korean queries are gone: Naver and the Google feed cover that side far
 // better, and the budget buys more where NewsAPI is actually unique.
-const newsApiQueries = ["stock market", "earnings", "semiconductor stocks", "ai stocks", "biotech stocks", "tariff stocks"];
+/* 미국 검색어. scripts/backfill-news.mjs가 꺼져 있던 동안을 메울 때도 같은 것을 씁니다. */
+export const newsApiQueries = ["stock market", "earnings", "semiconductor stocks", "ai stocks", "biotech stocks", "tariff stocks"];
 const newsApiIntervalMs = 2 * 60 * 60_000;
 
 let lastNewsApiAt = 0;
