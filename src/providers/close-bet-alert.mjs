@@ -42,16 +42,24 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
     // 하루 한 통. 기록이 저장소에 있어 15:25에 재기동해도 15:20 것을 또 보내지 않습니다.
     if ((await loadAlertSent(config, "close_bet", day)).has("sent")) return 0;
 
-    const candidates = await loadCloseBetCandidates(config, { limit: 10 });
+    // 소형을 빼고 열 개를 채우려고 넉넉히 받습니다 -- 소형이 위를 다 차지하는 날
+    // limit 10으로 받으면 중·대형이 잘려 나갑니다.
+    const candidates = await loadCloseBetCandidates(config, { limit: 40 });
     // 오늘 것만. 장이 열리기 전이면 확정 경로가 어제 목록을 돌려주는데, 화면에는
     // 그게 맞고 알림에는 아닙니다 -- 짝꿍이 2026-08-28에 겪은 자리와 같습니다.
     //
-    // 소형은 상한가만 보냅니다(2026-10-11 사용자 요청). 소형 종가배팅의 엣지는 처음부터
-    // 상한가 칸에만 있었습니다 -- 258장 실측에서 상한가 아닌 소형 신호는 초과 중앙
-    // +15~29.5% +0.10 / +15% 미만 −0.02로 0 근처였고, 최근 40일엔 −0.04 / −0.55입니다.
-    // 기록은 nightly-review.mjs가 후보 전부를 따로 남기므로 채점 표본은 그대로 쌓입니다.
-    const today = candidates.filter((row) => row.sessionDate === day
-      && (row.tier !== "소형" || row.changeRateValue >= limitUpRate));
+    // **소형은 보내지 않습니다**(2026-10-12 사용자 결정). 소형 종가배팅에는 살 수 있는
+    // 칸에 엣지가 없습니다(258장 실측, 초과 중앙):
+    //   상한가 아님        +0.10 / −0.02, 최근 40일 −0.04 / −0.55   살 수 있음
+    //   상한가·잠김 유지   +3.45                                    못 삼(마감 체결량 = 매수잔량의 6%)
+    //   상한가·체결됨      −0.68                                    살 수 있지만 무너지는 날
+    // 하루 전엔 상한가만 남겼는데, 사용자가 "29.5%면 들어갈 수가 없다"고 짚었습니다 --
+    // 그러면 이 알림은 못 사는 종목 목록일 뿐입니다. 소형에서 들어갈 자리는 잠기기 전이고
+    // 그건 [상한가 직전](sangtta-watch.mjs)이 맡습니다. 기록은 nightly-review.mjs가
+    // 후보 전부를 따로 남기므로 채점 표본은 그대로 쌓입니다.
+    const today = candidates
+      .filter((row) => row.sessionDate === day && row.tier !== "소형")
+      .slice(0, 10);
 
     /*
      * 조건을 넘은 것이 없으면 보내지 않습니다. "오늘은 없습니다"를 매일 보내면
