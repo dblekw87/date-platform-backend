@@ -49,7 +49,7 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
     // 소형은 상한가만 보냅니다(2026-10-11 사용자 요청). 소형 종가배팅의 엣지는 처음부터
     // 상한가 칸에만 있었습니다 -- 258장 실측에서 상한가 아닌 소형 신호는 초과 중앙
     // +15~29.5% +0.10 / +15% 미만 −0.02로 0 근처였고, 최근 40일엔 −0.04 / −0.55입니다.
-    // 기록은 close-bet-log.mjs가 따로 남기므로 채점 표본은 그대로 쌓입니다.
+    // 기록은 nightly-review.mjs가 후보 전부를 따로 남기므로 채점 표본은 그대로 쌓입니다.
     const today = candidates.filter((row) => row.sessionDate === day
       && (row.tier !== "소형" || row.changeRateValue >= limitUpRate));
 
