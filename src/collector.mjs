@@ -1547,8 +1547,8 @@ export function startMarketCollector(config) {
         // 15:20~15:32 창(종가배팅은 10-12부터 15:10으로 앞당김). provider가 하루 한 번을 잠급니다.
         notifySectorFollowers(config, { minute, url: config.publicSiteUrl })
           .catch((error) => console.warn("collector: sector follower alert failed", error instanceof Error ? error.message : error));
-        // 같은 창. 종가배팅 조건에서 60일 신고점 하나만 못 맞춘 것들이고,
-        // 그중 재료가 있는 것만 보냅니다. 412세션 실측 초과 +1.37%p.
+        // 종가배팅과 같은 칸(15:10·15:15·15:20). 60일 신고점 하나만 못 맞춘 것들 중
+        // 재료 있는 중·대형만 보냅니다. 기록은 15:20 칸에서 전부. 412세션 실측 초과 +1.37%p.
         notifyOffHighCloseBet(config, { minute, url: config.publicSiteUrl })
           .catch((error) => console.warn("collector: offhigh close bet alert failed", error instanceof Error ? error.message : error));
         // 같은 창. 장중에 묶어 둔 특징주·짝꿍을 한 통으로 보냅니다. 사용자가

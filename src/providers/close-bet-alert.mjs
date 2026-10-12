@@ -121,6 +121,23 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 }
 
 /*
+ * 오른 종목을 줄줄이 나열한 기사. "오전 이슈 [호남 반도체] : 서산, 금호전기, 동양파일,
+ * 금호건설, 남화토건"(2026-10-12)이 isReasonHeadline을 통과해 서산·금호전기의 재료로
+ * 붙었습니다. 무엇이 올랐는지를 다시 적은 것이지 오른 이유가 아닙니다 -- 복기와 같은
+ * 자리입니다. 콜론 뒤에 이름이 셋 이상 쉼표로 이어지거나 '이슈 종목'류 낱말이 있으면 뺍니다.
+ */
+const listHeadline = /(오전|오후|장중|장마감|마감)\s*이슈|이슈\s*종목|특징주\s*모음|급등주\s*(정리|모음)|상한가\s*종목|테마주\s*(정리|모음)|[:：]\s*[^,，]+([,，][^,，]+){2,}/;
+
+export function isListHeadline(headline) {
+  return listHeadline.test(String(headline ?? ""));
+}
+
+/** 지금 시각에 해당하는 칸. 15:13이면 15:10 칸, 15:22면 15:20 칸입니다. 미돌파 알림도 같은 칸을 씁니다. */
+export function closeBetSlotAt(minute) {
+  return minute >= slots[0].minute && minute < stopMinute ? slotAt(minute) : null;
+}
+
+/*
  * 재료 -- 직전 장 마감 뒤부터 지금까지의 공시와 기사. 종목마다 가장 이른 것 하나.
  *
  * 가장 이른 것을 고르는 것은 방아쇠가 대개 앞에 있어서입니다. 공시를 기사보다 먼저
@@ -157,6 +174,7 @@ export async function loadMaterial(config, day, symbols) {
   for (const row of news) {
     if (found.has(row.symbol)) continue;
     if (!isReasonHeadline(row.headline) || mentionsBadNews(row.headline) || isMachineHeadline(row.headline)) continue;
+    if (isListHeadline(row.headline)) continue;
 
     found.set(row.symbol, { at: row.at, kind: "기사", text: row.headline, url: row.original_url });
   }

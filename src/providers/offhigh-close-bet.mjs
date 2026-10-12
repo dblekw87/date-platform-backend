@@ -1,5 +1,6 @@
 import { closeBetCandidateSql, historyBoundFor, liveCandidateSql, loadEntryNews } from "./close-bet.mjs";
 import { isReasonHeadline } from "./overnight-classify.mjs";
+import { closeBetSlotAt, loadMaterial } from "./close-bet-alert.mjs";
 import { isEtfLike, isNonOperatingEquity } from "./themes.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -35,8 +36,23 @@ import { sessionDate } from "./market-session.mjs";
  * 채점은 `nightly-review.mjs`가 다음 거래일 봉으로 자동으로 합니다.
  */
 
-const alertMinute = 15 * 60 + 20;
-const stopMinute = 15 * 60 + 32;
+/*
+ * **종가배팅과 같은 칸·같은 거름망입니다**(2026-10-12). 그날 15:20 이 알림이 소형 상한가
+ * 서산·금호전기를 "오전 이슈 : 서산, 금호전기, …" 기사를 재료로 보냈습니다 -- 종가배팅에서
+ * 막 뺀 바로 그 자리(29.5%면 들어갈 수가 없다)였고, 재료는 나열 기사였습니다. 그래서:
+ *
+ *   시각   15:10 · 15:15(바뀌었을 때만) · 15:20(최종). close-bet-alert.mjs의 closeBetSlotAt
+ *   소형   보내지 않습니다. 종가배팅과 같은 사용자 결정입니다
+ *   재료   close-bet-alert.mjs의 loadMaterial -- 직전 장 마감 뒤 good 공시 또는 이유 기사,
+ *          악재·기계기사·나열 기사 제외
+ *
+ * **기록은 15:20 칸에서 한 번만** 남깁니다(kr_signal_outcomes, 재료 유무 무관). 15:10에
+ * 기록하면 412세션 실측과 다른 모집단이 됩니다. 기록의 theme은 예전처럼 isReasonHeadline
+ * 기사 제목이라 이전 표본과 이어집니다.
+ *
+ * 2026-08-18~10-08 실측(scripts/measure-close-bet-material.mjs): 중·대형 재료 있음 8건
+ * 중앙 +2.20·상회 88%, 재료 없음 6건 +0.30. 표본이 작습니다.
+ */
 // 한 통에 들어갈 만큼만. 재료가 있는 것만 보내므로 대개 두세 종목입니다.
 const alertLimit = 8;
 
@@ -44,34 +60,48 @@ let running = false;
 
 export async function notifyOffHighCloseBet(config, { minute, url } = {}) {
   if (running || !notifyConfigured(config)) return 0;
-  if (minute < alertMinute || minute >= stopMinute) return 0;
+
+  const slot = closeBetSlotAt(minute);
+
+  if (!slot) return 0;
 
   const day = sessionDate("KR");
 
   running = true;
 
   try {
-    // 하루 한 번. 기록은 ON CONFLICT라 다시 돌아도 안 늘지만 알림은 그렇지 않으므로
-    // 끝낸 날을 저장소에 남깁니다 -- 창 안에서 재기동해도 또 가지 않습니다.
-    if ((await loadAlertSent(config, "offhigh_close_bet", day)).has("done")) return 0;
+    // 칸마다 한 번. "done"은 10-12 이전의 하루 한 통 기록입니다.
+    const sent = await loadAlertSent(config, "offhigh_close_bet", day);
+
+    if (sent.has("done") || sent.has(slot.key)) return 0;
 
     const candidates = await loadOffHighCandidates(config, { day });
-    const saved = await recordOffHighCloseBet(config, day, candidates);
-    const withMaterial = candidates.filter((row) => row.material).slice(0, alertLimit);
+    const final = slot.key === "slot:1520";
+    const saved = final ? await recordOffHighCloseBet(config, day, candidates) : 0;
+    const pool = candidates.filter((row) => row.size_label && row.size_label !== "소형");
+    const material = await loadMaterial(config, day, pool.map((row) => row.symbol));
+    const picked = pool
+      .filter((row) => material.has(row.symbol))
+      .slice(0, alertLimit)
+      .map((row) => ({ ...row, alertMaterial: material.get(row.symbol), fresh: !sent.has(row.symbol) }));
+    const dropped = [...sent.keys()]
+      .filter((key) => !key.startsWith("slot:") && !picked.some((row) => row.symbol === key))
+      .map((symbol) => sent.get(symbol)?.note ?? symbol);
+    const changed = dropped.length > 0 || picked.some((row) => row.fresh);
 
-    if (withMaterial.length === 0) {
-      await markAlertSent(config, "offhigh_close_bet", day, "done", { note: `기록 ${saved}건, 알림 없음` });
-      console.log(`미돌파 종가배팅 · 기록 ${saved}건, 알림 없음(재료 있는 종목 없음)`);
+    if ((!picked.length && !dropped.length) || (slot.onlyIfChanged && !changed)) {
+      if (final) console.log(`미돌파 종가배팅 · 기록 ${saved}건, 알림 없음(재료 있는 중·대형 없음)`);
 
       return 0;
     }
 
-    if (!await notify(config, { text: message(withMaterial, day, candidates.length), url })) return 0;
+    if (!await notify(config, { text: message(picked, day, { dropped, slot: slot.label, total: candidates.length }), url })) return 0;
 
-    await markAlertSent(config, "offhigh_close_bet", day, "done", { note: withMaterial.map((row) => row.name ?? row.symbol).join(", ").slice(0, 200) });
-    console.log(`알림: 미돌파 종가배팅 · ${withMaterial.map((row) => row.name ?? row.symbol).join(", ")} (기록 ${saved})`);
+    for (const row of picked) await markAlertSent(config, "offhigh_close_bet", day, row.symbol, { note: row.name ?? row.symbol });
+    await markAlertSent(config, "offhigh_close_bet", day, slot.key, { note: picked.map((row) => row.name ?? row.symbol).join(", ").slice(0, 200) || "전부 빠짐" });
+    console.log(`알림: 미돌파 종가배팅 ${slot.label} · ${picked.map((row) => row.name ?? row.symbol).join(", ") || "-"}${final ? ` (기록 ${saved})` : ""}`);
 
-    return withMaterial.length;
+    return picked.length;
   } catch (error) {
     console.warn("offhigh close bet alert failed", error instanceof Error ? error.message : error);
 
@@ -171,20 +201,28 @@ const won = (value) => (Number.isFinite(Number(value)) ? `${Math.round(Number(va
 const eok = (value) => (Number.isFinite(Number(value)) ? `${Math.round(Number(value) / 1e8).toLocaleString("ko-KR")}억` : "—");
 const percent = (value) => (Number.isFinite(Number(value)) ? `${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(1)}%` : "—");
 
-function message(rows, day, total) {
+function message(rows, day, { dropped = [], slot = "15:10", total = rows.length } = {}) {
   const lines = [
-    `[종가배팅·재료] ${day} · 신고점은 아니지만 재료로 오른 것 ${rows.length}종목`,
+    `[종가배팅·재료 ${slot}] ${day} · 신고점은 아니지만 재료로 오른 중·대형 ${rows.length}종목`,
     ""
   ];
 
   for (const row of rows) {
-    lines.push(`${row.name ?? row.symbol} ${row.symbol} ${percent(row.day_move)} · ${won(row.close)} · 거래대금 ${eok(row.turnover)} · ${row.size_label ?? "?"}`);
+    lines.push(`${row.fresh && slot !== "15:10" ? "새 " : ""}${row.name ?? row.symbol} ${row.symbol} ${percent(row.day_move)} · ${won(row.close)} · 거래대금 ${eok(row.turnover)} · ${row.size_label ?? "?"}`);
     lines.push(`  60일 고점까지 ${percent(row.break_margin)} · 회전율 ${percent(row.turnover_ratio)}`);
-    lines.push(`  재료 ${row.material.at} ${row.material.headline}`);
+    lines.push(`  재료 ${row.alertMaterial.kind} ${row.alertMaterial.at} ${String(row.alertMaterial.text).slice(0, 70)}`);
+
+    if (row.alertMaterial.url) lines.push(`  ${row.alertMaterial.url}`);
+
     lines.push("");
   }
 
-  lines.push(`※ 오늘 미돌파 후보 ${total}종목 중 재료가 있는 것만 보냅니다. 나머지도 기록은 남습니다.`);
+  if (dropped.length) {
+    lines.push(`빠짐: ${dropped.join(", ")} — 앞 통에 있었는데 지금은 조건이나 재료를 못 넘습니다`);
+    lines.push("");
+  }
+
+  lines.push(`※ 오늘 미돌파 후보 ${total}종목 중 재료 있는 중·대형만 보냅니다(소형 제외). 기록은 전부 남습니다.`);
   lines.push("※ 미돌파는 412세션 실측 초과 +1.37%p·상회 53%로, 돌파(+3.25%p·62%)보다 약합니다. 같은 자리로 보지 마세요.");
 
   return lines.join("\n");
