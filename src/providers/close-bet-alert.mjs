@@ -1,4 +1,5 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
+import { classifyDisclosure, isMachineHeadline, isReasonHeadline, mentionsBadNews } from "./overnight-classify.mjs";
 import { loadCloseBetCandidates } from "./close-bet.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -11,26 +12,42 @@ import { sessionDate } from "./market-session.mjs";
  * 몇 분짜리**라 화면을 그때 보고 있지 않으면 없는 것과 같습니다. 짝꿍은 장중에
  * 수십 번 잡히니 언제 봐도 남아 있지만, 종가배팅은 15:30을 놓치면 다음 날입니다.
  *
- * **15:10에 보냅니다**(2026-10-12 사용자 요청: "15시 30분 전에, 되도록이면 15시 20분
- * 전에"). 15:20부터는 종가 단일가라 그 전에 받아야 주문을 생각할 여유가 있습니다.
- * 조건은 장중 표본으로 계산한 잠정값이고 15:30 확정과 조금 달라질 수 있습니다 --
- * 20분 앞당긴 만큼 더 달라질 수 있어서, 첫 통 뒤에 새로 조건을 넘은 종목은 15:25까지
- * 한 번씩 [추가]로 보냅니다. 종목마다 한 번이라 같은 이름이 두 번 가지는 않습니다.
+ * **15:10 · 15:15 · 15:20 세 번입니다**(2026-10-12 사용자 요청: "15시 10분 15분 이렇게
+ * 보내줘도 되고", "20분에도 보내줘 종가에 살 수도 있으니"). 15:20부터는 종가 단일가라
+ * 그 전에 받아야 주문을 생각할 여유가 있고, 15:20 통은 단일가에 넣을 사람을 위한
+ * 마지막 목록입니다. 조건은 장중 표본으로 계산한 잠정값이라 15:30 확정과 달라질 수
+ * 있습니다 -- 그래서 통마다 지금 목록 전체를 보내고 새로 들어온 것과 빠진 것을 적습니다.
+ * 15:15는 목록이 바뀌었을 때만, 15:20은 목록이 있으면 늘 보냅니다.
+ *
+ * **재료가 있는 종목만 보냅니다**(같은 날 사용자: "재료 꼭 있어야 한다 공시든 뉴스든").
+ * 재료는 직전 장 마감(15:30) 뒤부터 지금까지 나온 것입니다:
+ *   공시  classifyDisclosure가 "good"으로 보는 것. [기재정정]은 원본의 1/9 값이라 뺍니다
+ *   기사  isReasonHeadline -- 복기("~에 상한가")는 재료가 아닙니다. 악재·기계기사도 뺍니다
+ * 사용자 매매 기록에서 재료 있음 +5.9만 / 없음 −31.3만이었습니다([[user-close-bet-log]]).
  *
  * 청산은 익일 09:05~09:10입니다([[close-bet-findings]]). 알림에 같이 적는 것은
  * 그 시각을 아는 것이 조건의 일부이기 때문입니다 -- 들고 있으면 값이 달라집니다.
  */
 
-const alertMinute = 15 * 60 + 10;
+const slots = [
+  { key: "slot:1510", label: "15:10", minute: 15 * 60 + 10 },
+  { key: "slot:1515", label: "15:15 갱신", minute: 15 * 60 + 15, onlyIfChanged: true },
+  { key: "slot:1520", label: "15:20 최종 · 종가 단일가", minute: 15 * 60 + 20 }
+];
+/* 15:20 통을 놓친 재기동이 15:25까지는 따라잡습니다. 단일가 안에서도 15:30 전까지 주문은 됩니다. */
+const stopMinute = 15 * 60 + 25;
 /* 상한가로 보는 문턱. limit-up-queue.mjs와 같은 값입니다. */
 const limitUpRate = 29.5;
-/* 종가 단일가(15:20~15:30) 안에서도 주문은 낼 수 있어 추가분은 15:25까지 받습니다. */
-const stopMinute = 15 * 60 + 25;
 
 let running = false;
 
 export function closeBetAlertDue(minute) {
-  return minute >= alertMinute && minute < stopMinute;
+  return minute >= slots[0].minute && minute < stopMinute;
+}
+
+/** 지금 시각에 해당하는 칸. 15:13이면 15:10 칸, 15:22면 15:20 칸입니다. */
+function slotAt(minute) {
+  return [...slots].reverse().find((slot) => minute >= slot.minute) ?? null;
 }
 
 export async function notifyCloseBet(config, { minute, url } = {}) {
@@ -41,12 +58,12 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 
   try {
     const day = sessionDate("KR");
-
-    // 종목마다 한 번. 기록이 저장소에 있어 창 안에서 재기동해도 같은 종목을 또 보내지 않습니다.
+    const slot = slotAt(minute);
+    // 칸마다 한 번. 기록이 저장소에 있어 창 안에서 재기동해도 같은 칸을 또 보내지 않습니다.
     // "sent"는 10-12 이전의 하루 한 통 기록입니다 -- 그 키가 있는 날은 이미 끝난 날입니다.
     const sent = await loadAlertSent(config, "close_bet", day);
 
-    if (sent.has("sent")) return 0;
+    if (!slot || sent.has("sent") || sent.has(slot.key)) return 0;
 
     // 소형을 빼고 열 개를 채우려고 넉넉히 받습니다 -- 소형이 위를 다 차지하는 날
     // limit 10으로 받으면 중·대형이 잘려 나갑니다.
@@ -59,36 +76,39 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
     //   상한가 아님        +0.10 / −0.02, 최근 40일 −0.04 / −0.55   살 수 있음
     //   상한가·잠김 유지   +3.45                                    못 삼(마감 체결량 = 매수잔량의 6%)
     //   상한가·체결됨      −0.68                                    살 수 있지만 무너지는 날
-    // 하루 전엔 상한가만 남겼는데, 사용자가 "29.5%면 들어갈 수가 없다"고 짚었습니다 --
-    // 그러면 이 알림은 못 사는 종목 목록일 뿐입니다. 소형에서 들어갈 자리는 잠기기 전이고
-    // 그건 [상한가 직전](sangtta-watch.mjs)이 맡습니다. 기록은 nightly-review.mjs가
-    // 후보 전부를 따로 남기므로 채점 표본은 그대로 쌓입니다.
-    const today = candidates
-      .filter((row) => row.sessionDate === day && row.tier !== "소형")
+    // 소형에서 들어갈 자리는 잠기기 전이고 그건 [상한가 직전](sangtta-watch.mjs)이
+    // 맡습니다. 기록은 nightly-review.mjs가 후보 전부를 따로 남기므로 채점 표본은
+    // 재료 유무와 상관없이 그대로 쌓입니다.
+    const pool = candidates.filter((row) => row.sessionDate === day && row.tier !== "소형");
+    const material = await loadMaterial(config, day, pool.map((row) => row.symbol));
+    const today = pool
+      .filter((row) => material.has(row.symbol))
       .slice(0, 10)
-      .filter((row) => !sent.has(row.symbol));
+      .map((row) => ({ ...row, fresh: !sent.has(row.symbol), material: material.get(row.symbol) }));
+    const dropped = [...sent.keys()]
+      .filter((key) => !key.startsWith("slot:") && !today.some((row) => row.symbol === key))
+      .map((symbol) => sent.get(symbol)?.note ?? symbol);
+    const changed = dropped.length > 0 || today.some((row) => row.fresh);
 
     /*
-     * 조건을 넘은 것이 없으면 보내지 않습니다. "오늘은 없습니다"를 매일 보내면
-     * 알림을 읽지 않게 되고, 정작 있는 날을 놓칩니다.
-     *
-     * **날을 잠그지 않고 종목을 잠급니다.** 날을 잠그면 15:10에 아직 조건을 못 넘은
-     * 종목이 15:15에 넘어도 알림이 안 갑니다 -- 조건은 장중 표본으로 계산하는 잠정값이라
-     * 그 사이에 바뀌는 것이 정상입니다. 창이 15:25에 닫히므로 시도는 열다섯 번을 넘지
-     * 않고, 없는 날은 그냥 아무것도 안 간 채 끝납니다.
+     * 보낼 것이 없으면 보내지 않습니다. "오늘은 없습니다"를 매일 보내면 알림을 읽지
+     * 않게 되고, 정작 있는 날을 놓칩니다. 칸도 잠그지 않아 그 칸 안에서 다음 틱에
+     * 조건을 넘으면 그때 갑니다. 다만 앞 칸에서 보낸 것이 전부 빠졌으면 그건 알려야
+     * 합니다 -- 주문을 넣으려던 사람이 있습니다.
      */
-    if (!today.length) return 0;
+    if (!today.length && !dropped.length) return 0;
+    if (slot.onlyIfChanged && !changed) return 0;
 
     const queues = await loadLockedQueues(config, day, today.filter((row) => row.changeRateValue >= limitUpRate).map((row) => row.symbol))
       .catch(() => new Map());
     const marked = today.map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row));
-    const followUp = sent.size > 0;
-    const ok = await notify(config, { text: closeBetMessage(marked, day, { followUp }), url });
+    const ok = await notify(config, { text: closeBetMessage(marked, day, { dropped, slot: slot.label, total: pool.length }), url });
 
     if (!ok) return 0;
 
     for (const row of today) await markAlertSent(config, "close_bet", day, row.symbol, { note: row.name });
-    console.log(`알림: 종가배팅${followUp ? " 추가" : ""} · ${today.map((row) => row.name).join(", ")}`);
+    await markAlertSent(config, "close_bet", day, slot.key, { note: today.map((row) => row.name).join(", ").slice(0, 200) || "전부 빠짐" });
+    console.log(`알림: 종가배팅 ${slot.label} · ${today.map((row) => row.name).join(", ") || "-"}${dropped.length ? ` · 빠짐 ${dropped.join(", ")}` : ""}`);
 
     return today.length;
   } catch (error) {
@@ -98,6 +118,50 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
   } finally {
     running = false;
   }
+}
+
+/*
+ * 재료 -- 직전 장 마감 뒤부터 지금까지의 공시와 기사. 종목마다 가장 이른 것 하나.
+ *
+ * 가장 이른 것을 고르는 것은 방아쇠가 대개 앞에 있어서입니다. 공시를 기사보다 먼저
+ * 봅니다 -- 같은 사건이면 공시가 원본입니다. 직전 장은 일봉에서 읽습니다; 달력으로
+ * 하루 전을 잡으면 월요일에 금요일 저녁 공시가 빠집니다.
+ */
+export async function loadMaterial(config, day, symbols) {
+  if (!symbols.length) return new Map();
+
+  const { rows: last } = await query(config, `
+    SELECT max(session_date)::text AS day FROM kr_daily_bars WHERE session_date < $1::date`, [day]);
+  const since = new Date(`${last[0]?.day ?? day}T15:30:00+09:00`);
+  const { rows: filed } = await query(config, `
+    SELECT symbol, to_char(filed_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS at,
+           report_name, title, original_url
+      FROM market_disclosures
+     WHERE market = 'KR' AND symbol = ANY($1) AND filed_at >= $2 AND filed_at <= now()
+     ORDER BY filed_at`, [symbols, since]);
+  const { rows: news } = await query(config, `
+    SELECT s AS symbol, to_char(published_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS at,
+           headline, original_url
+      FROM market_news_items, unnest(related_symbols) AS s
+     WHERE region = 'KR' AND s = ANY($1) AND published_at >= $2 AND published_at <= now()
+     ORDER BY published_at`, [symbols, since]);
+  const found = new Map();
+
+  for (const row of filed) {
+    if (found.has(row.symbol) || String(row.report_name ?? "").startsWith("[기재정정]")) continue;
+    if (classifyDisclosure(row.report_name, row.title) !== "good") continue;
+
+    found.set(row.symbol, { at: row.at, kind: "공시", text: row.report_name, url: row.original_url });
+  }
+
+  for (const row of news) {
+    if (found.has(row.symbol)) continue;
+    if (!isReasonHeadline(row.headline) || mentionsBadNews(row.headline) || isMachineHeadline(row.headline)) continue;
+
+    found.set(row.symbol, { at: row.at, kind: "기사", text: row.headline, url: row.original_url });
+  }
+
+  return found;
 }
 
 const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
@@ -131,10 +195,8 @@ async function loadLockedQueues(config, day, symbols) {
  * 수만큼 반복되고, 정작 종목마다 다른 숫자가 그 사이에 파묻힙니다. 화면이
  * groupByTier로 하는 일과 같습니다.
  */
-export function closeBetMessage(candidates, day, { followUp = false } = {}) {
-  const lines = [followUp
-    ? `[종가배팅 추가] ${day} · 첫 통 뒤 새로 조건을 넘은 ${candidates.length}종목`
-    : `[종가배팅] ${day} · 후보 ${candidates.length}종목 · 오늘 종가에 사는 것`, ""];
+export function closeBetMessage(candidates, day, { dropped = [], slot = "15:10", total = candidates.length } = {}) {
+  const lines = [`[종가배팅 ${slot}] ${day} · 재료 있는 ${candidates.length}종목 (중·대형 후보 ${total} 중)`, ""];
   const byTier = new Map();
 
   for (const row of candidates) {
@@ -157,7 +219,7 @@ export function closeBetMessage(candidates, day, { followUp = false } = {}) {
 
     for (const row of rows) {
       lines.push(
-        `  ${row.name} ${row.symbol} ${won(row.closePrice)}원`
+        `  ${row.fresh && slot !== "15:10" ? "새 " : ""}${row.name} ${row.symbol} ${won(row.closePrice)}원`
         + ` (${row.changeRateValue > 0 ? "+" : ""}${row.changeRateValue}%)`
         + ` 회전 ${row.turnoverRatio}%`
       );
@@ -168,15 +230,18 @@ export function closeBetMessage(candidates, day, { followUp = false } = {}) {
         lines.push(`    └ 상한가 잠김 · 종가 체결 어려움${queue}. 체결되면 무너지는 날 (실측 4건 중앙 −0.68%p)`);
       }
 
-      for (const item of (row.evidence ?? []).slice(0, 1)) {
-        if (!item.headline) continue;
+      if (row.material) {
+        lines.push(`    재료 ${row.material.kind} ${row.material.at} ${String(row.material.text).slice(0, 70)}`);
 
-        lines.push(`    ${item.headline.slice(0, 80)}`);
-
-        if (item.url) lines.push(`    ${item.url}`);
+        if (row.material.url) lines.push(`    ${row.material.url}`);
       }
     }
 
+    lines.push("");
+  }
+
+  if (dropped.length) {
+    lines.push(`빠짐: ${dropped.join(", ")} — 앞 통에 있었는데 지금은 조건이나 재료를 못 넘습니다`);
     lines.push("");
   }
 
