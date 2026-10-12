@@ -11,18 +11,21 @@ import { sessionDate } from "./market-session.mjs";
  * 몇 분짜리**라 화면을 그때 보고 있지 않으면 없는 것과 같습니다. 짝꿍은 장중에
  * 수십 번 잡히니 언제 봐도 남아 있지만, 종가배팅은 15:30을 놓치면 다음 날입니다.
  *
- * 15:20에 보냅니다. 조건은 장중 표본으로 계산한 잠정값이고 15:30 확정과 조금
- * 달라질 수 있지만, 확정된 뒤에 보내면 주문을 낼 시간이 없습니다. 10분은
- * 잠정값이 뒤집힐 여지와 주문을 낼 여유를 맞바꾼 값입니다.
+ * **15:10에 보냅니다**(2026-10-12 사용자 요청: "15시 30분 전에, 되도록이면 15시 20분
+ * 전에"). 15:20부터는 종가 단일가라 그 전에 받아야 주문을 생각할 여유가 있습니다.
+ * 조건은 장중 표본으로 계산한 잠정값이고 15:30 확정과 조금 달라질 수 있습니다 --
+ * 20분 앞당긴 만큼 더 달라질 수 있어서, 첫 통 뒤에 새로 조건을 넘은 종목은 15:25까지
+ * 한 번씩 [추가]로 보냅니다. 종목마다 한 번이라 같은 이름이 두 번 가지는 않습니다.
  *
  * 청산은 익일 09:05~09:10입니다([[close-bet-findings]]). 알림에 같이 적는 것은
  * 그 시각을 아는 것이 조건의 일부이기 때문입니다 -- 들고 있으면 값이 달라집니다.
  */
 
-const alertMinute = 15 * 60 + 20;
+const alertMinute = 15 * 60 + 10;
 /* 상한가로 보는 문턱. limit-up-queue.mjs와 같은 값입니다. */
 const limitUpRate = 29.5;
-const stopMinute = 15 * 60 + 32;
+/* 종가 단일가(15:20~15:30) 안에서도 주문은 낼 수 있어 추가분은 15:25까지 받습니다. */
+const stopMinute = 15 * 60 + 25;
 
 let running = false;
 
@@ -39,8 +42,11 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
   try {
     const day = sessionDate("KR");
 
-    // 하루 한 통. 기록이 저장소에 있어 15:25에 재기동해도 15:20 것을 또 보내지 않습니다.
-    if ((await loadAlertSent(config, "close_bet", day)).has("sent")) return 0;
+    // 종목마다 한 번. 기록이 저장소에 있어 창 안에서 재기동해도 같은 종목을 또 보내지 않습니다.
+    // "sent"는 10-12 이전의 하루 한 통 기록입니다 -- 그 키가 있는 날은 이미 끝난 날입니다.
+    const sent = await loadAlertSent(config, "close_bet", day);
+
+    if (sent.has("sent")) return 0;
 
     // 소형을 빼고 열 개를 채우려고 넉넉히 받습니다 -- 소형이 위를 다 차지하는 날
     // limit 10으로 받으면 중·대형이 잘려 나갑니다.
@@ -59,28 +65,30 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
     // 후보 전부를 따로 남기므로 채점 표본은 그대로 쌓입니다.
     const today = candidates
       .filter((row) => row.sessionDate === day && row.tier !== "소형")
-      .slice(0, 10);
+      .slice(0, 10)
+      .filter((row) => !sent.has(row.symbol));
 
     /*
      * 조건을 넘은 것이 없으면 보내지 않습니다. "오늘은 없습니다"를 매일 보내면
      * 알림을 읽지 않게 되고, 정작 있는 날을 놓칩니다.
      *
-     * **여기서 날을 잠그지 않습니다.** 잠그면 15:20에 아직 조건을 못 넘은 종목이
-     * 15:25에 넘어도 알림이 안 갑니다 -- 조건은 장중 표본으로 계산하는 잠정값이라
-     * 그 10분 사이에 바뀌는 것이 정상입니다. 창이 15:32에 닫히므로 잠그지 않아도
-     * 시도는 열두 번을 넘지 않고, 없는 날은 그냥 아무것도 안 간 채 끝납니다.
+     * **날을 잠그지 않고 종목을 잠급니다.** 날을 잠그면 15:10에 아직 조건을 못 넘은
+     * 종목이 15:15에 넘어도 알림이 안 갑니다 -- 조건은 장중 표본으로 계산하는 잠정값이라
+     * 그 사이에 바뀌는 것이 정상입니다. 창이 15:25에 닫히므로 시도는 열다섯 번을 넘지
+     * 않고, 없는 날은 그냥 아무것도 안 간 채 끝납니다.
      */
     if (!today.length) return 0;
 
     const queues = await loadLockedQueues(config, day, today.filter((row) => row.changeRateValue >= limitUpRate).map((row) => row.symbol))
       .catch(() => new Map());
     const marked = today.map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row));
-    const ok = await notify(config, { text: closeBetMessage(marked, day), url });
+    const followUp = sent.size > 0;
+    const ok = await notify(config, { text: closeBetMessage(marked, day, { followUp }), url });
 
     if (!ok) return 0;
 
-    await markAlertSent(config, "close_bet", day, "sent", { note: today.map((row) => row.name).join(", ").slice(0, 200) });
-    console.log(`알림: 종가배팅 · ${today.map((row) => row.name).join(", ")}`);
+    for (const row of today) await markAlertSent(config, "close_bet", day, row.symbol, { note: row.name });
+    console.log(`알림: 종가배팅${followUp ? " 추가" : ""} · ${today.map((row) => row.name).join(", ")}`);
 
     return today.length;
   } catch (error) {
@@ -123,8 +131,10 @@ async function loadLockedQueues(config, day, symbols) {
  * 수만큼 반복되고, 정작 종목마다 다른 숫자가 그 사이에 파묻힙니다. 화면이
  * groupByTier로 하는 일과 같습니다.
  */
-export function closeBetMessage(candidates, day) {
-  const lines = [`[종가배팅] ${day} · 후보 ${candidates.length}종목 · 오늘 종가에 사는 것`, ""];
+export function closeBetMessage(candidates, day, { followUp = false } = {}) {
+  const lines = [followUp
+    ? `[종가배팅 추가] ${day} · 첫 통 뒤 새로 조건을 넘은 ${candidates.length}종목`
+    : `[종가배팅] ${day} · 후보 ${candidates.length}종목 · 오늘 종가에 사는 것`, ""];
   const byTier = new Map();
 
   for (const row of candidates) {
@@ -170,7 +180,7 @@ export function closeBetMessage(candidates, day) {
     lines.push("");
   }
 
-  lines.push("15:20 잠정값입니다. 청산은 익일 09:05~09:10.");
+  lines.push("장중 잠정값입니다(15:30 종가에 확정). 청산은 익일 09:05~09:10.");
 
   return lines.join("\n");
 }

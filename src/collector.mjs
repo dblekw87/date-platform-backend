@@ -911,8 +911,8 @@ function startMaterialAlert(config) {
 /*
  * 종가배팅 알림.
  *
- * 간격을 두지 않습니다 -- provider가 하루 한 번만 보내도록 스스로 잠그고, 창이
- * 15:20~15:32로 좁아 틱마다 물어봐도 하루에 열두 번을 넘지 않습니다. 여기서
+ * 간격을 두지 않습니다 -- provider가 종목마다 한 번만 보내도록 스스로 잠그고, 창이
+ * 15:10~15:25로 좁아 틱마다 물어봐도 하루에 열다섯 번을 넘지 않습니다. 여기서
  * 간격을 또 두면 그 창을 통째로 건너뛸 수 있습니다.
  */
 function startCloseBetAlert(config, minute) {
@@ -1544,7 +1544,7 @@ export function startMarketCollector(config) {
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
         startCloseBetAlert(config, minute);
-        // 종가배팅과 같은 창(15:20~15:32), 같은 이유. provider가 하루 한 번을 잠급니다.
+        // 15:20~15:32 창(종가배팅은 10-12부터 15:10으로 앞당김). provider가 하루 한 번을 잠급니다.
         notifySectorFollowers(config, { minute, url: config.publicSiteUrl })
           .catch((error) => console.warn("collector: sector follower alert failed", error instanceof Error ? error.message : error));
         // 같은 창. 종가배팅 조건에서 60일 신고점 하나만 못 맞춘 것들이고,

@@ -42,7 +42,7 @@ export const heldMark = "held:";
 const heldFromMinute = 8 * 60 + 50;
 /* 15:20 창 직전까지. 그 뒤는 사용자가 보는 시각이라 그대로 보냅니다. */
 const heldToMinute = 15 * 60 + 15;
-/* 요약을 보내는 창. 종가배팅·미돌파와 같은 창입니다(provider가 하루 한 번을 잠굽니다). */
+/* 요약을 보내는 창. 미돌파와 같은 창입니다(provider가 하루 한 번을 잠굽니다). 종가배팅은 10-12부터 15:10. */
 const digestFromMinute = 15 * 60 + 20;
 const digestToMinute = 15 * 60 + 32;
 
