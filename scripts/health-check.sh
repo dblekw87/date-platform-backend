@@ -68,9 +68,18 @@ if [ "$us_open" = yes ]; then
   [ "$fresh" -lt 50 ] && echo "PROBLEM US samples in the last 15 min: $fresh (정규장 시간인데 비었습니다)"
 fi
 
-# 파이프라인이 전날 미국장을 받아왔는가. 미국 거래일 기준으로 이틀 넘게 밀리면 문제.
-lag=$($PSQL "select current_date - max(session_date) from us_daily_bars;" 2>/dev/null)
-[ -n "$lag" ] && [ "$lag" -gt 3 ] && echo "PROBLEM us_daily_bars is ${lag} days behind"
+# 파이프라인이 전날 미국장을 받아왔는가. 달력 날이 아니라 **빠진 평일 수**로 셉니다.
+# 달력으로 세면(예전엔 3일 초과) 주말을 낀 화요일 아침마다 헛경고가 났습니다 --
+# 월요일 미국장은 다음 날 한국 13:00~13:45에야 공개되는데, 그 전까지 금요일과 4일
+# 차이라서요(2026-10-13 09:22~13:22 여섯 번). 그래서 14시 전에는 어제 미국장 하나가
+# 아직 없는 것이 정상이고, 미국 휴장 하루도 봐줍니다(휴장일은 us_daily_bars에 행이 없음).
+missing=$($PSQL "select count(*) from generate_series((select max(session_date) + 1 from us_daily_bars), (now() at time zone 'Asia/Seoul')::date - 1, interval '1 day') d where extract(isodow from d) < 6;" 2>/dev/null)
+# 시각도 DB에서 읽습니다. Git Bash는 TZ=Asia/Seoul을 무시하고 UTC를 줍니다.
+kst_hour=$($PSQL "select extract(hour from now() at time zone 'Asia/Seoul')::int;" 2>/dev/null)
+[ -z "$kst_hour" ] && kst_hour=0
+allowed=1
+[ "$((10#$kst_hour))" -lt 14 ] && allowed=2
+[ -n "$missing" ] && [ "$missing" -gt "$allowed" ] && echo "PROBLEM us_daily_bars is missing ${missing} US weekday session(s)"
 
 # 국내 뉴스·공시는 휴장 중에도 들어옵니다. 연휴에 나오는 공시가 월요일 재료가 되므로
 # 여기가 멈추면 국내장이 닫혀 있어도 손해입니다.
