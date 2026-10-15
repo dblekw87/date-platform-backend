@@ -90,7 +90,10 @@ function Test-SessionRunning {
     foreach ($session in $sessions) {
       if ($session.kind -ne "background") { continue }
       if ($session.status -eq "exited") { continue }
-      if ($session.cwd -eq $ProjectPath) { return $true }
+      if ($session.cwd -ne $ProjectPath) { continue }
+      if (Test-SessionDead -ClaudePath $ClaudePath -Id $session.id) { continue }
+
+      return $true
     }
   } catch {
     # A listing we cannot read is not evidence that nothing is running, but it
@@ -102,6 +105,36 @@ function Test-SessionRunning {
   }
 
   return $false
+}
+
+<#
+  목록에 있다고 살아 있는 것은 아닙니다 (2026-10-15).
+
+  9/20에 띄운 1d0eb7b2가 `state: blocked`로 3주 넘게 목록에 남아 있었는데, 실제로는
+  데몬이 없었습니다 - `claude logs`가 `connect ENOENT \\.\pipe\cc-daemon-*-control`로
+  끝났습니다. 위 판정은 cwd만 보므로 이 항목 하나가 매 로그온마다 "이미 떠 있다"로
+  자동 기동을 막았고, 폰이 붙을 세션이 없었습니다.
+
+  status·state로 가르지 않습니다. 살아 있는 세션도 권한을 기다리면 blocked이고,
+  죽은 항목은 status 칸이 비어 있었는데 그게 늘 그런지는 모릅니다. 대신 실제로
+  붙어 보고, 로그를 못 읽으면 죽은 것으로 보고 내립니다. `claude stop`은 대화를
+  지우지 않으므로 내리는 쪽이 안전합니다.
+
+  Test-SessionRunning 안에서만 불리므로 EAP는 거기서 이미 Continue입니다.
+#>
+function Test-SessionDead {
+  param([string] $ClaudePath, [string] $Id)
+
+  if (-not $Id) { return $false }
+
+  $probe = (& $ClaudePath logs $Id 2>&1 | Out-String)
+
+  if ($probe -notmatch "Couldn't read logs") { return $false }
+
+  Write-Line "죽은 세션 $Id 를 내립니다 - $($probe.Trim())"
+  & $ClaudePath stop $Id 2>&1 | Out-Null
+
+  return $true
 }
 
 Write-Line "--- start-claude-rc ---"
