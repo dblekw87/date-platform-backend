@@ -80,10 +80,22 @@ export async function notifyOffHighCloseBet(config, { minute, url } = {}) {
     const saved = final ? await recordOffHighCloseBet(config, day, candidates) : 0;
     const pool = candidates.filter((row) => row.size_label && row.size_label !== "소형");
     const material = await loadMaterial(config, day, pool.map((row) => row.symbol));
+    /*
+     * 종가배팅에서 넘어온 종목. 2026-10-16 우리로가 15:10 종가배팅에 나갔다가 15:19에
+     * 60일 고점 아래로 내려와, 15:20 종가배팅 통엔 "빠짐"으로, 바로 다음 이 통엔 그냥
+     * 후보로 왔습니다. 두 통을 이어 읽으면 같은 종목이 버려졌다가 다시 나온 것처럼
+     * 보이므로 옮겨 온 것임을 적습니다.
+     */
+    const closeBetSent = await loadAlertSent(config, "close_bet", day);
     const picked = pool
       .filter((row) => material.has(row.symbol))
       .slice(0, alertLimit)
-      .map((row) => ({ ...row, alertMaterial: material.get(row.symbol), fresh: !sent.has(row.symbol) }));
+      .map((row) => ({
+        ...row,
+        alertMaterial: material.get(row.symbol),
+        fresh: !sent.has(row.symbol),
+        moved: closeBetSent.has(row.symbol)
+      }));
     const dropped = [...sent.keys()]
       .filter((key) => !key.startsWith("slot:") && !picked.some((row) => row.symbol === key))
       .map((symbol) => sent.get(symbol)?.note ?? symbol);
@@ -208,7 +220,9 @@ function message(rows, day, { dropped = [], slot = "15:10", total = rows.length 
   ];
 
   for (const row of rows) {
-    lines.push(`${row.fresh && slot !== "15:10" ? "새 " : ""}${row.name ?? row.symbol} ${row.symbol} ${percent(row.day_move)} · ${won(row.close)} · 거래대금 ${eok(row.turnover)} · ${row.size_label ?? "?"}`);
+    const tag = row.moved ? "종가배팅에서 옮김 " : row.fresh && slot !== "15:10" ? "새 " : "";
+
+    lines.push(`${tag}${row.name ?? row.symbol} ${row.symbol} ${percent(row.day_move)} · ${won(row.close)} · 거래대금 ${eok(row.turnover)} · ${row.size_label ?? "?"}`);
     lines.push(`  60일 고점까지 ${percent(row.break_margin)} · 회전율 ${percent(row.turnover_ratio)}`);
     lines.push(`  재료 ${row.alertMaterial.kind} ${row.alertMaterial.at} ${String(row.alertMaterial.text).slice(0, 70)}`);
 

@@ -259,7 +259,8 @@ export function closeBetMessage(candidates, day, { dropped = [], slot = "15:10",
   }
 
   if (dropped.length) {
-    lines.push(`빠짐: ${dropped.join(", ")} — 앞 통에 있었는데 지금은 조건이나 재료를 못 넘습니다`);
+    // 60일 고점 아래로만 내려온 것이면 바로 뒤 미돌파 통에 다시 나옵니다(2026-10-16 우리로).
+    lines.push(`빠짐: ${dropped.join(", ")} — 앞 통에 있었는데 지금은 조건이나 재료를 못 넘습니다. 60일 고점 아래로만 내려왔으면 미돌파 알림에 다시 나옵니다`);
     lines.push("");
   }
 
