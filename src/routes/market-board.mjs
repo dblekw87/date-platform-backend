@@ -22,6 +22,7 @@ import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsOvernightGainers } from "../providers/market-brief-alert.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
+import { loadUsSectorMap } from "../providers/us-sector-map.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
 import { formatTradingAmount } from "../providers/format.mjs";
 import { buildThemeBrief } from "../providers/themes.mjs";
@@ -99,6 +100,7 @@ function baseMarketBoardData(providerStatuses) {
     usSurgeCandidates: [],
     usPremarketMovers: [],
     usOvernightGainers: [],
+    usSectorMap: null,
     krCloseBetCandidates: [],
     krLimitPairs: [],
     krHaltedStocks: [],
@@ -820,6 +822,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
         // hours old while the stocks it names are moving.
         usPremarketMovers: (await loadUsPremarketMovers(config)).movers,
         usOvernightGainers: await loadUsOvernightGainers(config).catch(() => []),
+        usSectorMap: await loadUsSectorMap().catch(() => null),
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -934,6 +937,9 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // The last US regular session's biggest gainers, off our own samples. The
     // 07:30 cloud briefing reads them from the snapshot; it cannot reach the DB.
     usOvernightGainers: await loadUsOvernightGainers(config).catch(() => []),
+    // The sector map image the collector draws once per US session; null until
+    // the first one exists.
+    usSectorMap: await loadUsSectorMap().catch(() => null),
     // Stocks the exchange has stopped, largest first. Read from the daily
     // universe pass rather than a ranking, because a halted stock has no
     // turnover to be ranked by and so appears in none of them - which is why

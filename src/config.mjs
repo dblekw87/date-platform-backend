@@ -46,6 +46,8 @@ export function readConfig() {
     // current is ~2,300 symbols and a free key allows five requests a minute,
     // so 250 a night is roughly an hour and brings the whole set round weekly.
     usPipelineShareSlice: Number(process.env.US_PIPELINE_SHARE_SLICE ?? 250),
+    // 미국 섹터 지도를 그리는 파이썬(matplotlib 필요). 없으면 지도만 빠지고 나머지는 그대로 돕니다.
+    pythonBin: process.env.PYTHON_BIN || "python",
     toss: {
       baseUrl: process.env.TOSS_INVEST_BASE_URL ?? "https://openapi.tossinvest.com",
       clientId: process.env.TOSS_INVEST_CLIENT_ID,

@@ -34,6 +34,7 @@ import { notifyWeekendBrief } from "./providers/weekend-brief.mjs";
 import { materialAlertDue, notifyNewMaterial } from "./providers/material-alert.mjs";
 import { loadCorpIndex } from "./providers/industry.mjs";
 import { publishBoardSnapshot } from "./snapshot.mjs";
+import { refreshUsSectorMap } from "./providers/us-sector-map.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
 import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, krxAfterMarketOpenMinute, sessionDate } from "./providers/market-session.mjs";
@@ -1423,6 +1424,14 @@ function startSnapshotPublish(config) {
   lastSnapshotAt = Date.now();
 
   (async () => {
+    // Drawn into the snapshot repo before the board is built, so the push below
+    // carries the image and the board can point at it. Once per US session.
+    const map = await refreshUsSectorMap(config)
+      .catch((error) => ({ error: error instanceof Error ? error.message : error }));
+
+    if (map.rendered) console.log(`collector: US sector map drawn · ${map.sessionDate} · ${map.stocks} stocks`);
+    else if (map.error) console.warn("collector: US sector map failed", map.error);
+
     const board = Date.now() - lastBoardAt < boardReuseMs && lastBoard
       ? lastBoard
       : await getMarketBoard(config);

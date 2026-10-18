@@ -117,15 +117,20 @@ const sectorAliases = { "통신장비": "광통신·네트워크" };
  * 직전 미국 정규장의 보통주 한 줄씩 -- 섹터를 붙이고 거래대금 바닥 아래는 버립니다.
  * 섹터 순위와 상승 종목 목록이 같은 표본·같은 섹터 이름을 쓰게 하려고 나눴습니다.
  * 그래야 아침 브리핑의 "바이오 +3.1%"와 그 아래 종목 이름이 같은 자로 잰 것이 됩니다.
+ *
+ * 시가총액도 같이 읽습니다(섹터 지도가 씁니다). 상장 종목 기준 값(us_listed_shares,
+ * Massive)이 먼저고 없으면 SEC 주식수 × 전날 종가입니다 -- SEC 값은 ADR에서 원주를
+ * 세고, META·GOOGL처럼 주식 종류가 여럿인 회사는 아예 비어 있습니다.
  */
-async function usSessionStocks(config) {
+export async function usSessionStocks(config) {
   const { rows } = await query(config, `
     WITH latest AS (
       SELECT max(session_date) AS day FROM market_price_samples
        WHERE market = 'US' AND source = 'yahoo:us:regular:seen'
     )
     SELECT DISTINCT ON (s.symbol) s.symbol, s.name, s.session_date::text AS day,
-           s.change_rate::float8 AS rate, (s.volume * p.close)::float8 AS turnover, i.sic
+           s.change_rate::float8 AS rate, (s.volume * p.close)::float8 AS turnover, i.sic, k.cik,
+           coalesce(ls.market_cap, sc.shares * p.close)::float8 AS cap, s.observed_at
       FROM market_price_samples s
       JOIN latest l ON s.session_date = l.day
       JOIN LATERAL (
@@ -138,6 +143,16 @@ async function usSessionStocks(config) {
          WHERE d.symbol = s.symbol AND d.session_date < s.session_date
          ORDER BY d.session_date DESC LIMIT 1
       ) p ON true
+      LEFT JOIN LATERAL (
+        SELECT market_cap FROM us_listed_shares x
+         WHERE x.symbol = s.symbol AND x.market_cap > 0
+         ORDER BY x.as_of DESC LIMIT 1
+      ) ls ON true
+      LEFT JOIN LATERAL (
+        SELECT shares FROM us_share_counts c
+         WHERE c.cik = k.cik
+         ORDER BY c.period_end DESC LIMIT 1
+      ) sc ON true
       LEFT JOIN us_company_industry i ON i.cik = k.cik
      WHERE s.market = 'US' AND s.source = 'yahoo:us:regular:seen' AND s.change_rate IS NOT NULL
      ORDER BY s.symbol, s.observed_at DESC`);
