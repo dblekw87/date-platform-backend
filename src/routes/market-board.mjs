@@ -20,6 +20,7 @@ import { loadSecDisclosures } from "../providers/sec.mjs";
 import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadLimitUpEvening, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
+import { loadUsOvernightGainers } from "../providers/market-brief-alert.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
 import { formatTradingAmount } from "../providers/format.mjs";
@@ -97,6 +98,7 @@ function baseMarketBoardData(providerStatuses) {
     krPairTrades: [],
     usSurgeCandidates: [],
     usPremarketMovers: [],
+    usOvernightGainers: [],
     krCloseBetCandidates: [],
     krLimitPairs: [],
     krHaltedStocks: [],
@@ -817,6 +819,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
         // Extended-hours prices, which the snapshot never holds: the board can be
         // hours old while the stocks it names are moving.
         usPremarketMovers: (await loadUsPremarketMovers(config)).movers,
+        usOvernightGainers: await loadUsOvernightGainers(config).catch(() => []),
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -928,6 +931,9 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // then what that history's candidates are doing outside the bell.
     usSurgeCandidates: await loadUsSurgeCandidateBoard(config),
     usPremarketMovers: (await loadUsPremarketMovers(config)).movers,
+    // The last US regular session's biggest gainers, off our own samples. The
+    // 07:30 cloud briefing reads them from the snapshot; it cannot reach the DB.
+    usOvernightGainers: await loadUsOvernightGainers(config).catch(() => []),
     // Stocks the exchange has stopped, largest first. Read from the daily
     // universe pass rather than a ranking, because a halted stock has no
     // turnover to be ranked by and so appears in none of them - which is why

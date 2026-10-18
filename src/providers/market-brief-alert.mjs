@@ -113,14 +113,19 @@ const sectorMinMembers = 5;
 /* SEC 업종의 통신장비(SIC 366)에 루멘텀·시에나가 들어갑니다. 국내에서 읽는 이름으로. */
 const sectorAliases = { "통신장비": "광통신·네트워크" };
 
-export async function usSectorLines(config) {
+/*
+ * 직전 미국 정규장의 보통주 한 줄씩 -- 섹터를 붙이고 거래대금 바닥 아래는 버립니다.
+ * 섹터 순위와 상승 종목 목록이 같은 표본·같은 섹터 이름을 쓰게 하려고 나눴습니다.
+ * 그래야 아침 브리핑의 "바이오 +3.1%"와 그 아래 종목 이름이 같은 자로 잰 것이 됩니다.
+ */
+async function usSessionStocks(config) {
   const { rows } = await query(config, `
     WITH latest AS (
       SELECT max(session_date) AS day FROM market_price_samples
        WHERE market = 'US' AND source = 'yahoo:us:regular:seen'
     )
-    SELECT DISTINCT ON (s.symbol) s.symbol, s.name, s.change_rate::float8 AS rate,
-           (s.volume * p.close)::float8 AS turnover, i.sic
+    SELECT DISTINCT ON (s.symbol) s.symbol, s.name, s.session_date::text AS day,
+           s.change_rate::float8 AS rate, (s.volume * p.close)::float8 AS turnover, i.sic
       FROM market_price_samples s
       JOIN latest l ON s.session_date = l.day
       JOIN LATERAL (
@@ -136,7 +141,7 @@ export async function usSectorLines(config) {
       LEFT JOIN us_company_industry i ON i.cik = k.cik
      WHERE s.market = 'US' AND s.source = 'yahoo:us:regular:seen' AND s.change_rate IS NOT NULL
      ORDER BY s.symbol, s.observed_at DESC`);
-  const sectors = new Map();
+  const stocks = [];
 
   for (const row of rows) {
     if (!(row.turnover >= sectorMinTurnover)) continue;
@@ -144,13 +149,22 @@ export async function usSectorLines(config) {
     let sector = classifyTheme(row.symbol, row.name);
 
     if (sector === "미분류") sector = themeForSicCode(row.sic) ?? sector;
-    if (sector === "미분류" || sector === "ETF") continue;
+    if (sector === "ETF") continue;
 
-    sector = sectorAliases[sector] ?? sector;
+    stocks.push({ ...row, sector: sectorAliases[sector] ?? sector });
+  }
 
-    if (!sectors.has(sector)) sectors.set(sector, []);
+  return stocks;
+}
 
-    sectors.get(sector).push(row);
+export async function usSectorLines(config) {
+  const sectors = new Map();
+
+  for (const row of await usSessionStocks(config)) {
+    if (row.sector === "미분류") continue;
+    if (!sectors.has(row.sector)) sectors.set(row.sector, []);
+
+    sectors.get(row.sector).push(row);
   }
 
   const ranked = [...sectors]
@@ -179,6 +193,47 @@ export async function usSectorLines(config) {
     "  내린 섹터",
     ...ranked.slice(-2).reverse().map(line)
   ];
+}
+
+/*
+ * 직전 미국 정규장에서 많이 오른 종목.
+ *
+ * 사용자 요청(2026-10-18): 07:30 아침 브리핑에 "전날 미국장에서 올랐던 것들, 종목들".
+ * 그 루틴은 클라우드에서 돌아 이 DB에 닿지 못하고 보드 스냅샷만 읽으므로, 보드에
+ * 실어 보냅니다. 보드의 usLeadingStocks는 토스 순위라 쓸 수 없었습니다 -- 쿼터가
+ * 막힌 뒤로 거래대금이 $2,525B처럼 찍힙니다.
+ *
+ * 섹터 순위와 같은 표본(보통주 · 거래대금 약 $20M 이상)입니다. 문턱 아래의 +100%는
+ * 호가 몇 개로 만들어진 것이라 "어제 무엇이 갔나"를 대신 말하게 둘 수 없습니다.
+ * 그래도 위쪽은 나노캡 급등이 많습니다 -- 탐지된 것이지 매수 신호가 아닙니다
+ * ([[us-nanocap-blindspot]]). 그래서 거래대금과 섹터를 같이 실어 읽는 쪽이 거르게 둡니다.
+ *
+ * 묶음은 둘입니다. 상승률만 세면 10-16에 열 자리가 HODO·SGRX 같은 소형주로 차고
+ * 그날 오른 XOM·LMT는 안 나옵니다. 국내로 옮겨붙는 쪽은 대개 후자라, 거래대금
+ * $500M 이상에서 따로 다섯을 뽑습니다. 겹치는 종목은 큰 쪽에만 둡니다.
+ */
+const gainerCount = 10;
+const largeGainerCount = 5;
+const largeMinTurnover = 5e8;
+
+export async function loadUsOvernightGainers(config) {
+  const rising = (await usSessionStocks(config))
+    .filter((row) => row.rate > 0)
+    .sort((a, b) => b.rate - a.rate);
+  const large = rising.filter((row) => row.turnover >= largeMinTurnover).slice(0, largeGainerCount);
+  const taken = new Set(large.map((row) => row.symbol));
+  const rest = rising.filter((row) => !taken.has(row.symbol)).slice(0, gainerCount);
+  const shape = (group) => (row) => ({
+    changeRateValue: Number(row.rate.toFixed(2)),
+    group,
+    name: row.name,
+    sector: row.sector,
+    sessionDate: row.day,
+    symbol: row.symbol,
+    turnoverValue: Math.round(row.turnover)
+  });
+
+  return [...large.map(shape("거래대금 $500M 이상")), ...rest.map(shape("상승률 상위"))];
 }
 
 /* 밤사이 미국. 우리가 이미 1분마다 찍는 값이라 새로 받아올 것이 없습니다. */
