@@ -129,8 +129,10 @@ async function score() {
       SELECT o.kind, o.session_date, o.symbol, b.open AS next_open, b.close AS next_close
         FROM kr_signal_outcomes o
         JOIN LATERAL (
+          -- 거래정지일(시가 0)은 건너뛰고 풀린 날 시가로 채점합니다. 정지 중이면
+          -- 채점을 미룹니다 -- 예전에는 시가 0을 받아 -100%로 남겼습니다.
           SELECT open, close FROM kr_daily_bars d
-           WHERE d.symbol = o.symbol AND d.session_date > o.session_date
+           WHERE d.symbol = o.symbol AND d.session_date > o.session_date AND d.open > 0
            ORDER BY d.session_date LIMIT 1
         ) b ON true
        WHERE o.scored_at IS NULL
@@ -140,7 +142,7 @@ async function score() {
         FROM (SELECT symbol, session_date, open, close, volume,
                      lag(close) OVER (PARTITION BY symbol ORDER BY session_date) AS prev
                 FROM kr_daily_bars) t
-       WHERE prev > 0 AND close * volume >= 500000000
+       WHERE prev > 0 AND open > 0 AND open / prev > 0.69 AND close * volume >= 500000000
        GROUP BY session_date HAVING count(*) >= 50
     )
     UPDATE kr_signal_outcomes o

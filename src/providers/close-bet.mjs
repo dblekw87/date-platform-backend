@@ -236,7 +236,12 @@ export function closeBetCandidateSql({ breakout = true, day = null, since = null
     SELECT symbol, session_date, open, high, low, close, volume,
            close * volume AS turnover,
            lag(close) OVER w AS prev_close,
-           lead(open) OVER w AS next_open,
+           -- 다음 날 거래정지(시가 0 · 거래량 0)면 풀린 날 시가에 팝니다. lead(open)은
+           -- 그 0을 그대로 가져와 -100%로 채점했습니다 -- 상한가 다음 날 하루 정지된
+           -- 6건이 그랬고, 5건은 풀린 날 +10~19% 갭상승이었습니다(2026-10-18 실측).
+           -- 5거래일 넘게 묶이면 다른 매매라 비워 둡니다.
+           (array_agg(open) FILTER (WHERE open > 0) OVER (PARTITION BY symbol ORDER BY session_date
+                            ROWS BETWEEN 1 FOLLOWING AND 5 FOLLOWING))[1] AS next_open,
            max(close) OVER (PARTITION BY symbol ORDER BY session_date
                             ROWS BETWEEN ${lookback} PRECEDING AND 1 PRECEDING) AS prior_high,
            max(close) OVER (PARTITION BY symbol ORDER BY session_date

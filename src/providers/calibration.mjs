@@ -78,7 +78,9 @@ export async function calibrateCloseBet(config, { log = () => {} } = {}) {
     nights AS (
       SELECT session_date, avg((next_open / close - 1) * 100) AS night_gap
         FROM universe
-       WHERE next_open IS NOT NULL AND close > 0 AND close * volume >= 500000000
+       WHERE next_open > 0 AND close > 0 AND close * volume >= 500000000
+         -- 일봉이 수정주가가 아니라 액면분할·병합 날은 -50% 같은 갭이 생깁니다.
+         AND next_open / close > 0.69
        GROUP BY session_date
       HAVING count(*) >= 50
     )
@@ -134,22 +136,34 @@ export async function calibrateCloseBet(config, { log = () => {} } = {}) {
 export async function calibrateLimitPair(config, { log = () => {} } = {}) {
   const { rows } = await query(config, `
     WITH pairs AS (${limitPairSql()}),
+    /*
+     * 다음 날이 거래정지면 풀린 날 시가·종가로 봅니다(closeBetCandidateSql과 같은 규칙).
+     * 기준선은 다음 날 실제로 거래된 종목만, 거래대금 5억 이상으로 둡니다 -- 시가 0이
+     * -100%로 섞여 기준선을 2026-08 이후 평균 0.89%p 끌어내렸고, 그만큼 초과가
+     * 부풀어 있었습니다(2026-10-18 실측). 5억 문턱은 종가배팅 기준선과 맞춘 것입니다.
+     */
     bars AS (
-      SELECT symbol, session_date, close,
-             lead(open) OVER w AS next_open,
-             lead(close) OVER w AS next_close
+      SELECT symbol, session_date, close, volume,
+             lead(open) OVER w AS following_open,
+             (array_agg(open) FILTER (WHERE open > 0) OVER ahead)[1] AS next_open,
+             (array_agg(close) FILTER (WHERE open > 0) OVER ahead)[1] AS next_close
         FROM kr_daily_bars
-       WINDOW w AS (PARTITION BY symbol ORDER BY session_date)
+      WINDOW w AS (PARTITION BY symbol ORDER BY session_date),
+             ahead AS (PARTITION BY symbol ORDER BY session_date ROWS BETWEEN 1 FOLLOWING AND 5 FOLLOWING)
     ),
     outcomes AS (
-      SELECT symbol, session_date,
+      SELECT symbol, session_date, following_open, close * volume AS turnover,
              (next_open / close - 1) * 100 AS gap,
              (next_close / close - 1) * 100 AS hold
-        FROM bars WHERE close > 0 AND next_open IS NOT NULL AND next_close IS NOT NULL
+        FROM bars
+       WHERE close > 0 AND next_open IS NOT NULL AND next_close IS NOT NULL
+         AND next_open / close > 0.69
     ),
     nights AS (
       SELECT session_date, avg(gap) AS market_gap, avg(hold) AS market_hold
-        FROM outcomes GROUP BY session_date HAVING count(*) >= 50
+        FROM outcomes
+       WHERE following_open > 0 AND turnover >= 500000000
+       GROUP BY session_date HAVING count(*) >= 50
     )
     SELECT p.session_date::text AS d, p.lead_gap, p.leader_move,
            o.gap - n.market_gap AS excess,
