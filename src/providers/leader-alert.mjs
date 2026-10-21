@@ -144,8 +144,11 @@ function bySector(rows) {
         lead: representable.length > 0 ? Number(representable[0].turnover) : 0,
         members: shown,
         /* 보여줄 종목들의 중앙 등락. 평균으로 하면 한 종목의 +20%가 나머지 둘의
-           하락을 덮습니다 -- 섹터가 도는지 한 종목이 도는지를 가르려는 값입니다. */
-        move: moves.length ? moves[Math.floor(moves.length / 2)] : null,
+           하락을 덮습니다 -- 섹터가 도는지 한 종목이 도는지를 가르려는 값입니다.
+           짝수 개면 가운데 둘의 평균입니다. 2026-10-21 방산은 한화에어로가
+           대형이라 빠져 둘만 남았는데(LIG -13.23%, 한화시스템 +4.25%) 위쪽
+           하나를 집어 +4.25%로 주도 #2에 올랐습니다 -- 둘일 때 늘 큰 쪽이었습니다. */
+        move: median(moves),
         sector
       };
     })
@@ -169,6 +172,15 @@ function bySector(rows) {
     .filter((group) => group.move !== null && group.move > 0)
     .sort((left, right) => right.lead - left.lead)
     .slice(0, showSectors);
+}
+
+/** 정렬된 배열의 중앙값. 비어 있으면 null. */
+function median(sorted) {
+  if (sorted.length === 0) return null;
+
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 function flowOf(member) {
