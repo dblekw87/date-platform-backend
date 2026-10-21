@@ -4,7 +4,7 @@ import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
-import { loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
+import { loadOvernightHoldSymbols, loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
 import { calibrateCloseBet, calibrateLimitPair } from "./providers/calibration.mjs";
 import { collectKrDailyBars, collectKrDailyBarsFromKis } from "./providers/kr-daily-bars.mjs";
 import { recordKrListings } from "./providers/kr-listings.mjs";
@@ -468,11 +468,18 @@ function startSeenSample(config) {
 
   (async () => {
     const day = sessionDate("KR");
-    const symbols = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+    const venue = krTradingVenue();
+    const recorded = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+    // 프리마켓에는 어제 신호 종목도 묻습니다 -- 오늘 팔 것들이라 순위에 없어도
+    // 08시 가격이 있어야 "08시 매도 vs 09:05 매도"를 잴 수 있습니다. 한 번 찍히면
+    // 위 목록에 들어가 정규장에도 계속 따라갑니다. NXT에 없는 종목은 답이 없을 뿐입니다.
+    const holds = venue === "NX"
+      ? await loadOvernightHoldSymbols(config, { sessionDate: day }).catch(() => [])
+      : [];
+    const symbols = [...new Set([...recorded, ...holds])];
 
     if (symbols.length === 0) return;
 
-    const venue = krTradingVenue();
     const quotes = await loadKrQuotes(config, symbols, venue);
 
     if (quotes.length === 0) return;

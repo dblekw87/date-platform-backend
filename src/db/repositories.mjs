@@ -575,6 +575,29 @@ export async function loadSessionSymbols(config, { market, sessionDate }) {
   return result.rows.map((row) => row.symbol);
 }
 
+/**
+ * The symbols the previous session flagged for an overnight hold, every kind.
+ *
+ * Read in the NXT pre-market so the record has 08:00-08:50 prices for what is
+ * about to be sold. The user sells NXT-listed holds from 08:00 (2026-10-21), and
+ * 09:05-09:10 was the only exit we had prices for; a third of yesterday's
+ * signals never entered the morning ranking and so had no pre-market sample.
+ */
+export async function loadOvernightHoldSymbols(config, { sessionDate }) {
+  if (!config.databaseUrl) return [];
+
+  const result = await query(config, `
+    SELECT DISTINCT symbol
+    FROM kr_signal_outcomes
+    WHERE session_date = (
+      SELECT max(session_date) FROM kr_signal_outcomes WHERE session_date < $1::date
+    )
+    ORDER BY symbol
+  `, [sessionDate]);
+
+  return result.rows.map((row) => row.symbol);
+}
+
 export async function saveMarketNewsItems(config, headlines) {
   if (!config.databaseUrl || headlines.length === 0) return 0;
 
