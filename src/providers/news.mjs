@@ -1106,14 +1106,22 @@ export function attachKrUniverseTags(headlines, nameIndex, { limit = 4 } = {}) {
 
     let text = `${headline.text ?? ""} ${headline.originalText ?? ""}`;
     const found = [];
+    const matchedNames = new Set();
 
     for (const entry of nameIndex) {
       if (already.includes(entry.symbol) || found.includes(entry.symbol)) continue;
-      // 영문 별칭은 규칙이 다릅니다 -- 뒤에 영문 낱말이 이어지면 다른 회사입니다
-      // ("NANO Nuclear"는 나노가 아닙니다). symbol-alias.mjs에 실측을 적었습니다.
-      if (!(entry.isAlias ? aliasAppears(text, entry.name) : nameAppears(text, entry.name))) continue;
+      // 이름이 같은 항목은 함께 걸립니다. 손으로 넣은 별칭이 다른 종목의 상호와
+      // 같을 수 있고(기사의 "OCI"는 태양광이면 OCI홀딩스), 앞 항목이 이름을
+      // 지운 뒤라 다시 찾으면 놓칩니다. migrations/039에 사례를 적었습니다.
+      const hit = matchedNames.has(entry.name)
+        // 영문 별칭은 규칙이 다릅니다 -- 뒤에 영문 낱말이 이어지면 다른 회사입니다
+        // ("NANO Nuclear"는 나노가 아닙니다). symbol-alias.mjs에 실측을 적었습니다.
+        || (entry.isAlias ? aliasAppears(text, entry.name) : nameAppears(text, entry.name));
+
+      if (!hit) continue;
 
       found.push(entry.symbol);
+      matchedNames.add(entry.name);
       // 맞춘 이름은 지웁니다. 안 지우면 삼성전자를 맞춘 자리에서 삼성전기까지
       // 걸릴 여지가 남습니다.
       text = text.split(entry.name).join(" ");
