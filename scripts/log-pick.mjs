@@ -20,6 +20,7 @@ import { query } from "../src/db/client.mjs";
  *   종가매매  종가 매수      → 익일 09:05~09:10   next_open으로 채점하는 게 맞음
  *   상따      장중 상한가 부근 → 익일 시가         진입가가 종가가 아님(평단을 적을 것)
  *   장중매매  장중 매수      → 같은 날 장중       익일과 무관, 실현값으로만 채점
+ *   스윙      재료 보고 매수   → 며칠~몇 주        익일 채점은 의미 없음, 청산가로만 (2026-10-22 추가)
  *
  * 종류는 tier에 `사람 · <종류>`로, 평단·청산가는 entry_price·exit_price에 들어갑니다
  * (마이그레이션 038). 모르면 비워 두면 되고, 그때는 예전처럼 종가 기준으로 읽습니다.
@@ -55,11 +56,11 @@ function takeOptions(list, names) {
 
 const { rest: positional, values: options } = takeOptions(args, ["date", "type", "entry", "exit"]);
 const day = options.date ?? new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-const kinds = ["종가매매", "상따", "장중매매"];
+const kinds = ["종가매매", "상따", "장중매매", "스윙"];
 const [who, reason = ""] = positional;
 
 if (!who) {
-  console.log("사용법: node scripts/log-pick.mjs <종목명|코드> \"<이유>\" [--date YYYY-MM-DD] [--type 종가매매|상따|장중매매] [--entry 평단] [--exit 청산가]");
+  console.log("사용법: node scripts/log-pick.mjs <종목명|코드> \"<이유>\" [--date YYYY-MM-DD] [--type 종가매매|상따|장중매매|스윙] [--entry 평단] [--exit 청산가]");
   process.exit(1);
 }
 
