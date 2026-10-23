@@ -14,6 +14,7 @@
     "kr:flags": "node scripts/backfill-kr-symbol-flags.mjs",
     "kr:industry": "node scripts/backfill-kr-industry.mjs",
     "kr:investor-flow": "node scripts/backfill-kr-investor-flow.mjs",
+    "kr:short-lending": "node scripts/backfill-kr-short-lending.mjs",
     "kr:ownership": "node scripts/backfill-kr-ownership.mjs",
     "kr:themes": "node scripts/backfill-kr-themes.mjs",
     "probe:nxt-after": "node scripts/probe-nxt-after.mjs",

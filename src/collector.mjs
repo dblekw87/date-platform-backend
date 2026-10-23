@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
+import { collectShortLending } from "./providers/short-lending.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadOvernightHoldSymbols, loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
@@ -10,7 +11,7 @@ import { collectKrDailyBars, collectKrDailyBarsFromKis } from "./providers/kr-da
 import { recordKrListings } from "./providers/kr-listings.mjs";
 import { loadKrUniverse, saveKrUniverse } from "./providers/kr-universe.mjs";
 import { loadSymbolThemes, refreshThemes, themeDictionaryAgeMs } from "./providers/naver-themes.mjs";
-import { isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
+import { getAccessToken, isKrMarketOpen, loadKisMarketBoard, loadKrQuotes } from "./providers/kis.mjs";
 import { loadNaverMoverSymbols } from "./providers/naver-movers.mjs";
 import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./providers/themes.mjs";
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
@@ -816,6 +817,47 @@ function startInvestorFlow(config, minute) {
 }
 
 
+// 16:20, after the investor-flow pass so the two do not share KIS's burst limit.
+const shortLendingMinute = 16 * 60 + 20;
+let shortLendingDay = null;
+let shortLendingRunning = false;
+
+/**
+ * 공매도·대차 — 하루 한 번, 그날 본 종목만.
+ *
+ * 2026-10-23 사용자 가설("소형주는 공매도·대차로 예측 가능")을 재려고 과거치는
+ * backfill-kr-short-lending으로 채웠고, 이것은 그 뒤로 끊기지 않게 잇는 몫입니다.
+ * 종목당 두 요청이라 몇 분 걸리므로 await 하지 않습니다.
+ */
+function startShortLending(config, minute) {
+  const day = sessionDate("KR");
+
+  if (shortLendingRunning || shortLendingDay === day || minute < shortLendingMinute) return;
+
+  shortLendingDay = day;
+  shortLendingRunning = true;
+
+  (async () => {
+    const symbols = await loadSessionSymbols(config, { market: "KR", sessionDate: day });
+
+    if (symbols.length === 0) return;
+
+    const to = day.replace(/-/g, "");
+    const from = new Date(Date.parse(`${day}T00:00:00Z`) - 10 * 86400000).toISOString().slice(0, 10).replace(/-/g, "");
+    const token = await getAccessToken(config);
+    const { failed, saved } = await collectShortLending(config, token, symbols, { from, to });
+
+    console.log(`collector: short/lending ${symbols.length} symbols, ${saved} rows, ${failed} failed`);
+  })()
+    .catch((error) => {
+      shortLendingDay = null;
+      console.warn("collector: short/lending failed", error instanceof Error ? error.message : error);
+    })
+    .finally(() => {
+      shortLendingRunning = false;
+    });
+}
+
 // 15:50. 종가가 확정된 직후이고, 투자자별 매매동향(16:10)과 겹치지 않습니다.
 const universeMinute = 15 * 60 + 50;
 /*
@@ -1556,6 +1598,7 @@ export function startMarketCollector(config) {
         }
 
         startInvestorFlow(config, minute);
+        startShortLending(config, minute);
         startUniverseSample(config, minute);
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);

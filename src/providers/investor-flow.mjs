@@ -12,6 +12,10 @@ import { query } from "../db/client.mjs";
  *
  * One request per symbol, so it is paced. KIS answers a burst with an error
  * rather than a wait.
+ *
+ * `close` on the day's own row is not the regular-session close. On 2026-10-23 it
+ * read 59,100 for 삼성E&A, which was the NXT after-market price at 16:12, while the
+ * session closed at 59,800. Take prices from kr_daily_bars; this table is for flows.
  */
 
 const batchSize = 2;
