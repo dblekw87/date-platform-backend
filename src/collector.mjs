@@ -3,6 +3,8 @@ import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-c
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectShortLending } from "./providers/short-lending.mjs";
+import { collectGeoNews } from "./providers/geo-news.mjs";
+import { notifyGeoNews } from "./providers/geo-news-alert.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadOvernightHoldSymbols, loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
@@ -1844,9 +1846,21 @@ export function startMarketCollector(config) {
       .catch((error) => console.warn("collector: hot symbol watch failed", error instanceof Error ? error.message : error));
   }, 60_000);
 
+  // 美 발언·지정학 뉴스(10/24). 장 시간과 상관없이 돕니다 -- 트럼프 글은 한국
+  // 새벽에 몰립니다. 받는 것은 늘, 보내는 것은 notifyGeoNews가 07:00~24:00로 거릅니다.
+  const geoNewsTick = () => {
+    collectGeoNews(config)
+      .then(() => notifyGeoNews(config))
+      .catch((error) => console.warn("collector: geo news failed", error instanceof Error ? error.message : error));
+  };
+  const geoNewsIntervalId = setInterval(geoNewsTick, 10 * 60_000);
+
+  geoNewsTick();
+
   return () => {
     stopped = true;
     if (timeoutId) clearTimeout(timeoutId);
     clearInterval(hotWatchIntervalId);
+    clearInterval(geoNewsIntervalId);
   };
 }
