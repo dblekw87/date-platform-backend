@@ -186,17 +186,32 @@ $resumeId = Read-ResumeId
   감시를 다시 거는 것이 전부입니다. 경로를 스크립트로 박아 두는 이유는, 예전에
   감시 스크립트가 세션별 임시 폴더에 있어 세션이 바뀌면 같이 사라졌기 때문입니다.
   이제 저장소 안(scripts/health-check.sh)에 있어 껐다 켜도 그대로입니다.
+
+  cron은 세션 메모리에만 있어 껐다 켜면 둘 다 사라집니다. 예전 프롬프트는 수집기
+  감시 하나만 요청해서 미국장 야간 감시는 매번 손으로 다시 걸어야 했습니다.
+
+  작은따옴표 here-string이어야 합니다. 큰따옴표 판에서는 백틱이 이스케이프라
+  `bash가 백스페이스 + "ash"로 바뀌어 전달됐습니다(2026-10-25 로그에서 확인).
 #>
-$bootPrompt = @"
-컴퓨터를 다시 켰습니다. 수집기 감시를 다시 걸어 주세요.
+$bootPrompt = @'
+컴퓨터를 다시 켰습니다. 감시 cron 두 개를 다시 걸어 주세요. 먼저 CronList로 이미 걸린 것이 있는지 보고, 같은 것이 있으면 중복으로 걸지 마세요.
 
-- 30분마다 `bash "C:/Users/Pangwoo/date-platform-backend/scripts/health-check.sh"` 를 돌립니다.
-- 아무것도 안 나오면 정상이니 한 줄로만 답하고 알림은 보내지 마세요.
-- PROBLEM 줄이 나오면 해당 로그 끝을 짧게 확인한 뒤 한국어 한 줄로 PushNotification을 보내고 대화에도 요약하세요.
-- 스스로 재기동하지는 마세요.
+1) 수집기 감시 - cron "17,47 * * * *"
+   프롬프트: 수집기 감시. Run: bash "C:/Users/Pangwoo/date-platform-backend/scripts/health-check.sh"
+   아무것도 안 나오면 정상이니 한 줄로만 답하고 알림은 보내지 마세요.
+   PROBLEM 줄이 나오면 해당 로그 끝을 짧게 확인한 뒤 한국어 한 줄(200자 이내) PushNotification을 보내고 대화에도 요약하세요.
+   스스로 재기동하지는 마세요.
 
-거는 즉시 지금 상태를 한 번 확인해서 한국어 두세 줄로 알려 주세요 - 수집기가 올라왔는지, 마지막 스냅샷이 언제인지, 국내 뉴스와 공시가 들어오고 있는지.
-"@
+2) 미국장 야간 감시 - cron "13,43 22,23,0-5 * * *"
+   프롬프트: 미국장 야간 감시. Run: bash "C:/Users/Pangwoo/date-platform-backend/scripts/health-check.sh"
+   아무것도 안 찍히면 한 줄로만 답하세요(예: "미국장 정상"). 스스로 아무것도 재시작하지 마세요.
+   PROBLEM 줄이 찍히면 최신 서버 로그 tail로 사실을 확인하고, 한국어 한 줄(200자 이내) PushNotification을 보내고, 채팅에도 요약하세요.
+   미국 휴장일(src/providers/us-holidays.mjs)과 주말에는 health-check가 조용합니다. 그때는 "미국 휴장"이라고 답하세요.
+   수집이 멈추면(표본이 15분 이상 안 늘면) 새 문제이니 보고하세요.
+   주말 자동 종료(토 09:05경)부터 재기동까지 미국 표본이 비는 건 이미 아는 구멍입니다.
+
+다 걸었으면 CronList로 두 개가 있는지 확인하고, 지금 상태를 한 번 확인해서 한국어 두세 줄로 알려 주세요 - 수집기가 올라왔는지, 마지막 스냅샷이 언제인지, 국내 뉴스와 공시가 들어오고 있는지, 밀린 뉴스 백필이 몇 건 들어왔는지(logs/start-<오늘>.log).
+'@
 
 Write-Line $(if ($resumeId) { "이어서 시작합니다 · 세션 $resumeId" } else { "새 Remote Control 세션 '$SessionName' · $ProjectPath" })
 
