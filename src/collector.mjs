@@ -5,6 +5,7 @@ import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectShortLending } from "./providers/short-lending.mjs";
 import { collectGeoNews } from "./providers/geo-news.mjs";
 import { notifyGeoNews } from "./providers/geo-news-alert.mjs";
+import { notifyMacroCalendar } from "./providers/macro-calendar-alert.mjs";
 import { collectForeignEstimate, saveForeignEstimate } from "./providers/foreign-estimate.mjs";
 import { collectKrDisclosures } from "./providers/kr-disclosures.mjs";
 import { loadOvernightHoldSymbols, loadRecordedNames, loadSessionSymbols, saveMacroSamples, saveMarketNewsItems, saveMarketPriceSamples, saveSymbolFlags } from "./db/repositories.mjs";
@@ -1809,6 +1810,10 @@ export function startMarketCollector(config) {
     // (2026-09-30 사용자 요청). 07:00 복기, 07:10 주말, 07:30 상장 뒤가 비어 있습니다.
     notifyMarketBrief(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: market brief failed", error instanceof Error ? error.message : error));
+    // 14:40~15:00 한 번. 오늘 종가 → 다음 장 아침 사이의 FOMC·CPI·금통위(2026-10-25 사용자 요청).
+    // 15:05 종가매매 루틴보다 먼저 와 있어야 합니다. 낀 것이 없는 날은 조용합니다.
+    notifyMacroCalendar(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: macro calendar alert failed", error instanceof Error ? error.message : error));
     // 아침 07:00 한 번. 어제 들어간 것과 그저께 판단의 채점. 창과 하루 잠금은 provider가 봅니다.
     notifyMorningFeedback(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: morning feedback failed", error instanceof Error ? error.message : error));

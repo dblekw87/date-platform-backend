@@ -58,7 +58,7 @@ export async function notifyGeoNews(config, { now = new Date() } = {}) {
     const { rows } = await query(config, `
       SELECT key, source, title, url, published_at, topics
         FROM geo_news
-       WHERE source IN ('트럼프 Truth', '백악관', '연방관보')
+       WHERE source IN ('트럼프 Truth', '백악관', '연방관보', '연준', '한국은행')
          AND topics <> '{}'
          AND coalesce(published_at, fetched_at) >= now() - make_interval(hours => $1)
        ORDER BY coalesce(published_at, fetched_at)

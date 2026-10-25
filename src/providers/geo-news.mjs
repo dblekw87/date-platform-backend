@@ -27,7 +27,7 @@ export const geoTopics = [
   { id: "알래스카", pattern: /\balaska\w*\b[\s\S]{0,120}\b(lng|gas|pipeline|oil|drill\w*|energy|arctic|anwr)\b|\b(lng|gas|pipeline|oil|drill\w*|energy|arctic|anwr)\b[\s\S]{0,120}\balaska|알래스카/i },
   { id: "관세·무역", pattern: /\b(tariff\w*|trade deal|trade war|section 232|section 301)\b|관세|무역협상/i },
   { id: "반도체·중국", pattern: /\b(semiconductor\w*|chips?|nvidia|china|chinese|beijing|xi jinping|taiwan)\b|반도체|중국|시진핑|대만/i },
-  { id: "금리·연준", pattern: /\b(federal reserve|the fed|interest rates?|powell|rate cut)\b|금리|연준/i },
+  { id: "금리·연준", pattern: /\b(federal reserve|the fed|interest rates?|powell|rate cut|fomc|federal open market committee)\b|금리|연준|금융통화위원회|통화정책/i },
   { id: "한국", pattern: /\b(korea\w*|seoul|pyongyang|kim jong)\b|한국|북한/i }
 ];
 
@@ -132,6 +132,68 @@ async function presidentialDocuments() {
   }));
 }
 
+/*
+ * 연준 통화정책 보도자료(2026-10-25). 성명·의사록·경제전망만 받습니다 -- 같은 피드의
+ * 재할인율 회의록은 시장이 반응하지 않습니다.
+ *
+ * 성명 제목은 늘 "Federal Reserve issues FOMC statement"라 결정이 안 보입니다. 처음
+ * 보는 성명만 본문을 열어 "decided to raise/lower/maintain the target range ..."
+ * 문장을 제목에 붙입니다. 한 번 저장한 것은 다시 열지 않습니다.
+ */
+async function fedPress(config) {
+  const xml = await fetchText("https://www.federalreserve.gov/feeds/press_monetary.xml", { headers: { "User-Agent": userAgent }, timeoutMs: 10000 });
+  const items = rssItems(xml)
+    .map((item) => ({
+      key: `fed:${xmlValue(item, "guid") ?? xmlValue(item, "link")}`,
+      publishedAt: dateOf(xmlValue(item, "pubDate")),
+      source: "연준",
+      title: plain(xmlValue(item, "title")),
+      url: xmlValue(item, "link")
+    }))
+    .filter((item) => /FOMC statement|Minutes of the Federal Open Market Committee|economic projections/i.test(item.title));
+  const statements = items.filter((item) => /FOMC statement/i.test(item.title) && item.url);
+  const { rows } = statements.length
+    ? await query(config, "SELECT key FROM geo_news WHERE key = ANY($1::text[])", [statements.map((item) => item.key)])
+    : { rows: [] };
+  const known = new Set(rows.map((row) => row.key));
+
+  for (const item of statements.filter((statement) => !known.has(statement.key))) {
+    const html = await fetchText(item.url, { headers: { "User-Agent": userAgent }, timeoutMs: 10000 }).catch(() => "");
+    // "by 1/4 percentage point to 3-3/4 to 4 percent," -- 끝은 쉼표·마침표 앞의 percent입니다.
+    const match = plain(html).match(/decided to (raise|lower|maintain) the target range for the federal funds rate[^.]*?percent(?=[,.])/i);
+
+    if (match) item.title = `FOMC 금리 ${{ lower: "인하", maintain: "동결", raise: "인상" }[match[1].toLowerCase()]} — ${match[0]}`;
+  }
+
+  return items;
+}
+
+/*
+ * 한국은행 보도자료(통화정책) RSS. 통화정책방향과 금통위 의사록만 받습니다. 통화정책방향은
+ * 설명란 첫 단락이 결정 문장이라("기준금리를 현재의 3.00% 수준에서 유지하여 … 하였다")
+ * 그 문장을 제목에 붙입니다.
+ */
+async function bokPress() {
+  const xml = await fetchText("https://www.bok.or.kr/portal/bbs/P0000559/news.rss?menuNo=200690", { headers: { "User-Agent": userAgent }, timeoutMs: 10000 });
+
+  return rssItems(xml)
+    .map((item) => {
+      const title = plain(xmlValue(item, "title"));
+      const decision = plain(decodeXml(xmlValue(item, "description") ?? "")).replace(/&nbsp;/g, " ").replace(/\s+/g, " ")
+        // 문장 안에 "3.00%"가 있어 마침표로 자르면 안 됩니다.
+        .match(/금융통화위원회는[\s\S]{0,120}?기준금리를[\s\S]{0,120}?하였다/)?.[0];
+
+      return {
+        key: `bok:${xmlValue(item, "link")}`,
+        publishedAt: dateOf(xmlValue(item, "pubDate")),
+        source: "한국은행",
+        title: decision ? `${title} — ${decision}` : title,
+        url: xmlValue(item, "link")
+      };
+    })
+    .filter((item) => /통화정책방향|금융통화위원회 의사록/.test(item.title));
+}
+
 async function googleTopicNews({ language, q }) {
   const region = language === "ko" ? "KR" : "US";
   const url = new URL("https://news.google.com/rss/search");
@@ -157,8 +219,8 @@ async function googleTopicNews({ language, q }) {
 }
 
 export async function collectGeoNews(config) {
-  const loaders = [truthPosts, whiteHouseNews, presidentialDocuments, ...googleQueries.map((entry) => () => googleTopicNews(entry))];
-  const settled = await Promise.allSettled(loaders.map((load) => load()));
+  const loaders = [truthPosts, whiteHouseNews, presidentialDocuments, fedPress, bokPress, ...googleQueries.map((entry) => () => googleTopicNews(entry))];
+  const settled = await Promise.allSettled(loaders.map((load) => load(config)));
   const failed = settled.filter((result) => result.status === "rejected").length;
   const items = settled
     .flatMap((result) => result.status === "fulfilled" ? result.value : [])
