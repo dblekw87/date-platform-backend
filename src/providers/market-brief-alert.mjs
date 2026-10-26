@@ -172,7 +172,12 @@ export async function usSessionStocks(config) {
   return stocks;
 }
 
-export async function usSectorLines(config) {
+/*
+ * 섹터 순위 자체. 08:20 시황 알림과 보드 스냅샷(usSectorRanking)이 같은 값을 씁니다.
+ * 사용자 요청(2026-10-27): 07:30 아침 브리핑 카드에 "반도체·광통신·전력·보안이 강했다"를
+ * 한 줄로 -- 그 루틴은 클라우드라 이 DB에 못 닿고 스냅샷만 읽습니다.
+ */
+export async function usSectorRanking(config) {
   const sectors = new Map();
 
   for (const row of await usSessionStocks(config)) {
@@ -193,10 +198,17 @@ export async function usSectorLines(config) {
         median: rates[Math.floor(rates.length / 2)],
         n: members.length,
         sector,
+        sessionDate: members[0].day,
         up: Math.round(100 * rates.filter((rate) => rate > 0).length / rates.length)
       };
     })
     .sort((a, b) => b.median - a.median);
+
+  return ranked;
+}
+
+export async function usSectorLines(config) {
+  const ranked = await usSectorRanking(config);
 
   if (ranked.length < 4) return [];
 

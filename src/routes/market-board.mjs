@@ -20,7 +20,7 @@ import { loadSecDisclosures } from "../providers/sec.mjs";
 import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadLimitUpEvening, loadSessionChangeRates, loadThemeGroups, loadThemeStocks } from "../providers/theme-groups.mjs";
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
-import { loadUsOvernightGainers } from "../providers/market-brief-alert.mjs";
+import { loadUsOvernightGainers, usSectorRanking } from "../providers/market-brief-alert.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
 import { loadUsSectorMap } from "../providers/us-sector-map.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
@@ -101,6 +101,7 @@ function baseMarketBoardData(providerStatuses) {
     usPremarketMovers: [],
     usOvernightGainers: [],
     usSectorMap: null,
+    usSectorRanking: [],
     krCloseBetCandidates: [],
     krLimitPairs: [],
     krHaltedStocks: [],
@@ -823,6 +824,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
         usPremarketMovers: (await loadUsPremarketMovers(config)).movers,
         usOvernightGainers: await loadUsOvernightGainers(config).catch(() => []),
         usSectorMap: await loadUsSectorMap().catch(() => null),
+        usSectorRanking: await usSectorRanking(config).catch(() => []),
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -940,6 +942,9 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // The sector map image the collector draws once per US session; null until
     // the first one exists.
     usSectorMap: await loadUsSectorMap().catch(() => null),
+    // The same sector ranking as the 08:20 brief (median per sector, best
+    // first), so the 07:30 cloud briefing can name the strong US sectors.
+    usSectorRanking: await usSectorRanking(config).catch(() => []),
     // Stocks the exchange has stopped, largest first. Read from the daily
     // universe pass rather than a ranking, because a halted stock has no
     // turnover to be ranked by and so appears in none of them - which is why
