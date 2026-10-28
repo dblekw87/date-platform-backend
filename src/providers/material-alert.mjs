@@ -6,7 +6,7 @@ import { isKrMarketOpen } from "./kis.mjs";
 import { loadListedRelatives } from "./ownership-links.mjs";
 import { seoulMinuteNow } from "./market-session.mjs";
 import { sendTelegram, telegramConfigured } from "./telegram.mjs";
-import { tradingSessions, upcomingWindow } from "./overnight-window.mjs";
+import { sessionsAsOf, upcomingWindow } from "./overnight-window.mjs";
 
 /**
  * 장이 닫혀 있는 동안 나온 재료를 계속 지켜보다가, 새로 잡힌 것만 보냅니다.
@@ -46,7 +46,7 @@ export async function notifyNewMaterial(config, { url } = {}) {
   lastRunAt = Date.now();
 
   try {
-    const sessions = await tradingSessions(config);
+    const sessions = await sessionsAsOf(config);
     const window = upcomingWindow(sessions);
     const candidates = await collectCandidates(config, window);
     const universe = await tradableUniverse(config, window.previous, minTurnoverWithFiling);
@@ -208,7 +208,7 @@ async function loadAfterMarket(config, symbols) {
  * 애프터 등락은 KIS 값 그대로 전일 종가 기준이고, 종가 대비는 따로 계산해 둡니다.
  */
 export async function loadEveningMaterial(config) {
-  const sessions = await tradingSessions(config);
+  const sessions = await sessionsAsOf(config);
   const sessionDate = upcomingWindow(sessions).previous;
   const { rows } = await query(config, `
     SELECT o.symbol, u.name, u.market, o.tier, o.theme AS evidence, o.entry_rate::float8 AS close_rate,

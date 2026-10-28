@@ -1,4 +1,6 @@
 import { query } from "../db/client.mjs";
+import { isKrMarketOpen } from "./kis.mjs";
+import { seoulMinuteNow, sessionDate } from "./market-session.mjs";
 
 /**
  * 어느 창을 볼 것인가.
@@ -21,6 +23,28 @@ export async function tradingSessions(config, since = "2026-08-14") {
      WHERE session_date >= $1 ORDER BY 1`, [since]);
 
   return rows.map((row) => row.d);
+}
+
+/*
+ * 오늘 장이 끝났으면 오늘을 세션 목록에 넣습니다.
+ *
+ * kr_daily_bars는 15:50 유니버스 훑기 뒤에야 오늘 행이 생깁니다. 그 전 몇 분 동안은
+ * "직전 거래일"이 어제로 남아, 15:30~15:52에 잡힌 재료가 어제 세션으로 기록되고
+ * 창도 어제 15:40부터 잡혀 오늘 장중 기사를 "마감 뒤 재료"로 보냈습니다
+ * (2026-10-26 15:48 · 10-27 15:40 · 10-28 15:41 — 10/28엔 가비아·에이치브이엠 등
+ * 15종목이 10-27로 찍혀 저녁 목록과 시간외종가 제목에서 빠졌습니다). 휴장일인지는
+ * KIS 영업일 달력으로 봅니다.
+ */
+export async function sessionsAsOf(config, now = new Date()) {
+  const sessions = await tradingSessions(config);
+  const today = sessionDate("KR", now);
+
+  if (today > sessions[sessions.length - 1] && seoulMinuteNow(now) >= 15 * 60 + 30
+    && await isKrMarketOpen(config, now)) {
+    sessions.push(today);
+  }
+
+  return sessions;
 }
 
 /*
