@@ -1,6 +1,7 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { classifyDisclosure, isMachineHeadline, isReasonHeadline, mentionsBadNews } from "./overnight-classify.mjs";
 import { loadCloseBetCandidates } from "./close-bet.mjs";
+import { loadKrPriceCeilings } from "./kr-daily-bars.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
 import { sessionDate } from "./market-session.mjs";
@@ -101,7 +102,10 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 
     const queues = await loadLockedQueues(config, day, today.filter((row) => row.changeRateValue >= limitUpRate).map((row) => row.symbol))
       .catch(() => new Map());
-    const marked = today.map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row));
+    const ceilings = await loadKrPriceCeilings(config, today.map((row) => row.symbol), day).catch(() => new Map());
+    const marked = today
+      .map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row))
+      .map((row) => ({ ...row, ceiling: ceilings.get(row.symbol) ?? null }));
     const ok = await notify(config, { text: closeBetMessage(marked, day, { dropped, slot: slot.label, total: pool.length }), url });
 
     if (!ok) return 0;
@@ -209,6 +213,31 @@ async function loadLockedQueues(config, day, symbols) {
 }
 
 /*
+ * 지금 값 위에 남은 천장 두 개. 이미 넘었으면 "돌파"라고만 씁니다. 역대 고가는
+ * 수정주가라 옛 상호 시절 값일 수 있습니다(삼성E&A의 역대 175,168은 2011년
+ * 삼성엔지니어링). 이 거리로 성적이 갈리는지는 재 본 적이 없어 표시만 합니다.
+ */
+export function ceilingLine(row) {
+  const ceiling = row.ceiling;
+  const price = Number(row.closePrice);
+
+  if (!ceiling || !(price > 0)) return null;
+
+  const part = (label, high, at) => {
+    if (!(high > 0)) return null;
+    if (price >= high) return `${label} 돌파(${won(high)} · ${at})`;
+
+    return `${label} ${won(high)}(${at}) +${((high / price - 1) * 100).toFixed(1)}%`;
+  };
+  const parts = [
+    part("52주", ceiling.weekHigh, ceiling.weekHighAt?.slice(5).replace("-", "/")),
+    part("역대", ceiling.allTimeHigh, ceiling.allTimeHighMonth)
+  ].filter(Boolean);
+
+  return parts.length ? `    신고가까지 ${parts.join(" · ")}` : null;
+}
+
+/*
  * 성적은 종목이 아니라 등급에 붙는 값입니다. 종목마다 적으면 같은 문장이 후보
  * 수만큼 반복되고, 정작 종목마다 다른 숫자가 그 사이에 파묻힙니다. 화면이
  * groupByTier로 하는 일과 같습니다.
@@ -247,6 +276,10 @@ export function closeBetMessage(candidates, day, { dropped = [], slot = "15:10",
 
         lines.push(`    └ 상한가 잠김 · 종가 체결 어려움${queue}. 체결되면 무너지는 날 (실측 4건 중앙 −0.68%p)`);
       }
+
+      const ceiling = ceilingLine(row);
+
+      if (ceiling) lines.push(ceiling);
 
       if (row.material) {
         lines.push(`    재료 ${row.material.kind} ${row.material.at} ${String(row.material.text).slice(0, 70)}`);

@@ -61,6 +61,51 @@ function parseBars(symbol, text) {
   return bars;
 }
 
+/*
+ * 종목별 52주 고가와 역대 고가.
+ *
+ * 2026-10-28 사용자 요청: 종가배팅 후보가 신고가까지 얼마 남았는지 같이 보고 싶다
+ * (삼성E&A처럼 52주 고점 바로 아래에서 사는 경우). 후보 조건은 60일 고점 돌파라
+ * 그보다 위의 천장이 어디인지는 알림에 없었습니다.
+ *
+ * 52주는 우리 일봉에서, 역대는 네이버 월봉(1990~)에서 읽습니다. 월봉은 **수정주가**라
+ * 분할·병합 전 값도 지금 주가와 같은 자로 비교됩니다. 역대 고가는 하루에 바뀔 일이
+ * 거의 없어 세션 날짜와 함께 기억해 둡니다.
+ */
+const allTimeCache = new Map();
+
+export async function loadKrPriceCeilings(config, symbols, day) {
+  if (!symbols.length) return new Map();
+
+  const { rows } = await query(config, `
+    SELECT DISTINCT ON (symbol) symbol, high::float8 AS high, to_char(session_date, 'YYYY-MM-DD') AS at
+      FROM kr_daily_bars
+     WHERE symbol = ANY($1) AND high > 0 AND session_date > $2::date - interval '365 days'
+     ORDER BY symbol, high DESC, session_date DESC`, [symbols, day]);
+  const ceilings = new Map(rows.map((row) => [row.symbol, { weekHigh: row.high, weekHighAt: row.at }]));
+
+  for (const symbol of symbols) {
+    const cached = allTimeCache.get(symbol);
+    let allTime = cached?.day === day ? cached.value : undefined;
+
+    if (allTime === undefined) {
+      const months = await fetchText(
+        `${chartUrl}?symbol=${symbol}&requestType=1&startTime=19900101&endTime=${yyyymmdd(day)}&timeframe=month`,
+        { timeoutMs: 8_000 }
+      ).then((text) => parseBars(symbol, text)).catch(() => []);
+      const top = months.reduce((best, bar) => (bar.high > (best?.high ?? 0) ? bar : best), null);
+
+      allTime = top ? { high: top.high, month: top.sessionDate.slice(0, 7) } : null;
+      allTimeCache.set(symbol, { day, value: allTime });
+      await sleep(requestSpacingMs);
+    }
+
+    ceilings.set(symbol, { ...(ceilings.get(symbol) ?? {}), allTimeHigh: allTime?.high ?? null, allTimeHighMonth: allTime?.month ?? null });
+  }
+
+  return ceilings;
+}
+
 export async function loadKrDailyBars(symbol, { from, to }) {
   const url = `${chartUrl}?symbol=${symbol}&requestType=1&startTime=${yyyymmdd(from)}&endTime=${yyyymmdd(to)}&timeframe=day`;
 
