@@ -21,6 +21,7 @@ import { latestKrSessionDate, loadKrSessionUniverse, loadKrxDayMoney, loadLimitU
 import { loadSymbolCalendarItems } from "../providers/symbol-news.mjs";
 import { loadUsExtendedLeaders } from "../providers/us-extended-leaders.mjs";
 import { loadUsOvernightGainers, usSectorRanking } from "../providers/market-brief-alert.mjs";
+import { loadEveningMaterial } from "../providers/material-alert.mjs";
 import { loadUsPremarketMovers } from "../providers/premarket.mjs";
 import { loadUsSectorMap } from "../providers/us-sector-map.mjs";
 import { loadUsSurgeCandidateBoard } from "../providers/surge-candidates.mjs";
@@ -102,6 +103,7 @@ function baseMarketBoardData(providerStatuses) {
     usOvernightGainers: [],
     usSectorMap: null,
     usSectorRanking: [],
+    krEveningMaterial: [],
     krCloseBetCandidates: [],
     krLimitPairs: [],
     krHaltedStocks: [],
@@ -825,6 +827,7 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
         usOvernightGainers: await loadUsOvernightGainers(config).catch(() => []),
         usSectorMap: await loadUsSectorMap().catch(() => null),
         usSectorRanking: await usSectorRanking(config).catch(() => []),
+        krEveningMaterial: await loadEveningMaterial(config).catch(() => []),
         providerStatuses: (snapshot.providerStatuses ?? []).map((status) => ({
           ...status,
           status: status.status === "ready" ? "mock" : status.status,
@@ -950,6 +953,9 @@ export async function getMarketBoard(config, { includeRawPayloads = false } = {}
     // turnover to be ranked by and so appears in none of them - which is why
     // the board could not show one at all until now.
     krHaltedStocks: await loadHaltedStocks(config).catch(() => []),
+    // 마감 뒤 재료 후보와 애프터 시세. 18:00·19:30 클라우드 루틴이 공시 없이 기사로만
+    // 나온 재료를 놓치지 않게 읽습니다(2026-10-27 빛과전자).
+    krEveningMaterial: await loadEveningMaterial(config).catch(() => []),
     // 종가배팅 후보. 조건도 성적표도 kr_daily_bars에서 나오므로 provider가
     // 응답하지 않아도 비어 있을 뿐 화면이 깨지지 않습니다.
     // 짝꿍매매 후보 -- 같은 테마 1등주가 상한가에 잠겼을 때의 2등주. 장중 분봉에서

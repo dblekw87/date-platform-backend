@@ -4,6 +4,7 @@ import { rankPicks, tierOf } from "./overnight-rank.mjs";
 import { materialPhase } from "./overnight-gate.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { loadListedRelatives } from "./ownership-links.mjs";
+import { seoulMinuteNow } from "./market-session.mjs";
 import { sendTelegram, telegramConfigured } from "./telegram.mjs";
 import { tradingSessions, upcomingWindow } from "./overnight-window.mjs";
 
@@ -197,6 +198,59 @@ async function loadAfterMarket(config, symbols) {
   return bySymbol;
 }
 
+/*
+ * 마지막 거래일 마감 뒤에 보낸 재료 후보를 보드 스냅샷에 싣습니다.
+ *
+ * 18:00·19:30 클라우드 루틴은 정규장 상승률 순위와 DART 공시만 훑어서, 공시 없이
+ * 기사로만 나온 재료를 구조적으로 놓칩니다 -- 2026-10-27 빛과전자(정규장 −0.15%,
+ * 15:44 美 H사 공급 기사, 애프터 +7%)가 그랬습니다. 우리 수집기는 기사를 종목에
+ * 붙여 15:53에 이미 알렸으므로, 루틴은 DB에 닿지 못하는 대신 이 목록을 읽습니다.
+ * 애프터 등락은 KIS 값 그대로 전일 종가 기준이고, 종가 대비는 따로 계산해 둡니다.
+ */
+export async function loadEveningMaterial(config) {
+  const sessions = await tradingSessions(config);
+  const sessionDate = upcomingWindow(sessions).previous;
+  const { rows } = await query(config, `
+    SELECT o.symbol, u.name, u.market, o.tier, o.theme AS evidence, o.entry_rate::float8 AS close_rate,
+           u.turnover::float8, to_char(o.detected_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS detected_at
+      FROM kr_signal_outcomes o
+      LEFT JOIN kr_daily_universe u ON u.symbol = o.symbol AND u.session_date = o.session_date
+     WHERE o.kind = 'overnight_material' AND o.session_date = $1::date
+     ORDER BY o.detected_at`, [sessionDate]);
+  const after = await loadAfterMarket(config, rows.map((row) => row.symbol));
+  const versusClose = (row, rate) => rate === undefined
+    ? null
+    : Math.round(((1 + rate / 100) / (1 + (row.close_rate ?? 0) / 100) - 1) * 10000) / 100;
+
+  return rows.map((row) => {
+    const evening = after.get(row.symbol) ?? {};
+
+    return {
+      afterAt: evening.krx?.at ?? evening.nxt?.at ?? null,
+      afterKrxRate: evening.krx?.change_rate ?? null,
+      afterNxtRate: evening.nxt?.change_rate ?? null,
+      afterVersusClose: versusClose(row, evening.krx?.change_rate ?? evening.nxt?.change_rate),
+      closeRate: row.close_rate,
+      detectedAt: row.detected_at,
+      evidence: row.evidence,
+      market: row.market,
+      name: row.name ?? row.symbol,
+      sessionDate,
+      symbol: row.symbol,
+      tier: row.tier,
+      turnover: row.turnover
+    };
+  });
+}
+
+/** 그 세션 당일 15:30~15:59(서울)인가. 시간외종가는 15:40부터지만 그 전에 잡힌 것도 살 수 있습니다. */
+function inCloseAuction(sessionDate, now = new Date()) {
+  const today = now.toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" });
+  const minute = seoulMinuteNow(now);
+
+  return today === String(sessionDate) && minute >= 15 * 60 + 30 && minute < 16 * 60;
+}
+
 /* 종가 대비 저녁 등락. 둘 다 전일 종가 기준 등락률이라 나눠서 잇습니다. */
 function afterLine(pick) {
   const after = pick.after;
@@ -227,9 +281,20 @@ function message(picks, window, phase, url) {
    * 오늘 종가에 사는 것이고, 다음 장 후보는 내일 아침에 판단하는 것이고, 둘이
    * 같은 얼굴로 오면 오늘 살 것을 내일로 미루거나 그 반대가 됩니다.
    */
+  /*
+   * 16:00 전에 나간 마감 뒤 재료는 **오늘 종가로 살 수 있습니다** -- 시간외종가매매
+   * (15:40~16:00)가 정규장 종가로 체결됩니다. 2026-10-27 빛과전자가 15:53에
+   * "[다음 장 후보]"로 갔고, 사용자는 내일 볼 것으로 읽어 지나쳤습니다(애프터 +7%,
+   * 다음날 장중 +17%). 9/14~10/27 실측: 이 창에서 잡힌 B·C 43건의 다음날 시가가
+   * 시장 대비 중앙 +0.4~+0.5, 상회 67~79%. 16~20시에 잡힌 C(178건)는 상회 42%라
+   * 같은 표시를 붙이지 않습니다.
+   */
+  const closeAuction = phase === "overnight" && inCloseAuction(window.previous);
   const heading = phase === "intraday"
     ? `[장중 재료] 새 후보 ${picks.length}종목 · 오늘 장중에 나온 재료`
-    : `[다음 장 후보] 새 후보 ${picks.length}종목 · ${window.previous} 마감 뒤 나온 재료`;
+    : closeAuction
+      ? `[시간외종가 가능 · 16:00까지] 새 후보 ${picks.length}종목 · 오늘 종가로 살 수 있는 마감 뒤 재료`
+      : `[다음 장 후보] 새 후보 ${picks.length}종목 · ${window.previous} 마감 뒤 나온 재료`;
   const lines = [heading, ""];
 
   for (const pick of picks) {
