@@ -226,10 +226,12 @@ export async function notifySectorFollowers(config, { minute, url } = {}) {
 
     if (!await notify(config, { text: message(worthSending, day), url })) return 0;
 
-    await markAlertSent(config, "sector_follower", day, "done", { note: worthSending.map((pick) => pick.follower.name).join(", ").slice(0, 200) });
-    console.log(`알림: 섹터 2등주 · ${worthSending.map((pick) => pick.follower.name).join(", ")} (기록 ${saved})`);
+    const sentNames = [...new Set(worthSending.map((pick) => pick.follower.name))];
 
-    return worthSending.length;
+    await markAlertSent(config, "sector_follower", day, "done", { note: sentNames.join(", ").slice(0, 200) });
+    console.log(`알림: 섹터 2등주 · ${sentNames.join(", ")} (기록 ${saved})`);
+
+    return sentNames.length;
   } catch (error) {
     console.warn("sector follower alert failed", error instanceof Error ? error.message : error);
 
@@ -242,17 +244,43 @@ export async function notifySectorFollowers(config, { minute, url } = {}) {
 const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
 const rateLabel = (rate) => (rate === null || !Number.isFinite(rate) ? "시세 없음" : `${rate > 0 ? "+" : ""}${rate.toFixed(1)}%`);
 
+/*
+ * 한 종목은 한 번만 씁니다. 같은 가족에 재료 대장이 둘이면 두 대장이 같은 2등주
+ * 셋을 뽑아, 2026-10-29 알림에 에이피알·아모레퍼시픽·코스맥스가 두 번씩 찍히고
+ * "후보 9종목"이 실제로는 6종목이었습니다(10/27엔 삼성전자가 네 번). 기록은
+ * ON CONFLICT로 이미 종목당 한 줄(먼저 온 대장)이므로 알림도 그 대장 밑에 둡니다.
+ * 2등주를 전부 빼앗긴 대장은 사라지지 않고 그 무리의 대장 줄에 같이 적습니다.
+ */
 function message(picks, day) {
-  const lines = [`[종가배팅·섹터] ${day} · 오늘 종가에 사는 것 · 후보 ${picks.length}종목`, ""];
   const byLeader = new Map();
+  const groupOf = new Map();
 
   for (const pick of picks) {
-    if (!byLeader.has(pick.leader.symbol)) byLeader.set(pick.leader.symbol, { leader: pick.leader, followers: [] });
-    byLeader.get(pick.leader.symbol).followers.push(pick.follower);
+    const owner = groupOf.get(pick.follower.symbol);
+
+    if (owner) {
+      if (owner.leader.symbol !== pick.leader.symbol) owner.alsoLeaders.set(pick.leader.symbol, pick.leader);
+      continue;
+    }
+
+    if (!byLeader.has(pick.leader.symbol)) byLeader.set(pick.leader.symbol, { alsoLeaders: new Map(), followers: [], leader: pick.leader });
+
+    const group = byLeader.get(pick.leader.symbol);
+
+    group.followers.push(pick.follower);
+    groupOf.set(pick.follower.symbol, group);
   }
 
-  for (const { leader, followers } of byLeader.values()) {
-    lines.push(`재료 대장 ${leader.name} ${leader.symbol} ${rateLabel(leader.rate)} · ${leader.theme}`);
+  const lines = [`[종가배팅·섹터] ${day} · 오늘 종가에 사는 것 · 후보 ${groupOf.size}종목`, ""];
+
+  for (const { alsoLeaders, followers, leader } of byLeader.values()) {
+    // 자기 무리가 따로 있는 대장은 거기서 이미 한 줄을 받았습니다.
+    const also = [...alsoLeaders.values()]
+      .filter((other) => !byLeader.has(other.symbol))
+      .map((other) => ` · 같은 가족 대장 ${other.name} ${rateLabel(other.rate)}`)
+      .join("");
+
+    lines.push(`재료 대장 ${leader.name} ${leader.symbol} ${rateLabel(leader.rate)} · ${leader.theme}${also}`);
 
     for (const follower of followers) {
       lines.push(`  → ${follower.name} ${follower.symbol} ${follower.rate > 0 ? "+" : ""}${follower.rate.toFixed(1)}%`
