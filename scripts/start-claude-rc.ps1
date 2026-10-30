@@ -202,6 +202,10 @@ $bootPrompt = @'
 
 먼저 CronList 에 health-check.sh 를 부르는 cron 이 있으면 지우세요(예전 방식). 이 루프가 끝나서 알림이 오면: 최신 서버 로그 끝을 짧게 확인하고, 한국어 한 줄(200자 이내) PushNotification 을 보내고, 대화에 요약한 뒤, 같은 루프를 다시 띄우세요. 스스로 재기동하지는 마세요.
 
+그 다음 매일 학습 크론 두 개를 다시 거세요(2026-10-30 사용자와 시작한 테마 판단 학습). memory/session-resume-rearm.md 의 매일 학습 크론 절에 cron 식과 프롬프트 원문이 있습니다 - 그대로 CronCreate(recurring:true)로 겁니다. CronList 에 [매일 학습 으로 시작하는 것이 이미 있으면 겹치지 않게 건너뛰세요. 크론은 7일이면 만료되니 켤 때마다 다시 거는 것이 맞습니다.
+
+이어 붙인 대화는 새 id의 복사본으로 뜹니다. 다음 주말에도 이 대화가 이어지도록, 지금 세션 id(이 대화를 적고 있는 ~/.claude/projects/C--Users-Pangwoo-date-platform/ 아래 가장 최근 jsonl 파일 이름)를 C:/Users/Pangwoo/date-platform-backend/logs/claude-rc-session.txt 에 줄바꿈 없이 덮어 적으세요.
+
 띄운 뒤 지금 상태를 한 번 확인해서 한국어 두세 줄로 알려 주세요 - 수집기가 올라왔는지, 마지막 스냅샷이 언제인지, 국내 뉴스와 공시가 들어오고 있는지, 밀린 뉴스 백필이 몇 건 들어왔는지(logs/start-<오늘>.log).
 '@
 
