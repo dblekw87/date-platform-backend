@@ -28,7 +28,8 @@ import { labelUsSurges } from "./us-labels.mjs";
  * on turnover and turnover is volume divided by that count.
  *
  * Runs after the US close rather than before the Korean open, which are two
- * different clocks: 16:00 in New York is 05:00 in Seoul.
+ * different clocks: 16:00 in New York is 05:00 in Seoul, or 06:00 once US
+ * daylight time ends.
  */
 
 const catchUpDays = 7;

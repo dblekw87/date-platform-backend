@@ -47,7 +47,7 @@ let running = false;
  * domestic sampling for the same pool.
  *
  * Yielding is free on this side and only on this side: the US session closed at
- * 05:00 KST, this is a once-a-day batch over daily bars, and a missed check is
+ * 05:00 KST (06:00 outside US daylight time), this is a once-a-day batch over daily bars, and a missed check is
  * retried an hour later with catchUpDays behind it, so the row that lands is
  * identical. A domestic minute not sampled at 09:07 does not come back.
  */

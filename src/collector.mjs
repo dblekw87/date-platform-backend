@@ -681,7 +681,8 @@ const usExtendedIntervalMs = 10 * 60_000;
  * At 20:26 KST - the middle of the US pre-market - Yahoo's screener returned
  * AXTI +17.5527, CBRS +15.0699 and SNDK +8.88057, which are Monday's closes to
  * the second decimal. It reports the last completed session and does not move
- * outside one, so sampling it before 22:30 would write yesterday's numbers over
+ * outside one, so sampling it before the open (22:30 KST in US daylight time,
+ * 23:30 outside it) would write yesterday's numbers over
  * and over, the same trap as asking KRX in the evening.
  *
  * The pre-market and after-market need the per-symbol chart against a
@@ -890,7 +891,7 @@ const universeMinute = 15 * 60 + 50;
 /*
  * 미국 개장 신호 알림.
  *
- * 조건이 정해지는 건 첫 5분봉이 닫히는 22:35 한 번뿐이라 자주 볼 이유가 없습니다.
+ * 조건이 정해지는 건 첫 5분봉이 닫히는 22:35(서머타임 밖에서는 23:35) 한 번뿐이라 자주 볼 이유가 없습니다.
  * 다만 프리마켓 상승 폭은 개장 직전까지 움직이므로 개장 전후 한 시간만 3분마다
  * 봅니다. 그 바깥에서는 조건이 바뀌지 않습니다.
  */
@@ -1728,7 +1729,8 @@ export function startMarketCollector(config) {
       }
     }
 
-    // The US session runs 22:30-05:00 in Seoul, so it overlaps nothing domestic
+    // The US session runs 22:30-05:00 in Seoul (23:30-06:00 outside US daylight
+    // time), so it overlaps nothing domestic
     // and its own clock decides it. Sampled on the same loop rather than a
     // second timer: one tick either side of midnight is easier to reason about
     // than two loops that can both be mid-request.

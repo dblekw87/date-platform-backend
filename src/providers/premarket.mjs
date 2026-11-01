@@ -341,7 +341,8 @@ async function loadLiquidCore(config, { limit = liquidCoreSize } = {}) {
  *   surge candidates   stocks our own history says surge, which is the only
  *                      source built from what actually happened here
  *   yesterday's leaders  the screener is frozen at the last close outside the
- *                      session, so its numbers are useless before 22:30 - but
+ *                      session, so its numbers are useless before the open
+ *                      (22:30 KST, 23:30 outside US daylight time) - but
  *                      the names are exactly right. A stock that led yesterday
  *                      is the likeliest one still moving this morning
  *   recently recorded  whatever the US session pass stored over the last week,
