@@ -28,11 +28,14 @@ export const geoTopics = [
   { id: "관세·무역", pattern: /\b(tariff\w*|trade deal|trade war|section 232|section 301)\b|관세|무역협상/i },
   { id: "반도체·중국", pattern: /\b(semiconductor\w*|chips?|nvidia|china|chinese|beijing|xi jinping|taiwan)\b|반도체|중국|시진핑|대만/i },
   { id: "금리·연준", pattern: /\b(federal reserve|the fed|interest rates?|powell|rate cut|fomc|federal open market committee)\b|금리|연준|금융통화위원회|통화정책/i },
-  { id: "한국", pattern: /\b(korea\w*|seoul|pyongyang|kim jong)\b|한국|북한/i }
+  { id: "한국", pattern: /\b(korea\w*|seoul|pyongyang|kim jong)\b|한국|북한/i },
+  // SEC는 하루 수십 건이 절차 성명·제재라 시장이 보는 것(코인·ETF·상장·토큰화)만 붙입니다(11/01).
+  // 다른 출처에서 'ETF'가 잡히면 소음이라 SEC 출처에만 씁니다.
+  { id: "SEC·코인·상장", pattern: /\b(crypto\w*|digital assets?|bitcoin|ether(eum)?|stablecoins?|tokeni[sz]\w*|tokens?|etfs?|etps?|exchange-traded|listing standards?|ipos?)\b/i, secOnly: true }
 ];
 
-export function topicsOf(text) {
-  return geoTopics.filter((topic) => topic.pattern.test(text)).map((topic) => topic.id);
+export function topicsOf(text, { sec = false } = {}) {
+  return geoTopics.filter((topic) => (sec || !topic.secOnly) && topic.pattern.test(text)).map((topic) => topic.id);
 }
 
 /*
@@ -194,6 +197,94 @@ async function bokPress() {
     .filter((item) => /통화정책방향|금융통화위원회 의사록/.test(item.title));
 }
 
+/*
+ * 2026-11-01 사용자 요청으로 넓힌 출처: SEC, 연준 연설, 재무부, 외국 정상.
+ *
+ * SEC는 위원장·위원 성명과 보도자료 RSS를 받습니다. SEC는 연락처가 든 User-Agent를
+ * 요구합니다(공시 파이프라인과 같은 값).
+ */
+async function secFeed(config, feed, label) {
+  const xml = await fetchText(`https://www.sec.gov/news/${feed}.rss`, { headers: { "User-Agent": config.sec?.userAgent ?? userAgent }, timeoutMs: 10000 });
+
+  return rssItems(xml).map((item) => ({
+    key: `sec:${xmlValue(item, "guid") ?? xmlValue(item, "link")}`,
+    publishedAt: dateOf(xmlValue(item, "pubDate")),
+    source: label,
+    summary: plain(xmlValue(item, "description")).slice(0, 300),
+    title: plain(xmlValue(item, "title")),
+    url: xmlValue(item, "link")
+  }));
+}
+
+/*
+ * 연준 연설. 감독·규제 연설이 절반이라 의장 연설과 경기·물가·통화정책을 말하는 것만
+ * '금리·연준'으로 붙입니다. 제목이 "Waller, The Signaling Value of ..." 꼴입니다.
+ */
+async function fedSpeeches() {
+  const xml = await fetchText("https://www.federalreserve.gov/feeds/speeches.xml", { headers: { "User-Agent": userAgent }, timeoutMs: 10000 });
+
+  return rssItems(xml).map((item) => {
+    const title = plain(xmlValue(item, "title"));
+    const policy = /^powell\b/i.test(title) || /\b(outlook|inflation|monetary|economy|economic|rates?|labor|projections?|policy)\b/i.test(title);
+
+    return {
+      forcedTopics: policy ? ["금리·연준"] : [],
+      key: `fedsp:${xmlValue(item, "guid") ?? xmlValue(item, "link")}`,
+      publishedAt: dateOf(xmlValue(item, "pubDate")),
+      source: "연준 연설",
+      title,
+      url: xmlValue(item, "link")
+    };
+  });
+}
+
+/*
+ * 외국 정상과 재무장관은 공식 RSS가 없거나 들쭉날쭉해서 영문 구글 뉴스로 받습니다.
+ * 언론 보도라 같은 발언이 매체마다 여러 번 잡히므로, 알림은 인물당 최신 1건만 하루 두 번
+ * 요약으로 보냅니다(geo-news-alert). source에 인물 이름을 넣어 그 묶음을 만듭니다.
+ * 재무부 보도자료 RSS는 404라(11/01 확인) 재무장관도 이 경로입니다.
+ */
+export const leaderQueries = [
+  { label: "시진핑", name: /\bXi\b/, q: "\"Xi Jinping\" says" },
+  { label: "푸틴", name: /\bPutin\b|\bKremlin\b/, q: "Putin says" },
+  { label: "젤렌스키", name: /\bZelensk/, q: "Zelensky says" },
+  { label: "네타냐후", name: /\bNetanyahu\b/, q: "Netanyahu says" },
+  { label: "이란 지도부", name: /\bKhamenei\b|\bPezeshkian\b|\bAraghchi\b/, q: "Khamenei OR Pezeshkian OR Araghchi says" },
+  { label: "일본 총리", name: /\bTakaichi\b|\bJapan(ese)? (PM|prime minister)\b/i, q: "Takaichi says" },
+  { label: "미 재무장관", name: /\bBessent\b/, q: "Bessent says" }
+];
+
+/*
+ * 11/01 첫 수집에서 검색어만으로는 엉뚱한 기사가 섞였습니다("시진핑" 검색에 멜라니아
+ * 순방 기사, "일본 총리"에 메르츠 기사, "재무장관"에 루비오 발언). 그래서 제목에 그 인물
+ * 이름과 발언 동사(또는 "…: 푸틴" 꼴 인용)가 같이 있을 때만 받습니다.
+ */
+const speechVerb = /\b(says?|said|warns?|vows?|tells?|urges?|calls? for|threatens?|signals?|rejects?|claims?|insists?)\b/i;
+// 집계 사이트가 붙이는 꼬리(": 11 outlets compared", ": how 6 outlets framed it").
+const aggregatorTail = /:\s*(how\s+)?\d+\s+outlets?\b.*$/i;
+
+function spokenBy(title, name) {
+  const match = title.match(name);
+
+  if (!match) return false;
+
+  // 인물 이름 뒤 80자 안에 발언 동사가 오거나, "…: 크렘린"처럼 콜론 뒤 인용 출처가 그 인물.
+  const after = title.slice(match.index, match.index + match[0].length + 80);
+  const attribution = title.match(/:\s*([^:]{2,40})$/)?.[1] ?? "";
+
+  return speechVerb.test(after) || name.test(attribution);
+}
+
+async function leaderNews({ label, name, q }) {
+  const rows = await googleTopicNews({ language: "en", q });
+
+  return rows
+    .map((row) => ({ ...row, title: row.title.replace(/\s+-\s+[^-]{2,60}$/, "").replace(aggregatorTail, "").trim() }))
+    .filter((row) => spokenBy(row.title, name))
+    .slice(0, 5)
+    .map((row) => ({ ...row, forcedTopics: ["발언"], key: `ld:${row.key}`, source: `외국 정상 · ${label}` }));
+}
+
 async function googleTopicNews({ language, q }) {
   const region = language === "ko" ? "KR" : "US";
   const url = new URL("https://news.google.com/rss/search");
@@ -219,13 +310,22 @@ async function googleTopicNews({ language, q }) {
 }
 
 export async function collectGeoNews(config) {
-  const loaders = [truthPosts, whiteHouseNews, presidentialDocuments, fedPress, bokPress, ...googleQueries.map((entry) => () => googleTopicNews(entry))];
+  const loaders = [
+    truthPosts, whiteHouseNews, presidentialDocuments, fedPress, bokPress, fedSpeeches,
+    () => secFeed(config, "statements", "SEC 성명"),
+    () => secFeed(config, "pressreleases", "SEC 보도자료"),
+    ...googleQueries.map((entry) => () => googleTopicNews(entry)),
+    ...leaderQueries.map((entry) => () => leaderNews(entry))
+  ];
   const settled = await Promise.allSettled(loaders.map((load) => load(config)));
   const failed = settled.filter((result) => result.status === "rejected").length;
   const items = settled
     .flatMap((result) => result.status === "fulfilled" ? result.value : [])
     .filter((item) => item.title && item.key && !item.key.endsWith(":null"))
-    .map((item) => ({ ...item, topics: topicsOf(`${item.title} ${item.summary ?? ""}`) }));
+    .map((item) => ({
+      ...item,
+      topics: [...new Set([...(item.forcedTopics ?? []), ...topicsOf(`${item.title} ${item.summary ?? ""}`, { sec: item.key.startsWith("sec:") })])]
+    }));
 
   if (items.length === 0) return { failed, saved: 0 };
 
