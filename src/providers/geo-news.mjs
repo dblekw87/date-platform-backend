@@ -257,22 +257,43 @@ export const leaderQueries = [
 /*
  * 11/01 첫 수집에서 검색어만으로는 엉뚱한 기사가 섞였습니다("시진핑" 검색에 멜라니아
  * 순방 기사, "일본 총리"에 메르츠 기사, "재무장관"에 루비오 발언). 그래서 제목에 그 인물
- * 이름과 발언 동사(또는 "…: 푸틴" 꼴 인용)가 같이 있을 때만 받습니다.
+ * 이름과 발언 동사(또는 인용 꼴)가 같이 있을 때만 받습니다.
+ *
+ * 11/02 시험 발송에서 더 조였습니다: 이름이 제목의 **주어 자리**에 있어야 합니다.
+ * "Putin ready to take Zelensky's call, aide says"가 젤렌스키 발언으로, "Trump says ... after
+ * talking with Netanyahu"가 네타냐후 발언으로 잡혔습니다. 이름 앞에는 "China's", "Iran's FM
+ * Abbas", "US Treasury Secretary" 같은 대문자 직함·소유격만 올 수 있고, 소문자 낱말이 끼면
+ * 남이 주어인 문장으로 봅니다. 인용이 앞에 오는 꼴('"…," Xi says')은 따로 받습니다.
+ * "Putin's G20 comeback ..., says Kallas"처럼 이름이 소유격이면 주어가 아닙니다.
+ * 끝에 붙는 출처 꼴 두 가지도 받습니다: "..., Zelensky says"(이름 바로 뒤가 끝의 says)와
+ * "...: Kremlin". 콜론 꼴은 앞이 다섯 낱말 이상의 문장일 때만입니다("Hall of Infamy: Sanae
+ * Takaichi"는 발언이 아닌데 걸렸음).
  */
 const speechVerb = /\b(says?|said|warns?|vows?|tells?|urges?|calls? for|threatens?|signals?|rejects?|claims?|insists?)\b/i;
 // 집계 사이트가 붙이는 꼬리(": 11 outlets compared", ": how 6 outlets framed it").
 const aggregatorTail = /:\s*(how\s+)?\d+\s+outlets?\b.*$/i;
+// 이름 앞에 올 수 있는 것: 대문자 낱말·소유격·직함 약어 0~5개("China's", "Iran: ", "Iran's FM Abbas").
+const subjectPrefix = /^((?:[A-Z][\w.'’-]*:?|U\.S\.)\s+){0,5}$/;
+const leadingQuote = /^["“'‘].+["”'’],?\s*$/;
 
 function spokenBy(title, name) {
   const match = title.match(name);
 
   if (!match) return false;
 
-  // 인물 이름 뒤 80자 안에 발언 동사가 오거나, "…: 크렘린"처럼 콜론 뒤 인용 출처가 그 인물.
-  const after = title.slice(match.index, match.index + match[0].length + 80);
+  const prefix = title.slice(0, match.index);
+  // The name pattern may stop mid-word (/Zelensk/), so "after" starts at the end of that word.
+  const nameEnd = match.index + match[0].length + title.slice(match.index + match[0].length).match(/^\w*/)[0].length;
+  const after = title.slice(nameEnd, nameEnd + 80);
   const attribution = title.match(/:\s*([^:]{2,40})$/)?.[1] ?? "";
+  const subject = (subjectPrefix.test(prefix) || leadingQuote.test(prefix)) && !/^['’]s\b/.test(after);
+  const tailSaid = /,\s*((?:[A-Z][\w.'’-]*\s+){0,3})$/.test(title.slice(0, match.index)) && /^\s+(says|said)\W*$/i.test(after);
+  const body = title.slice(0, title.length - attribution.length - 1);
 
-  return speechVerb.test(after) || name.test(attribution);
+  if (subject && (speechVerb.test(after) || /^\s*:/.test(after))) return true;
+  if (tailSaid) return true;
+
+  return name.test(attribution) && body.trim().split(/\s+/).length >= 5;
 }
 
 async function leaderNews({ label, name, q }) {

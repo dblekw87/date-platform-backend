@@ -68,9 +68,20 @@ function withoutPublisher(title) {
 function truthShare(title) {
   if (title.startsWith("RT @realDonaldTrump")) return { by: null, text: title.slice("RT @realDonaldTrump".length).trim() };
 
-  const retruth = title.match(/^RT @(\w+)\s*/);
+  /*
+   * 남의 글 재게시는 핸들과 본문이 붙어 와서 핸들이 어디서 끝나는지 알 수 없습니다
+   * (11/02 시험 발송에 "@jmclghlnStrong" -- 핸들 @jmclghln + 본문 "Strong"). 그래서 라벨엔
+   * 핸들을 쓰지 않고 "재게시"로만 적습니다. 본문 첫 낱말은 붙은 핸들 끝의 대문자 낱말을
+   * 되돌려 살립니다. 피드는 핸들 뒤에 띄어쓰기를 넣지 않으므로("RT @realDonaldTrumpTO")
+   * 핸들 뒤 공백은 본문 첫 낱말 뒤의 공백입니다. 틀려도 요지 첫 낱말 하나입니다.
+   */
+  const retruth = title.match(/^RT @(\w+)/);
 
-  if (retruth) return { by: `@${retruth[1]}`, text: title.slice(retruth[0].length) };
+  if (retruth) {
+    const glued = retruth[1].match(/[a-z0-9_]([A-Z][a-z]*)$/)?.[1] ?? "";
+
+    return { by: "재게시", text: `${glued}${title.slice(retruth[0].length)}`.trim() };
+  }
 
   const quoted = title.match(/^((?!BREAKING\b)[A-Z][A-Z.'-]+(?: [A-Z][A-Z.'-]+){1,3}):\s+/);
 
