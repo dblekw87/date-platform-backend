@@ -94,7 +94,11 @@ async function loadYahooQuote(quoteConfig) {
   // the bell is yesterday's — the same trap the pre-market sampler hit. The last
   // printed bar is the price that exists now.
   const price = last >= 0 ? closes[last] : result?.meta?.regularMarketPrice;
-  const previousClose = result?.meta?.chartPreviousClose ?? result?.meta?.previousClose;
+  // chartPreviousClose is the close before the *chart window*, and the window
+  // is two days -- after a full session it is the day before yesterday. On
+  // 2026-11-03 SOXX read -11.15% against 10/29 when the day was -3.79%.
+  // previousClose is yesterday's close whatever the window.
+  const previousClose = result?.meta?.previousClose ?? result?.meta?.chartPreviousClose;
 
   if (!price) return null;
 
