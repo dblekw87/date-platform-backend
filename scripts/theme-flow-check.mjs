@@ -1,5 +1,6 @@
 import { query } from "../src/db/client.mjs";
 import { readConfig } from "../src/config.mjs";
+import { loadListingsOn } from "../src/providers/kr-listing-alert.mjs";
 
 /**
  * 장 초반 테마별 거래대금 쏠림 -- 어느 테마로 돈이 몰리고 있나.
@@ -15,13 +16,16 @@ import { readConfig } from "../src/config.mjs";
  * 중앙값을 봅니다. 한 종목이 여러 테마에 들어 있어 같은 돈이 여러 테마에 잡힙니다.
  * 오르는 종목(+0% 초과)만 셉니다 -- 빠지는 대형주 거래대금이 테마를 부풀렸습니다
  * (10/30 09:33 삼성전자 -4.4% 8,983억이 '의료기기' 1위를 만듦). 그날 상장한 종목은
- * 테마가 없어서 '신규상장' 묶음으로 따로 넣습니다(10/30 인텔리빅스).
+ * 테마가 없어서 '신규상장' 묶음으로 따로 넣습니다(10/30 인텔리빅스). 그날 상장 종목은
+ * KIND 일정에서 이름으로 찾습니다 -- kr_listings는 일봉이 들어온 뒤에 차서 상장 당일
+ * 장중엔 비어 있고, 11/02 영광(누적 3,700억, 그날 최대)이 이 표에서 빠졌습니다.
  * 판정이 아니라 사람이 보는 표입니다. 진입 권유로 쓰지 않습니다.
  */
 const config = readConfig();
 const kst = new Date(Date.now() + 9 * 3600_000).toISOString();
 const day = process.argv[2] ?? kst.slice(0, 10);
 const at = process.argv[3] ?? kst.slice(11, 16);
+const listedNames = (await loadListingsOn(config, day).catch(() => [])).map((stock) => stock.name);
 
 const { rows } = await query(config, `
   WITH s AS (
@@ -42,7 +46,8 @@ const { rows } = await query(config, `
            row_number() OVER (PARTITION BY tm.theme_name ORDER BY n.t DESC) k
       FROM now n
       JOIN (SELECT DISTINCT theme_name, symbol FROM kr_theme_members
-            UNION SELECT '신규상장', symbol FROM kr_listings WHERE listed_on = $1) tm USING (symbol)
+            UNION SELECT '신규상장', symbol FROM kr_listings WHERE listed_on = $1
+            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[])) tm USING (symbol)
       LEFT JOIN ago a USING (symbol)
      WHERE n.r > 0
   )
@@ -54,7 +59,7 @@ const { rows } = await query(config, `
     FROM j GROUP BY theme_name
    HAVING percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) >= 3
    ORDER BY sum(dt) FILTER (WHERE k <= 3) DESC NULLS LAST
-   LIMIT 8`, [day, at]);
+   LIMIT 8`, [day, at, listedNames]);
 const { rows: [market] } = await query(config, `
   SELECT symbol, change_rate FROM macro_samples
    WHERE symbol IN ('KOSPI', 'KOSDAQ') AND observed_at <= ($1::date + $2::time) AT TIME ZONE 'Asia/Seoul'
