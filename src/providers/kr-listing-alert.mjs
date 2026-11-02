@@ -1,3 +1,4 @@
+import { query } from "../db/client.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadKrxCalendar } from "./krx.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
@@ -57,10 +58,24 @@ export async function notifyKrListings(config, { minute, url } = {}) {
         stock.firstShares ? `최초상장 ${stock.firstShares}주` : null, stock.broker].filter(Boolean).join(" · "));
 
       if (stock.industry || stock.product) lines.push(`  ${[stock.industry, stock.product].filter(Boolean).join(" · ")}`);
+
+      const ipo = await loadIpoNews(config, stock.name, day);
+
+      if (ipo.about) lines.push(`  하는 일: ${ipo.about}`);
+
+      lines.push(`  ${[
+        `기관 ${ipo.institution ?? "?"}`,
+        `청약 ${ipo.retail ?? "?"}`,
+        ipo.deposit ? `증거금 ${ipo.deposit}` : null,
+        `확약 ${ipo.lockup ?? "?"}`
+      ].filter(Boolean).join(" · ")}`);
+
+      if (ipo.lockupNote) lines.push(`  ${ipo.lockupNote}`);
     }
 
     lines.push("");
     lines.push("첫날 가격 범위는 공모가의 60~400%. 시초가는 09:00 동시호가에서 정해집니다.");
+    lines.push("경쟁률·확약은 공모 기사 제목에서 읽은 값입니다. ?는 기사에서 못 찾은 것.");
     if (url) lines.push(url);
 
     if (!await notify(config, { text: lines.join("\n"), url: null })) return 0;
@@ -141,4 +156,77 @@ function industryOf(detail) {
   const index = parts.findIndex((part) => /^(주권|외국주권|DR|수익증권)$/.test(part));
 
   return index >= 0 && parts[index + 1] && !/^(주관|공모가|대한민국)/.test(parts[index + 1]) ? parts[index + 1] : null;
+}
+
+/*
+ * 수요예측·청약 경쟁률과 의무보유확약 -- 사용자가 상장 아침에 "어떤 회사인지, 확약은
+ * 얼마인지"를 같이 받고 싶어 했습니다(2026-11-02, 영광). KIND 두 표에는 이 숫자가
+ * 없어서 공모 기사 제목에서 읽습니다. 제목마다 싣는 숫자가 달라(영광은 기관 경쟁률과
+ * 확약이 다른 기사에 있었습니다) 45일 치 제목을 모아 항목마다 가장 최근 값을 씁니다.
+ * 못 찾은 칸은 비워 두고 알림에 ?로 적습니다 -- 추정으로 채우지 않습니다.
+ *
+ * 이름은 앞뒤가 한글이 아닐 때만 그 회사로 봅니다. '영광'이 '영광군' 기사에 붙지
+ * 않게 하려는 것이고, 공모 낱말이 같이 있는 제목만 봅니다.
+ */
+const ipoWord = /(상장|공모|청약|수요예측|IPO|코스닥|코스피|증시 ?새내기)/;
+const aboutWord = /(오늘상장|증시새내기|상장人터뷰|IPO챗|IPO레이더|\[현장\]|기자간담회)/;
+// 주간 일정 기사('영광·래블업·이에스티 등 3개사')는 회사 소개가 아닙니다.
+const manyWord = /(·[^ ]*·|등 ?\d+(개사|곳))/;
+
+export async function loadIpoNews(config, name, day) {
+  const empty = { about: null, deposit: null, institution: null, lockup: null, lockupNote: null, retail: null };
+
+  if (!config.databaseUrl || !name) return empty;
+
+  const { rows } = await query(config, `
+    SELECT coalesce(original_headline, headline) AS title
+      FROM market_news_items
+     WHERE region = 'KR'
+       AND published_at >= $2::date - 45
+       AND published_at < ($2 || ' 07:30+09')::timestamptz
+       AND coalesce(original_headline, headline) LIKE '%' || $1 || '%'
+     ORDER BY published_at DESC
+     LIMIT 300
+  `, [name, day]);
+
+  const own = new RegExp(`(^|[^가-힣])${escapeRegExp(name)}([^가-힣]|$)`);
+  const titles = rows.map((row) => String(row.title ?? "")).filter((title) => own.test(title) && ipoWord.test(title));
+  const pick = (pattern, format, only = /./) => {
+    for (const title of titles.filter((text) => only.test(text))) {
+      const match = title.match(pattern);
+
+      if (match) return format(match);
+    }
+
+    return null;
+  };
+  const lockup = pick(/확약[^0-9%]{0,12}([\d.]+)\s?%/, (match) => `${match[1]}%`);
+  const lockupRate = lockup ? Number.parseFloat(lockup) : null;
+
+  return {
+    about: aboutText(titles.find((title) => aboutWord.test(title) && !manyWord.test(title)), name),
+    // '기관 주문 21조 몰려'(인텔리빅스 수요예측)는 청약 증거금이 아니라서 청약 기사에서만 읽습니다.
+    deposit: pick(/([\d.,]+)\s?조\s?(원)?\s?(몰|운집|모여|유입)/, (match) => `${match[1]}조`, /(청약|증거금|공모주에)/),
+    institution: pick(/(기관|수요예측)[^0-9]{0,10}([\d,.]+)\s?대\s?1/, (match) => `${match[2]}대 1`),
+    lockup,
+    lockupNote: lockupRate !== null && lockupRate < 5 ? "확약이 5% 아래 -- 첫날 바로 팔 수 있는 기관 물량이 대부분입니다." : null,
+    retail: pick(/(청약|일반)[^0-9]{0,10}([\d,.]+)\s?대\s?1/, (match) => `${match[2]}대 1`)
+  };
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// 회사 소개 기사 제목에서 꼬리표([오늘상장] 따위)와 매체 꼬리를 걷어 한 줄로 씁니다.
+function aboutText(title, name) {
+  if (!title) return null;
+
+  const text = title
+    .replace(/\[[^\]]*(\]|$)/g, "")
+    .replace(/\s+-\s+[^-]+$/, "")
+    .replace(/(…|\.\.\.)$/, "")
+    .trim();
+
+  return text && text !== name ? text.slice(0, 80) : null;
 }
