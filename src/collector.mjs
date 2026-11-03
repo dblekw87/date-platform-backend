@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
+import { collectListingBrokers } from "./providers/listing-brokers.mjs";
 import { collectInvestorFlow } from "./providers/investor-flow.mjs";
 import { collectShortLending } from "./providers/short-lending.mjs";
 import { collectGeoNews } from "./providers/geo-news.mjs";
@@ -1399,6 +1400,9 @@ function startProgramSample(config) {
 // 놓치지 않으면서 요청은 절반입니다. 발표 시각표를 알아내면 그 시각에만 걸 수 있는데,
 // 그러려면 first_seen_at이 며칠 쌓여야 합니다.
 const foreignEstimateIntervalMs = 10 * 60_000;
+// 신규상장 거래원. 공모 물량은 개장 뒤 한 시간 안에 대부분 나오므로(11/03 래블업)
+// 10분이면 그 흐름이 여섯 점은 남습니다.
+const listingBrokersIntervalMs = 10 * 60_000;
 
 let foreignEstimateRunning = false;
 
@@ -1563,6 +1567,7 @@ export function startMarketCollector(config) {
   let timeoutId;
   let lastDisclosureAt = 0;
   let lastForeignEstimateAt = 0;
+  let lastListingBrokersAt = 0;
   let lastNewsAt = 0;
   let lastSeenAt = 0;
   let lastProgramAt = 0;
@@ -1658,6 +1663,15 @@ export function startMarketCollector(config) {
         if (!afterHours && Date.now() - lastForeignEstimateAt >= foreignEstimateIntervalMs) {
           lastForeignEstimateAt = Date.now();
           startForeignEstimateSample(config);
+        }
+
+        // 신규상장 첫날만, 공모 물량이 어느 창구로 언제 나오나. 그날 상장 종목이 없으면
+        // KIND 캐시만 보고 끝납니다. 기다리지 않습니다 -- 가격 표본을 붙잡지 않게.
+        if (!afterHours && Date.now() - lastListingBrokersAt >= listingBrokersIntervalMs) {
+          lastListingBrokersAt = Date.now();
+          collectListingBrokers(config, { day: sessionDate("KR"), minute })
+            .then((saved) => { if (saved > 0) console.log(`collector: listing brokers · ${saved} rows`); })
+            .catch((error) => console.warn("collector: listing brokers failed", error instanceof Error ? error.message : error));
         }
       } catch (error) {
         // A failed tick is a gap in one series, not a reason to stop recording
