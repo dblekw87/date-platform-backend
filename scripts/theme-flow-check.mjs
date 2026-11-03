@@ -19,13 +19,27 @@ import { loadListingsOn } from "../src/providers/kr-listing-alert.mjs";
  * 테마가 없어서 '신규상장' 묶음으로 따로 넣습니다(10/30 인텔리빅스). 그날 상장 종목은
  * KIND 일정에서 이름으로 찾습니다 -- kr_listings는 일봉이 들어온 뒤에 차서 상장 당일
  * 장중엔 비어 있고, 11/02 영광(누적 3,700억, 그날 최대)이 이 표에서 빠졌습니다.
+ * 11/03 09:13엔 래블업(그날 최대)이 또 빠졌습니다 -- 상장 당일 아침 표본은 이름 자리에
+ * 코드("0147B0", 영광은 "359410")가 찍혀 이름 대조가 안 됩니다. 그래서 이름이 곧 코드인
+ * 종목도 신규상장으로 넣고, KIND 조회는 한 번 더 묻습니다(시한 실패로 빈 목록이 됨).
  * 판정이 아니라 사람이 보는 표입니다. 진입 권유로 쓰지 않습니다.
  */
 const config = readConfig();
 const kst = new Date(Date.now() + 9 * 3600_000).toISOString();
 const day = process.argv[2] ?? kst.slice(0, 10);
 const at = process.argv[3] ?? kst.slice(11, 16);
-const listedNames = (await loadListingsOn(config, day).catch(() => [])).map((stock) => stock.name);
+
+async function listedNamesOn() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const names = (await loadListingsOn(config, day).catch(() => [])).map((stock) => stock.name);
+
+    if (names.length) return names;
+  }
+
+  return [];
+}
+
+const listedNames = await listedNamesOn();
 
 const { rows } = await query(config, `
   WITH s AS (
@@ -47,7 +61,7 @@ const { rows } = await query(config, `
       FROM now n
       JOIN (SELECT DISTINCT theme_name, symbol FROM kr_theme_members
             UNION SELECT '신규상장', symbol FROM kr_listings WHERE listed_on = $1
-            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[])) tm USING (symbol)
+            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[]) OR name = symbol) tm USING (symbol)
       LEFT JOIN ago a USING (symbol)
      WHERE n.r > 0
   )
