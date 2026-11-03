@@ -59,9 +59,19 @@ export async function notifyKrListings(config, { minute, url } = {}) {
 
       if (stock.industry || stock.product) lines.push(`  ${[stock.industry, stock.product].filter(Boolean).join(" · ")}`);
 
-      const ipo = await loadIpoNews(config, stock.name, day);
+      const news = await loadIpoNews(config, stock.name, day);
+      const fund = await loadIpo38(stock.name).catch(() => null);
+      const ipo = {
+        ...news,
+        institution: fund?.institution ?? news.institution,
+        lockup: fund?.lockup ?? news.lockup,
+        retail: fund?.retail ?? news.retail
+      };
+      const lockupRate = ipo.lockup ? Number.parseFloat(ipo.lockup) : null;
 
       if (ipo.about) lines.push(`  하는 일: ${ipo.about}`);
+
+      if (fund?.band || fund?.earnings) lines.push(`  ${[fund.band, fund.earnings].filter(Boolean).join(" · ")}`);
 
       lines.push(`  ${[
         `기관 ${ipo.institution ?? "?"}`,
@@ -70,12 +80,12 @@ export async function notifyKrListings(config, { minute, url } = {}) {
         `확약 ${ipo.lockup ?? "?"}`
       ].filter(Boolean).join(" · ")}`);
 
-      if (ipo.lockupNote) lines.push(`  ${ipo.lockupNote}`);
+      if (lockupRate !== null && lockupRate < 5) lines.push("  확약이 5% 아래 -- 첫날 바로 팔 수 있는 기관 물량이 대부분입니다.");
     }
 
     lines.push("");
     lines.push("첫날 가격 범위는 공모가의 60~400%. 시초가는 09:00 동시호가에서 정해집니다.");
-    lines.push("경쟁률·확약은 공모 기사 제목에서 읽은 값입니다. ?는 기사에서 못 찾은 것.");
+    lines.push("경쟁률·확약·실적은 38커뮤니케이션 공모 정보, 없으면 공모 기사 제목에서 읽은 값입니다. ?는 못 찾은 것.");
     if (url) lines.push(url);
 
     if (!await notify(config, { text: lines.join("\n"), url: null })) return 0;
@@ -229,4 +239,69 @@ function aboutText(title, name) {
     .trim();
 
   return text && text !== name ? text.slice(0, 80) : null;
+}
+
+/*
+ * 38커뮤니케이션 공모 정보 -- 기사 제목보다 정확한 쪽.
+ *
+ * 기사 제목은 경쟁률·확약을 싣다 말다 해서 2026-11-03 래블업 알림이 전부 ?로
+ * 나갔습니다. 38의 수요예측 결과 목록에는 희망가·확정가·기관 경쟁률·확약이 한 줄에
+ * 있고, 상세 화면에 청약 경쟁률과 최근 실적이 있습니다.
+ *
+ * http로 읽습니다. https는 서버가 짧은 DH 키를 써서 Node가 연결을 거절합니다
+ * (ERR_SSL_DH_KEY_TOO_SMALL). 공개된 공모 정보라 평문이어도 잃을 것이 없습니다.
+ * 페이지는 EUC-KR입니다. 못 읽으면 null을 돌려 기사 제목 쪽 값을 그대로 씁니다.
+ */
+const fundBase = "http://www.38.co.kr/html/fund/";
+
+async function readFundPage(path) {
+  const response = await fetch(`${fundBase}${path}`, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(6000)
+  });
+
+  if (!response.ok) return "";
+
+  return new TextDecoder("euc-kr").decode(await response.arrayBuffer());
+}
+
+function fundText(html) {
+  return html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+}
+
+export async function loadIpo38(name) {
+  let row = null;
+
+  for (const page of [1, 2]) {
+    const html = await readFundPage(`index.htm?o=r1&page=${page}`);
+    const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((match) => match[0]);
+
+    row = rows.find((candidate) => fundText(candidate).trim().startsWith(`${name} `) && /:1/.test(candidate));
+
+    if (row) break;
+  }
+
+  if (!row) return null;
+
+  // 이름 · 수요예측일 · 희망가 · 확정가 · 공모금액(백만) · 기관 경쟁률 · 확약 · 주간사
+  const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((match) => fundText(match[1]).trim());
+  const [low, high] = (cells[2] ?? "").split("~").map((part) => Number(part.replace(/[^0-9]/g, "")));
+  const price = Number((cells[3] ?? "").replace(/[^0-9]/g, ""));
+  const position = !price || !low || !high ? null
+    : price > high ? "상단 초과" : price === high ? "상단" : price < low ? "하단 미만" : price === low ? "하단" : "범위 안";
+  const link = row.match(/href="\.\/(\?o=v[^"]+)"/)?.[1]?.replace(/&amp;/g, "&");
+  const detail = link ? fundText(await readFundPage(link)) : "";
+  const revenue = Number(detail.match(/매출액\s*(-?[\d,]+)\s*\(백만원\)/)?.[1]?.replace(/,/g, ""));
+  const profit = Number(detail.match(/순이익\s*(-?[\d,]+)\s*\(백만원\)/)?.[1]?.replace(/,/g, ""));
+  const eok = (value) => `${Math.round(value / 100).toLocaleString("ko-KR")}억`;
+
+  return {
+    band: position ? `공모가 ${position} ${price.toLocaleString("ko-KR")}원(희망 ${cells[2]})` : null,
+    earnings: Number.isFinite(revenue) && Number.isFinite(profit) && detail
+      ? `최근 매출 ${eok(revenue)} · 순이익 ${eok(profit)}(${profit >= 0 ? "흑자" : "적자"})`
+      : null,
+    institution: /:1/.test(cells[5] ?? "") ? cells[5].replace(":1", "대 1") : null,
+    lockup: /%/.test(cells[6] ?? "") ? cells[6] : null,
+    retail: detail.match(/청약경쟁률\s*([\d,.]+):1/)?.[1] ? `${detail.match(/청약경쟁률\s*([\d,.]+):1/)[1]}대 1` : null
+  };
 }
