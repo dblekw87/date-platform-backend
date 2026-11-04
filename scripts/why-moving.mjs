@@ -1,5 +1,6 @@
 import { query } from "../src/db/client.mjs";
 import { readConfig } from "../src/config.mjs";
+import { classifyHeadline } from "../src/providers/catalyst.mjs";
 
 /**
  * 이 종목 왜 움직이나 -- 같이 움직인 종목, 움직인 시각, 그 앞뒤 기사·공시, 이벤트 지도.
@@ -127,6 +128,42 @@ const { rows: movers } = await query(config, `
   )
   SELECT symbol, name, dr, t FROM d WHERE symbol <> $4 AND t > 3e9
 `, [day, start.toISOString(), end.toISOString(), symbol]);
+
+/*
+ * 종목 자체 재료부터 봅니다. 11/03 한진칼(호반·조원태 지분 경쟁)은 그 종목만의 이유였는데,
+ * 같은 시각 시장 전체가 보안·신규주로 몰려 "같이 움직인 종목"이 그쪽으로 나왔습니다.
+ * 그 종목 이름이 붙은 기사가 같은 종류의 고유 재료를 두 건 이상 말하면 그것을 먼저
+ * 적고, 같이 움직인 종목은 "같은 시각 시장 쏠림일 수 있음"으로 낮춰 읽게 합니다.
+ *
+ * 경영권 다툼은 catalyst.mjs의 낱말(매각·양도·최대주주 변경)에 안 걸려서 여기서 따로
+ * 봅니다 -- '최대주주 등극', '지분 추가 매입', '기업결합 신고'가 그날의 제목이었습니다.
+ */
+const ownershipFight = /경영권|지분\s*(경쟁|매입|확대|추가)|최대주주|공개\s*매수|기업\s*결합/;
+const { rows: ownNews } = await query(config, `
+  SELECT published_at, coalesce(original_headline, headline) h FROM market_news_items
+   WHERE published_at BETWEEN $1 AND $2 AND $3 = ANY(related_symbols)
+   ORDER BY published_at
+`, [new Date(start.getTime() - 18 * 3600_000), new Date(end.getTime() + 60 * 60_000), symbol]);
+const ownLabels = new Map();
+
+for (const row of ownNews) {
+  const label = ownershipFight.test(row.h) ? "경영권·지분 경쟁" : classifyHeadline({ text: row.h })?.kind === "고유" ? classifyHeadline({ text: row.h }).label : null;
+
+  if (!label) continue;
+  if (!ownLabels.has(label)) ownLabels.set(label, { count: 0, first: row });
+  ownLabels.get(label).count += 1;
+}
+
+const ownReason = [...ownLabels.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+
+if (ownReason && ownReason[1].count >= 2) {
+  const [label, { count, first }] = ownReason;
+
+  const firstDay = new Date(first.published_at).toLocaleDateString("ko-KR", { day: "numeric", month: "numeric", timeZone: "Asia/Seoul" });
+
+  console.log(`\n▶ 종목 자체 재료 우선: ${label} — 이 종목 이름이 붙은 기사 ${count}건, 첫 기사 ${firstDay} ${clock(first.published_at)} "${first.h.slice(0, 60)}"`);
+  console.log("  아래 '같이 움직인 종목'은 같은 시각 시장 쏠림일 수 있습니다. 이 종목만의 이유로 읽으세요.");
+}
 
 const sign = Math.sign(best.change) || 1;
 
