@@ -65,11 +65,12 @@ function whenLabel(at, today) {
 
 /** 알림 본문. 보내지 않고 문구만 확인할 수 있게 따로 둡니다(notify는 드라이런이 없습니다). */
 export function macroCalendarText(events, { next, today, url }) {
-  const lines = [`[금리 일정] 오늘 종가 → ${next ? `${Number(next.slice(5, 7))}/${Number(next.slice(8, 10))}` : "다음 장"} 아침 사이`, ""];
+  const title = events.some((event) => event.kind === "politics") ? "금리·정치 일정" : "금리 일정";
+  const lines = [`[${title}] 오늘 종가 → ${next ? `${Number(next.slice(5, 7))}/${Number(next.slice(8, 10))}` : "다음 장"} 아침 사이`, ""];
 
   for (const event of events) {
     lines.push(`· ${whenLabel(event.at, today)}  ${event.label}${event.detail ? ` · ${event.detail}` : ""}`);
-    lines.push(`  ${measured[event.kind]}`);
+    lines.push(`  ${event.scenario ? `시나리오(측정 없음): ${event.scenario}` : measured[event.kind]}`);
   }
 
   lines.push("");
