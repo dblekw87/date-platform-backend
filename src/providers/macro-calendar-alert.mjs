@@ -3,6 +3,7 @@ import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { macroEventsBetween } from "./macro-calendar.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { sessionDate } from "./market-session.mjs";
+import { loadUsEarnings } from "./us-earnings-calendar.mjs";
 
 /**
  * [금리 일정] 오늘 종가에 사서 다음 장 아침에 파는 사이에 낀 금리 결정·물가·고용 발표.
@@ -24,6 +25,7 @@ const stopMinute = 15 * 60;
 
 const measured = {
   bok: "청산(09:05~09:10) 뒤 발표라 보유 위험은 아님. 금통위 날 장중 변동은 평소보다 작았음(15일)",
+  earnings: "아직 측정 전(미국 대형주 실적 밤 → 국내 같은 업종 다음 날을 재야 함)",
   cpi: "측정: CPI 밤엔 대형주 갭이 큼 — 시총 상위 30 갭 크기 중앙 2.24% vs 평소 0.99%(21밤). 중소형 평균은 비슷(0.61 vs 0.50)",
   fomc: "측정: FOMC 밤 다음 날 갭은 평소와 같음 — 시총 상위 30 갭 크기 중앙 0.96% vs 평소 0.99%(14밤)",
   jobs: "아직 측정 전(지난 발표일을 모아 재야 함)",
@@ -65,13 +67,22 @@ function whenLabel(at, today) {
 
 /** 알림 본문. 보내지 않고 문구만 확인할 수 있게 따로 둡니다(notify는 드라이런이 없습니다). */
 export function macroCalendarText(events, { next, today, url }) {
-  const title = events.some((event) => event.kind === "politics") ? "금리·정치 일정" : "금리 일정";
-  const lines = [`[${title}] 오늘 종가 → ${next ? `${Number(next.slice(5, 7))}/${Number(next.slice(8, 10))}` : "다음 장"} 아침 사이`, ""];
+  const kinds = new Set(events.map((event) => event.kind));
+  const title = [
+    [...kinds].some((kind) => kind !== "politics" && kind !== "earnings") ? "금리" : null,
+    kinds.has("politics") ? "정치" : null,
+    kinds.has("earnings") ? "美 실적" : null
+  ].filter(Boolean).join("·");
+  const lines = [`[${title} 일정] 오늘 종가 → ${next ? `${Number(next.slice(5, 7))}/${Number(next.slice(8, 10))}` : "다음 장"} 아침 사이`, ""];
 
   for (const event of events) {
     lines.push(`· ${whenLabel(event.at, today)}  ${event.label}${event.detail ? ` · ${event.detail}` : ""}`);
-    lines.push(`  ${event.scenario ? `시나리오(측정 없음): ${event.scenario}` : measured[event.kind]}`);
+
+    // 실적은 줄마다 같은 문장이라 아래에 한 번만 적습니다.
+    if (event.kind !== "earnings") lines.push(`  ${event.scenario ? `시나리오(측정 없음): ${event.scenario}` : measured[event.kind]}`);
   }
+
+  if (kinds.has("earnings")) lines.push(`  美 실적: ${measured.earnings}. 시각은 장 전·장 후 구분만 맞고 분은 어림입니다.`);
 
   lines.push("");
   lines.push("결정 원문(연준 성명·한은 통화정책방향)은 나오는 대로 [美 발언]으로 갑니다. 00~07시 발표는 07시에.");
@@ -94,7 +105,11 @@ export async function notifyMacroCalendar(config, { minute, now = new Date(), ur
 
     const next = await nextKrSession(config, today);
     const until = next ? new Date(`${next}T10:31:00+09:00`) : new Date(now.getTime() + 3 * 86400000);
-    const events = macroEventsBetween(now, until);
+    // 미국 실적은 Finnhub가 미국 날짜로 줍니다. 어제(미국)부터 물어야 오늘 한국 아침에
+    // 걸리는 전날 장 후 발표까지 들어옵니다. 실패하면 금리 일정만 갑니다.
+    const earnings = (await loadUsEarnings(config, sessionDate("KR", new Date(now.getTime() - 86400000))))
+      .filter((event) => event.at >= now && event.at < until);
+    const events = [...macroEventsBetween(now, until), ...earnings].sort((left, right) => left.at - right.at);
 
     if (!events.length) {
       await markAlertSent(config, kind, today, "done", { note: "일정 없음" });
