@@ -322,6 +322,10 @@ function naverDevelopersFeed(config, query) {
  * 이데일리 본지 기사가 0건이라 매체 하나가 통째로 빠져 있었습니다. 인포스탁데일리는
  * 마감체크·시황레이더·테마시황 같은 종목 기사가 하루 25건쯤 나오는데 구글 검색으로는
  * 주 42건만 걸렸습니다.
+ *
+ * 2026-11-04에 마켓잉크를 더했습니다(사용자 요청). 美 종목·이벤트를 국내 업종과 엮는
+ * 해설이 많고(그날 "美 중간선거에 블룸에너지 SOFC 오프그리드 전력 월가 주목"), 다른
+ * 국내 매체에 없는 미국 개별주 이야기가 들어옵니다. 전체기사 RSS가 50건을 줍니다.
  */
 export const koreanPressFeeds = [
   { label: "헤드라인", name: "한국경제", url: "https://www.hankyung.com/feed/finance" },
@@ -337,7 +341,8 @@ export const koreanPressFeeds = [
   // http인 이유: 이 서버는 TLS 1.0/1.1만 받아 Node fetch가 ERR_SSL_UNSUPPORTED_PROTOCOL로
   // 거부합니다(2026-09-12 실측, curl은 통과). 공개 RSS라 평문으로 받아도 잃는 것이 없습니다.
   { label: "헤드라인", name: "이데일리", url: "http://rss.edaily.co.kr/stock_news.xml" },
-  { label: "헤드라인", name: "인포스탁데일리", url: "https://www.infostockdaily.co.kr/rss/allArticle.xml" }
+  { label: "헤드라인", name: "인포스탁데일리", url: "https://www.infostockdaily.co.kr/rss/allArticle.xml" },
+  { label: "헤드라인", name: "마켓잉크", url: "https://www.market-ink.co.kr/rss/allArticle.xml" }
 ];
 
 /*
