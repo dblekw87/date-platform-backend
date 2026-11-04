@@ -1,6 +1,6 @@
 import { readThroughCache } from "../cache.mjs";
 import { hasKisCredentials } from "../config.mjs";
-import { fetchJson } from "../http.mjs";
+import { HttpError, fetchJson } from "../http.mjs";
 import { formatTradingAmount } from "./format.mjs";
 import { krRankingVenue, sessionDate } from "./market-session.mjs";
 import { createRuntimeState } from "./runtime-state.mjs";
@@ -10,6 +10,48 @@ import { readStoredToken, writeStoredToken } from "./token-store.mjs";
 const tokenCacheSkewMs = 60_000;
 let tokenCache;
 let tokenRequest;
+
+/*
+ * KIS가 토큰을 거절하면 버립니다. 2026-11-04 16:23부터 시세 567종목이 전부 무응답이었는데,
+ * 저장된 토큰은 그날 21:30까지 유효하다고 적혀 있었고 KIS는 EGW00123 "기간이 만료된
+ * token"으로 거절했습니다. 같은 키로 다른 곳에서 토큰을 새로 받으면 앞의 것이 무효가
+ * 되는 것으로 보입니다. 만료 시각만 믿으면 그날 밤까지 수집이 멈춥니다.
+ *
+ * 그 요청에 쓴 토큰이 지금 들고 있는 것과 같을 때만 버립니다. 새 토큰을 받은 뒤에
+ * 옛 토큰으로 나갔던 요청이 늦게 돌아와 새것까지 버리는 일을 막습니다.
+ */
+const rejectedTokenCodes = new Set(["EGW00121", "EGW00123"]);
+
+export function noteKisRejection(data, usedToken) {
+  if (!rejectedTokenCodes.has(data?.msg_cd)) return false;
+  if (!tokenCache || tokenCache.accessToken !== usedToken) return true;
+
+  console.warn(`kis token rejected (${data.msg_cd}) - dropping it, the next call asks for a new one`);
+  tokenCache = undefined;
+  writeStoredToken("kis", { accessToken: "", expiresAt: 0 }).catch(() => {});
+
+  return true;
+}
+
+/*
+ * 이 모듈의 KIS 호출은 전부 이쪽으로 갑니다. 만료 토큰은 HTTP 500에 JSON 본문으로 오므로
+ * fetchJson이 던지는 HttpError의 details까지 봐야 합니다 -- 정상 응답만 보면 못 잡습니다.
+ */
+async function kisFetchJson(url, options) {
+  const usedToken = String(options?.headers?.authorization ?? "").replace(/^Bearer\s+/, "");
+
+  try {
+    const data = await fetchJson(url, options);
+
+    if (usedToken) noteKisRejection(data, usedToken);
+
+    return data;
+  } catch (error) {
+    if (usedToken && error instanceof HttpError) noteKisRejection(error.details, usedToken);
+
+    throw error;
+  }
+}
 
 const indexQuotes = [
   { id: "kospi-day-future", label: "KOSPI", symbol: "KOSPI", kisCode: "0001", note: "KIS 국내업종 현재지수" },
@@ -29,7 +71,7 @@ function kisUrl(config, path, params = {}) {
 
 async function requestAccessToken(config) {
   const now = Date.now();
-  const data = await fetchJson(kisUrl(config, "/oauth2/tokenP"), {
+  const data = await kisFetchJson(kisUrl(config, "/oauth2/tokenP"), {
     method: "POST",
     timeoutMs: 5000,
     headers: {
@@ -231,7 +273,7 @@ function toLeadingStock(item, index, venue) {
 }
 
 async function loadVolumeRank(config, token, venue) {
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/volume-rank", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/volume-rank", {
     FID_COND_MRKT_DIV_CODE: venue,
     FID_COND_SCR_DIV_CODE: "20171",
     FID_INPUT_ISCD: "0000",
@@ -247,6 +289,7 @@ async function loadVolumeRank(config, token, venue) {
     timeoutMs: 5000,
     headers: kisHeaders(config, token, "FHPST01710000")
   });
+
 
   if (data?.rt_cd && data.rt_cd !== "0") {
     throw new Error(`KIS volume-rank ${data.msg_cd ?? "error"}`);
@@ -290,7 +333,7 @@ async function loadFluctuationRank(config, token, venue) {
 }
 
 async function loadFluctuationPage(config, token, venue, board) {
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/ranking/fluctuation", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/ranking/fluctuation", {
     fid_cond_mrkt_div_code: venue,
     fid_cond_scr_div_code: "20170",
     fid_input_iscd: board,
@@ -315,6 +358,7 @@ async function loadFluctuationPage(config, token, venue, board) {
     timeoutMs: 5000,
     headers: kisHeaders(config, token, "FHPST01700000")
   });
+
 
   if (data?.rt_cd && data.rt_cd !== "0") {
     throw new Error(`KIS fluctuation ${data.msg_cd ?? "error"}`);
@@ -415,13 +459,14 @@ async function requestQuotes(config, token, symbols, venue) {
 }
 
 async function loadKrQuote(config, token, symbol, venue = "J") {
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-price", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-price", {
     FID_COND_MRKT_DIV_CODE: venue,
     FID_INPUT_ISCD: symbol
   }), {
     timeoutMs: 3500,
     headers: kisHeaders(config, token, "FHKST01010100")
   });
+
 
   if (data?.rt_cd && data.rt_cd !== "0") return null;
 
@@ -468,7 +513,7 @@ export async function isKrMarketOpen(config, date = new Date()) {
 
   try {
     const token = await getAccessToken(config);
-    const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/chk-holiday", {
+    const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/chk-holiday", {
       BASS_DT: day,
       CTX_AREA_NK: "",
       CTX_AREA_FK: ""
@@ -497,13 +542,14 @@ export async function isKrMarketOpen(config, date = new Date()) {
 }
 
 async function loadIndexQuote(config, token, indexConfig) {
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-index-price", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-index-price", {
     FID_COND_MRKT_DIV_CODE: "U",
     FID_INPUT_ISCD: indexConfig.kisCode
   }), {
     timeoutMs: 3500,
     headers: kisHeaders(config, token, "FHPUP02100000")
   });
+
 
   if (data?.rt_cd && data.rt_cd !== "0") {
     throw new Error(`KIS index ${data.msg_cd ?? "error"}`);
@@ -550,7 +596,7 @@ const futuresQuotes = [
 ];
 
 async function loadFuturesQuote(config, token, item) {
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-futureoption/v1/quotations/inquire-price", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-futureoption/v1/quotations/inquire-price", {
     FID_COND_MRKT_DIV_CODE: "F",
     FID_INPUT_ISCD: item.kisCode
   }), {
@@ -713,13 +759,14 @@ export async function loadKrOrderBooks(config, symbols, venue = "J") {
 }
 
 async function loadKrOrderBook(config, token, symbol, venue) {
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", {
     FID_COND_MRKT_DIV_CODE: venue,
     FID_INPUT_ISCD: symbol
   }), {
     timeoutMs: 3500,
     headers: kisHeaders(config, token, "FHKST01010200")
   });
+
 
   if (data?.rt_cd && data.rt_cd !== "0") return null;
 
@@ -755,7 +802,7 @@ async function loadKrOrderBook(config, token, symbol, venue) {
  */
 export async function loadKrDailyBarsFromKis(config, symbol, { from, to }) {
   const token = await getAccessToken(config);
-  const data = await fetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", {
+  const data = await kisFetchJson(kisUrl(config, "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", {
     FID_COND_MRKT_DIV_CODE: "J",
     FID_INPUT_DATE_1: String(from).replaceAll("-", ""),
     FID_INPUT_DATE_2: String(to).replaceAll("-", ""),
@@ -766,6 +813,7 @@ export async function loadKrDailyBarsFromKis(config, symbol, { from, to }) {
     timeoutMs: 5000,
     headers: kisHeaders(config, token, "FHKST03010100")
   });
+
 
   if (data?.rt_cd && data.rt_cd !== "0") throw new Error(`kis daily ${symbol}: ${data.msg1 ?? data.rt_cd}`);
 

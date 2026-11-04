@@ -51,9 +51,11 @@ async function readFlow(config, token, symbol) {
     }
   });
 
-  if (!response.ok) return [];
+  const data = await response.json().catch(() => null);
 
-  const data = await response.json();
+  (await import("./kis.mjs")).noteKisRejection(data, token);
+
+  if (!response.ok) return [];
 
   if (data?.rt_cd && data.rt_cd !== "0") return [];
 

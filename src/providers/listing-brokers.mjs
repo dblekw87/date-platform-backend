@@ -1,5 +1,5 @@
 import { query } from "../db/client.mjs";
-import { getAccessToken } from "./kis.mjs";
+import { getAccessToken, noteKisRejection } from "./kis.mjs";
 import { loadListingsOn } from "./kr-listing-alert.mjs";
 
 /**
@@ -74,9 +74,11 @@ async function readMembers(config, token, symbol) {
     }
   });
 
-  if (!response.ok) return [];
+  const data = await response.json().catch(() => null);
 
-  const data = await response.json();
+  noteKisRejection(data, token);
+
+  if (!response.ok) return [];
   const row = Array.isArray(data?.output) ? data.output[0] : data?.output;
 
   if (!row || (data?.rt_cd && data.rt_cd !== "0")) return [];

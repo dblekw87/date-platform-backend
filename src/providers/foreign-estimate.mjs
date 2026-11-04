@@ -1,4 +1,4 @@
-import { getAccessToken } from "./kis.mjs";
+import { getAccessToken, noteKisRejection } from "./kis.mjs";
 import { query } from "../db/client.mjs";
 
 /**
@@ -62,9 +62,11 @@ async function readForeignEstimate(config, token, symbol) {
     }
   });
 
-  if (!response.ok) return [];
+  const data = await response.json().catch(() => null);
 
-  const data = await response.json();
+  noteKisRejection(data, token);
+
+  if (!response.ok) return [];
 
   if (data?.rt_cd && data.rt_cd !== "0") return [];
 
