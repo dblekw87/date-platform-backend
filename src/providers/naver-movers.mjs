@@ -25,13 +25,15 @@ const markets = ["KOSPI", "KOSDAQ"];
 /* 사업 회사가 아닌 것. market_watch.py가 쓰는 목록과 같은 이유로 같은 낱말을 씁니다. */
 const notCompanies = /ETF|ETN|KODEX|TIGER|KBSTAR|ACE |SOL |HANARO|PLUS |RISE |스팩/;
 
-function usable(name) {
+/* 우선주. 끝이 '우'이거나 우B·우C 꼴입니다. 본주와 따로 움직이지만 재료는 본주에
+   붙고, 상따 자리도 본주에서 나옵니다. */
+const preferredName = /우$|우[BC]$/;
+
+function usable(name, { preferred = false } = {}) {
   if (!name) return false;
   if (notCompanies.test(name)) return false;
 
-  /* 우선주. 끝이 '우'이거나 우B·우C 꼴입니다. 본주와 따로 움직이지만 재료는 본주에
-     붙고, 상따 자리도 본주에서 나옵니다. */
-  return !/우$|우[BC]$/.test(name);
+  return preferred ? preferredName.test(name) : !preferredName.test(name);
 }
 
 function rateOf(row) {
@@ -44,8 +46,12 @@ function rateOf(row) {
 /**
  * 오늘 많이 오른 종목의 코드. 실패하면 빈 배열입니다 -- 이 목록이 없다고 수집을
  * 멈추면 안 됩니다. 원래 보던 것은 그대로 봅니다.
+ *
+ * preferred: true면 반대로 우선주만 돌려줍니다. 2026-11-06 폭락장(코스피 −8.5%)에서
+ * 상한가권 대부분이 우선주(동양2우B·대호특수강우·덕성우·깨끗한나라우·계양전기우)였는데
+ * 표본에 하나도 없어 "오늘 상한가는 셋뿐"이라고 잘못 말했습니다(사용자 요청으로 수집).
  */
-export async function loadNaverMoverSymbols({ minRate = 10, timeoutMs = 6000 } = {}) {
+export async function loadNaverMoverSymbols({ minRate = 10, preferred = false, timeoutMs = 6000 } = {}) {
   const found = new Map();
 
   await Promise.all(markets.map(async (market) => {
@@ -64,7 +70,7 @@ export async function loadNaverMoverSymbols({ minRate = 10, timeoutMs = 6000 } =
         const name = String(row?.stockName ?? "").trim();
         const rate = rateOf(row);
 
-        if (!symbol || !usable(name) || rate === null || rate < minRate) continue;
+        if (!symbol || !usable(name, { preferred }) || rate === null || rate < minRate) continue;
 
         found.set(symbol, { name, rate, symbol });
       }

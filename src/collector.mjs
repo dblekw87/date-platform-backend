@@ -326,6 +326,37 @@ async function samplePrices(config) {
     console.warn("collector: mover sample failed", error instanceof Error ? error.message : error);
   }
 
+  /*
+   * 많이 오른 우선주. 2026-11-06 폭락장에서 상한가권 대부분이 우선주였는데 표본에 하나도
+   * 없었습니다 -- 순위도 네이버 목록도 우선주를 일부러 빼고 있었습니다(재료는 본주에 붙으니까).
+   *
+   * source를 `kis-pref:`로 따로 둡니다. `kis:krx%`로 읽는 곳이 상한가 감지·상따 감시·
+   * 종가배팅 등 열 곳이 넘어서, 거기 섞으면 알림에 우선주가 끼어듭니다. 이쪽은 기록만이고
+   * 알림은 그대로입니다.
+   */
+  try {
+    const preferred = (await loadNaverMoverSymbols({ preferred: true })).slice(0, moverSampleCap);
+
+    if (preferred.length > 0) {
+      const quotes = await loadKrQuotes(config, preferred.map((mover) => mover.symbol), venue === "kis:nxt" ? "NX" : "J");
+      const names = new Map(preferred.map((mover) => [mover.symbol, mover.name]));
+      const named = quotes.map((quote) => ({ ...quote, name: names.get(quote.symbol) ?? quote.name }));
+
+      if (named.length > 0) {
+        saved += await saveMarketPriceSamples(config, {
+          market: "KR",
+          observedAt,
+          ranked: false,
+          sessionDate: day,
+          source: venue === "kis:nxt" ? "kis-pref:nxt" : "kis-pref:krx",
+          stocks: named
+        });
+      }
+    }
+  } catch (error) {
+    console.warn("collector: preferred sample failed", error instanceof Error ? error.message : error);
+  }
+
   return saved;
 }
 
