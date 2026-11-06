@@ -73,4 +73,25 @@ for (const stock of top) {
   if (!news.length) console.log("    (개장 전 48시간 태그 기사 없음 — 제품명·영문·그룹명으로 다시 찾을 것)");
 }
 
+/*
+ * 우선주는 거래대금 문턱과 상관없이 따로 봅니다(11/06 사용자 "우선주도 오르는 거 기억해야 돼").
+ * 그날 한진칼우·깨끗한나라우·대호특수강우·덕성우·동양2우B가 상한가였는데 대부분 거래대금이
+ * 수억 원이라 위 목록에 안 걸렸습니다. 폭락일 우선주는 11일 중 10일 시장보다 나았습니다
+ * (memory crash-day-theme-rotation). 보통주 등락을 옆에 둬서 보통주 재료가 번진 것인지
+ * (한진칼 분쟁) 우선주만 따로 뛴 것인지(품절주) 가릅니다.
+ */
+const { rows: preferred } = await query(config, `
+  SELECT p.name, p.change_rate::float8 r, (p.turnover / 1e8)::float8 t, c.name common, c.change_rate::float8 cr
+    FROM kr_daily_universe p
+    LEFT JOIN kr_daily_universe c ON c.session_date = p.session_date AND c.symbol = left(p.symbol, 5) || '0'
+   WHERE p.session_date = $1 AND NOT p.trade_halted AND p.change_rate >= 10
+     AND p.name ~ '[0-9]?우[A-C]?$' AND p.name !~ '(우주|그로우)$' AND p.symbol !~ '0$'
+   ORDER BY p.change_rate DESC
+   LIMIT 10`, [day]);
+
+console.log(`우선주 +10% 이상 ${preferred.length}개${preferred.length ? "" : " (없음)"}`);
+for (const row of preferred) {
+  console.log(`  ${row.name} +${row.r.toFixed(1)}% ${row.t.toFixed(1)}억 · 보통주 ${row.common ?? "?"} ${row.cr == null ? "?" : `${row.cr >= 0 ? "+" : ""}${row.cr.toFixed(1)}%`}`);
+}
+
 process.exit(0);
