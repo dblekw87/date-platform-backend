@@ -20,6 +20,7 @@
     "probe:nxt-after": "node scripts/probe-nxt-after.mjs",
     "probe:nxt-coverage": "node scripts/probe-nxt-coverage.mjs",
     "snapshot:publish": "node scripts/publish-board-snapshot.mjs",
+    "shadow:report": "node scripts/shadow-report.mjs",
     "start": "node src/server.mjs",
     "test": "node scripts/test-sanitize-html.mjs && node scripts/test-themes.mjs && node scripts/test-session.mjs",
     "test:reasons": "node scripts/test-reasons.mjs",

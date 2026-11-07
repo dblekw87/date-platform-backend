@@ -22,6 +22,7 @@ import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
+import { runShadowTrades } from "./shadow/shadow-trades.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { notifyOffHighCloseBet } from "./providers/offhigh-close-bet.mjs";
 import { notifyIntradayDigest, notifyNightDigest } from "./providers/alert-digest.mjs";
@@ -1643,6 +1644,9 @@ export function startMarketCollector(config) {
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
         startCloseBetAlert(config, minute);
+        // 그림자 매매(주문 없음). 15:20 알림 목록 기록 · 15:40 체결 판정 · 다음 장 09:07 청산.
+        runShadowTrades(config, minute)
+          .catch((error) => console.warn("collector: shadow trades failed", error instanceof Error ? error.message : error));
         // 15:20~15:32 창(종가배팅은 10-12부터 15:10으로 앞당김). provider가 하루 한 번을 잠급니다.
         notifySectorFollowers(config, { minute, url: config.publicSiteUrl })
           .catch((error) => console.warn("collector: sector follower alert failed", error instanceof Error ? error.message : error));

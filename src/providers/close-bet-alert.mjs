@@ -66,26 +66,8 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 
     if (!slot || sent.has("sent") || sent.has(slot.key)) return 0;
 
-    // 소형을 빼고 열 개를 채우려고 넉넉히 받습니다 -- 소형이 위를 다 차지하는 날
-    // limit 10으로 받으면 중·대형이 잘려 나갑니다.
-    const candidates = await loadCloseBetCandidates(config, { limit: 40 });
-    // 오늘 것만. 장이 열리기 전이면 확정 경로가 어제 목록을 돌려주는데, 화면에는
-    // 그게 맞고 알림에는 아닙니다 -- 짝꿍이 2026-08-28에 겪은 자리와 같습니다.
-    //
-    // **소형은 보내지 않습니다**(2026-10-12 사용자 결정). 소형 종가배팅에는 살 수 있는
-    // 칸에 엣지가 없습니다(258장 실측, 초과 중앙):
-    //   상한가 아님        +0.10 / −0.02, 최근 40일 −0.04 / −0.55   살 수 있음
-    //   상한가·잠김 유지   +3.45                                    못 삼(마감 체결량 = 매수잔량의 6%)
-    //   상한가·체결됨      −0.68                                    살 수 있지만 무너지는 날
-    // 소형에서 들어갈 자리는 잠기기 전이고 그건 [상한가 직전](sangtta-watch.mjs)이
-    // 맡습니다. 기록은 nightly-review.mjs가 후보 전부를 따로 남기므로 채점 표본은
-    // 재료 유무와 상관없이 그대로 쌓입니다.
-    const pool = candidates.filter((row) => row.sessionDate === day && row.tier !== "소형");
-    const material = await loadMaterial(config, day, pool.map((row) => row.symbol));
-    const today = pool
-      .filter((row) => material.has(row.symbol))
-      .slice(0, 10)
-      .map((row) => ({ ...row, fresh: !sent.has(row.symbol), material: material.get(row.symbol) }));
+    const { picks, pool } = await loadCloseBetPicks(config, day);
+    const today = picks.map((row) => ({ ...row, fresh: !sent.has(row.symbol) }));
     const dropped = [...sent.keys()]
       .filter((key) => !key.startsWith("slot:") && !today.some((row) => row.symbol === key))
       .map((symbol) => sent.get(symbol)?.note ?? symbol);
@@ -100,12 +82,8 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
     if (!today.length && !dropped.length) return 0;
     if (slot.onlyIfChanged && !changed) return 0;
 
-    const queues = await loadLockedQueues(config, day, today.filter((row) => row.changeRateValue >= limitUpRate).map((row) => row.symbol))
-      .catch(() => new Map());
     const ceilings = await loadKrPriceCeilings(config, today.map((row) => row.symbol), day).catch(() => new Map());
-    const marked = today
-      .map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row))
-      .map((row) => ({ ...row, ceiling: ceilings.get(row.symbol) ?? null }));
+    const marked = today.map((row) => ({ ...row, ceiling: ceilings.get(row.symbol) ?? null }));
     const ok = await notify(config, { text: closeBetMessage(marked, day, { dropped, slot: slot.label, total: pool.length }), url });
 
     if (!ok) return 0;
@@ -122,6 +100,42 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
   } finally {
     running = false;
   }
+}
+
+/**
+ * 알림이 "사라"고 말하는 목록. 알림과 그림자 장부(shadow-trades.mjs)가 같이 씁니다 --
+ * 둘이 따로 고르면 조건을 바꿀 때 한쪽만 바뀌어 비교가 틀어집니다.
+ *
+ * 상한가 후보에는 lock(잠김 여부·매수잔량)이 붙습니다.
+ */
+export async function loadCloseBetPicks(config, day) {
+  // 소형을 빼고 열 개를 채우려고 넉넉히 받습니다 -- 소형이 위를 다 차지하는 날
+  // limit 10으로 받으면 중·대형이 잘려 나갑니다.
+  const candidates = await loadCloseBetCandidates(config, { limit: 40 });
+  // 오늘 것만. 장이 열리기 전이면 확정 경로가 어제 목록을 돌려주는데, 화면에는
+  // 그게 맞고 알림에는 아닙니다 -- 짝꿍이 2026-08-28에 겪은 자리와 같습니다.
+  //
+  // **소형은 보내지 않습니다**(2026-10-12 사용자 결정). 소형 종가배팅에는 살 수 있는
+  // 칸에 엣지가 없습니다(258장 실측, 초과 중앙):
+  //   상한가 아님        +0.10 / −0.02, 최근 40일 −0.04 / −0.55   살 수 있음
+  //   상한가·잠김 유지   +3.45                                    못 삼(마감 체결량 = 매수잔량의 6%)
+  //   상한가·체결됨      −0.68                                    살 수 있지만 무너지는 날
+  // 소형에서 들어갈 자리는 잠기기 전이고 그건 [상한가 직전](sangtta-watch.mjs)이
+  // 맡습니다. 기록은 nightly-review.mjs가 후보 전부를 따로 남기므로 채점 표본은
+  // 재료 유무와 상관없이 그대로 쌓입니다.
+  const pool = candidates.filter((row) => row.sessionDate === day && row.tier !== "소형");
+  const material = await loadMaterial(config, day, pool.map((row) => row.symbol));
+  const picks = pool
+    .filter((row) => material.has(row.symbol))
+    .slice(0, 10)
+    .map((row) => ({ ...row, material: material.get(row.symbol) }));
+  const queues = await loadLockedQueues(config, day, picks.filter((row) => row.changeRateValue >= limitUpRate).map((row) => row.symbol))
+    .catch(() => new Map());
+
+  return {
+    picks: picks.map((row) => (row.changeRateValue >= limitUpRate ? { ...row, lock: queues.get(row.symbol) ?? { queue: null } } : row)),
+    pool
+  };
 }
 
 /*

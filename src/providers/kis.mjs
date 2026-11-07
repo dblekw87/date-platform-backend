@@ -489,12 +489,16 @@ async function loadKrQuote(config, token, symbol, venue = "J") {
       shortOverheated: data?.output?.short_over_yn === "Y",
       statusCode: String(data?.output?.iscd_stat_cls_code ?? "").trim() || null
     },
+    // Today's low and open. The shadow ledger reads them at 09:05~09:10 to see
+    // whether a stop would have been hit before the planned exit.
+    lowValue: parseNumeric(data?.output?.stck_lwpr) || null,
     market: "KR",
     // The same definition as the ranking path. hts_avls is also here and
     // disagrees by about 0.7%, which is a different snapshot rather than a
     // different stock - one column cannot hold two definitions.
     marketCapValue: price * parseNumeric(data?.output?.lstn_stcn) || null,
     name: String(data?.output?.hts_kor_isnm ?? "").trim() || symbol,
+    openValue: parseNumeric(data?.output?.stck_oprc) || null,
     priceValue: price,
     symbol,
     // 누적 거래대금 arrives in won already, unlike the ranking rows.
