@@ -130,7 +130,13 @@ function Wait-Port {
     Start-Sleep -Seconds 3
   }
 
-  Write-Line "$Label did not answer on :$Port within $Seconds s"
+  # Out-Null is load-bearing. Write-Line echoes through Write-Output (callers such
+  # as run-after-close.ps1 pipe this script's output into their own logs), and
+  # PowerShell returns every uncaptured output of a function, not just the value
+  # after "return". Without it this returned ("...did not answer...", $false), a
+  # non-empty array, which is truthy: on 2026-11-09 the backend died on EACCES
+  # and the log still said "backend listening" right under "did not answer".
+  Write-Line "$Label did not answer on :$Port within $Seconds s" | Out-Null
 
   return $false
 }
