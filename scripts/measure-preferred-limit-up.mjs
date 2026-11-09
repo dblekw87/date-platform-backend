@@ -37,7 +37,7 @@ const { rows } = await query(config, `
       FROM b WHERE o > 0 AND pc > 0 GROUP BY session_date
   ),
   ev AS (
-    SELECT r.*, (r.symbol ~ '^[0-9]{5}[579]$') pref, (r.c >= r.h) locked,
+    SELECT r.*, (r.symbol ~ '^[0-9]{5}[579KL]$') pref, (r.c >= r.h) locked,
            CASE WHEN r.prev_ret >= 0.295 THEN '2연상+' ELSE '첫 상한가' END streak,
            (r.no / r.c - 1) * 100 gap, (r.nc / r.c - 1) * 100 next_close,
            (r.no / r.c - 1 - m.gap) * 100 excess
@@ -52,12 +52,17 @@ const { rows } = await query(config, `
          round(percentile_cont(0.5) WITHIN GROUP (ORDER BY excess)::numeric, 2) ex_med,
          round(100.0 * avg((excess > 0)::int), 0) beat,
          round(percentile_cont(0.5) WITHIN GROUP (ORDER BY next_close)::numeric, 2) close_med,
-         round(100.0 * avg((gap <= -3)::int), 0) gap_le_m3
+         round(100.0 * avg((gap <= -3)::int), 0) gap_le_m3,
+         round(100.0 * avg((next_close >= 29.5)::int), 0) close_limit,
+         round(100.0 * avg((next_close <= -10)::int), 0) close_le_m10,
+         count(DISTINCT symbol) symbols
     FROM ev GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2, 3`, [new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)]);
 
-console.log("종류 | 연속 | 마감 | 건수 | 시가갭 중앙 | 평균 | 초과 중앙 | 상회% | 다음종가 중앙 | 갭 −3% 이하%");
+// 다음 날 종가는 두 봉우리입니다(또 상한가 아니면 크게 밀림) -- 중앙값은 몇 건에 크게
+// 흔들립니다(11/09 K·L 코드 8건을 더하자 +4.9 → +29.8). 양 끝 비율을 같이 봅니다.
+console.log("종류 | 연속 | 마감 | 건수(종목) | 시가갭 중앙 | 평균 | 초과 중앙 | 상회% | 다음종가 중앙 | 다음종가 상한가% | 다음종가 −10% 이하% | 갭 −3% 이하%");
 for (const row of rows) {
-  console.log([row.kind, row.streak, row.lock, row.n, row.gap_med, row.gap_avg, row.ex_med, row.beat, row.close_med, row.gap_le_m3].join(" | "));
+  console.log([row.kind, row.streak, row.lock, `${row.n}(${row.symbols})`, row.gap_med, row.gap_avg, row.ex_med, row.beat, row.close_med, row.close_limit, row.close_le_m10, row.gap_le_m3].join(" | "));
 }
 
 const { rows: cases } = await query(config, `
@@ -75,7 +80,7 @@ const { rows: cases } = await query(config, `
          (SELECT name FROM kr_daily_universe u WHERE u.symbol = r.symbol ORDER BY session_date DESC LIMIT 1) name,
          (r.c >= r.h) locked, round(((r.no / r.c - 1) * 100)::numeric, 2) gap, round(((r.nc / r.c - 1) * 100)::numeric, 2) nclose
     FROM r
-   WHERE r.symbol ~ '^[0-9]{5}[579]$' AND r.ret >= 0.295 AND r.prev_ret >= 0.295 AND r.no > 0
+   WHERE r.symbol ~ '^[0-9]{5}[579KL]$' AND r.ret >= 0.295 AND r.prev_ret >= 0.295 AND r.no > 0
    ORDER BY r.session_date DESC LIMIT 25`);
 
 console.log("");
