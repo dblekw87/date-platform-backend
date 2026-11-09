@@ -62,6 +62,15 @@ async function listedNamesOn() {
 
 const listedNames = await listedNamesOn();
 
+/*
+ * 대장 등락 문턱. 테마를 걸러 낼 때(대장 중앙)와 돈을 셀 때 같은 값을 씁니다.
+ *
+ * 돈은 이 문턱을 스스로 넘은 대장 것만 셉니다(11/09). 0% 초과만 보던 때에는
+ * 11/09 09:13·09:23·09:33 세 번 모두 1~3위(의료기기·5G·VR, 스마트폰·갤럭시·폴더블)가
+ * 삼성전자 +0.2~0.6%, 5,756~8,715억 한 종목의 돈이었고, 대장 중앙 +3%는 같이 묶인
+ * 몇억짜리 두 종목이 넘겨 줬습니다. 대장 목록에는 그대로 남겨 끼어 있는 것은 보이게 둡니다.
+ */
+const leaderRate = 3;
 const flowSql = (members) => `
   WITH s AS (
     SELECT symbol, name, change_rate::float8 r, turnover::float8 t, observed_at
@@ -85,13 +94,13 @@ const flowSql = (members) => `
      WHERE n.r > 0
   )
   SELECT theme_name, count(*) n,
-         sum(t) FILTER (WHERE k <= 3) / 1e8 top3_t,
-         sum(dt) FILTER (WHERE k <= 3) / 1e8 top3_dt,
+         coalesce(sum(t) FILTER (WHERE k <= 3 AND r >= ${leaderRate}), 0) / 1e8 top3_t,
+         coalesce(sum(dt) FILTER (WHERE k <= 3 AND r >= ${leaderRate}), 0) / 1e8 top3_dt,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) top3_r,
          string_agg(name || ' ' || round(r::numeric, 1) || '% ' || round((t / 1e8)::numeric) || '억', ' > ' ORDER BY k) FILTER (WHERE k <= 3) leaders
     FROM j GROUP BY theme_name
-   HAVING percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) >= 3
-   ORDER BY sum(dt) FILTER (WHERE k <= 3) DESC NULLS LAST
+   HAVING percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) >= ${leaderRate}
+   ORDER BY 4 DESC NULLS LAST
    LIMIT $4`;
 const themeMembers = `SELECT DISTINCT theme_name, symbol FROM kr_theme_members
             UNION SELECT '신규상장', symbol FROM kr_listings WHERE listed_on = $1
@@ -116,7 +125,7 @@ const { rows: [market] } = await query(config, `
    WHERE symbol IN ('KOSPI', 'KOSDAQ') AND observed_at <= ($1::date + $2::time) AT TIME ZONE 'Asia/Seoul'
    ORDER BY observed_at DESC LIMIT 1`, [day, at]);
 
-console.log(`${day} ${at} 테마 쏠림 (상위 3종목 · 최근 10분 거래대금 증가 순 · 대장 등락 중앙 +3% 이상만)${market ? ` · ${market.symbol} ${market.change_rate}%` : ""}`);
+console.log(`${day} ${at} 테마 쏠림 (상위 3종목 · 최근 10분 거래대금 증가 순 · 대장 등락 중앙 +${leaderRate}% 이상만 · 거래대금은 +${leaderRate}% 넘은 대장만)${market ? ` · ${market.symbol} ${market.change_rate}%` : ""}`);
 for (const row of rows) {
   console.log(`${row.theme_name} | 10분 +${Math.round(row.top3_dt)}억 · 누적 ${Math.round(row.top3_t)}억 · 대장 중앙 ${Number(row.top3_r).toFixed(1)}% | ${row.leaders}`);
 }
