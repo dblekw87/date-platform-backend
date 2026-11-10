@@ -21,6 +21,7 @@ import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./pr
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
+import { notifyCautionWatch } from "./providers/caution-watch.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { runShadowTrades } from "./shadow/shadow-trades.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
@@ -1644,6 +1645,9 @@ export function startMarketCollector(config) {
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
         startCloseBetAlert(config, minute);
+        // 15:10 한 통. 내일 투자주의가 붙을 것 같은 종목(2연상·5일 +60%) -- 종가배팅 전 참고(11/10).
+        notifyCautionWatch(config, { minute })
+          .catch((error) => console.warn("collector: caution watch failed", error instanceof Error ? error.message : error));
         // 그림자 매매(주문 없음). 15:20 알림 목록 기록 · 15:40 체결 판정 · 다음 장 09:07 청산.
         runShadowTrades(config, minute)
           .catch((error) => console.warn("collector: shadow trades failed", error instanceof Error ? error.message : error));

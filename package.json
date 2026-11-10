@@ -22,7 +22,7 @@
     "snapshot:publish": "node scripts/publish-board-snapshot.mjs",
     "shadow:report": "node scripts/shadow-report.mjs",
     "start": "node src/server.mjs",
-    "test": "node scripts/test-sanitize-html.mjs && node scripts/test-themes.mjs && node scripts/test-session.mjs",
+    "test": "node scripts/test-sanitize-html.mjs && node scripts/test-themes.mjs && node scripts/test-session.mjs && node scripts/test-caution.mjs",
     "test:reasons": "node scripts/test-reasons.mjs",
     "theme:backfill": "node scripts/backfill-sample-themes.mjs",
     "theme:backfill:apply": "node scripts/backfill-sample-themes.mjs --apply",
