@@ -1162,7 +1162,17 @@ function startUniverseSample(config, minute) {
   if (minute >= krxAfterMarketOpenMinute) {
     if (universeDay !== `${day}:skipped`) {
       universeDay = `${day}:skipped`;
-      console.warn(`collector: universe window missed for ${day} - after 16:00 the list carries after-market prices, leaving it to the morning catch-up`);
+      // A restart after 16:00 lands here even when the earlier process already took
+      // the snapshot (11/10: 4,323 rows at 15:5x, Docker died 18:27, this warned at
+      // 18:32). Ask the table before calling the day missed.
+      query(config, "SELECT count(*)::int AS n FROM kr_daily_universe WHERE session_date = $1::date", [day])
+        .then(({ rows }) => {
+          const stored = rows[0]?.n ?? 0;
+
+          if (stored > 1000) console.log(`collector: universe for ${day} already stored (${stored} rows) before this restart`);
+          else console.warn(`collector: universe window missed for ${day} - after 16:00 the list carries after-market prices, leaving it to the morning catch-up`);
+        })
+        .catch((error) => console.warn("collector: universe check failed", error instanceof Error ? error.message : error));
     }
 
     return;
