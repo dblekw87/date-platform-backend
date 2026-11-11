@@ -51,7 +51,11 @@ const { rows: picks } = await query(config, `
   SELECT u.symbol, u.name, u.session_date::text AS d, days.prev_d::text AS prev_d, u.change_rate::float8 AS rate,
          (u.turnover / 1e8)::float8 AS t,
          ((nb.open / bb.close - 1) * 100 - mk.g)::float8 AS ex_open,
-         ((nb.close / bb.close - 1) * 100 - mk.g - (mk.c - mk.g))::float8 AS ex_close
+         ((nb.close / bb.close - 1) * 100 - mk.g - (mk.c - mk.g))::float8 AS ex_close,
+         ((nb.open / bb.close - 1) * 100)::float8 AS gap,
+         ((nb.close / nb.open - 1) * 100)::float8 AS day_move,
+         ((nb.close / bb.close - 1) * 100)::float8 AS next_rate,
+         ((nb.high / bb.close - 1) * 100)::float8 AS next_high
     FROM kr_daily_universe u
     JOIN kr_daily_bars bb ON bb.symbol = u.symbol AND bb.session_date = u.session_date
     JOIN days ON days.d = u.session_date
@@ -177,5 +181,44 @@ console.log(`후보 +10%↑ · 거래대금 50억↑ · ${picks.length}건\n`);
 table(`전체 (${from} ~)`, picks);
 table(`${split} 전`, picks.filter((row) => row.d < split));
 table(`${split} 이후 (최근 장세)`, picks.filter((row) => row.d >= split));
+
+/*
+ * 2026-11-11 사용자 질문: "다음날 시가가 +10% 넘게 뜨는 건 2연상으로 가고, +10%가 안 되는
+ * 테마주는 돈이 다른 데로 빠져 단물이 빠지는가". 다음날 시가 갭 칸별로, 시가에서 종가까지
+ * (시가에 산 사람의 하루)와 다음날 상한가 마감 비율, 고가가 상한가에 닿은 비율을 봅니다.
+ * 상한가 아님(그날 종가에 살 수 있던 것)과 상한가를 나눕니다.
+ */
+function gapTable(title, pool) {
+  const bands = [["+10% 이상", (g) => g >= 10], ["+5~10%", (g) => g >= 5 && g < 10], ["0~+5%", (g) => g >= 0 && g < 5], ["−5~0%", (g) => g >= -5 && g < 0], ["−5% 미만", (g) => g < -5]];
+
+  console.log(title);
+  for (const [label, test] of bands) {
+    const rows = pool.filter((row) => test(row.gap));
+
+    if (!rows.length) {
+      console.log(`  ${label.padEnd(10)}    0건`);
+      continue;
+    }
+
+    const days = new Set(rows.map((row) => row.d)).size;
+    const pct = (fn) => Math.round(100 * rows.filter(fn).length / rows.length);
+
+    console.log(`  ${label.padEnd(10)} ${String(rows.length).padStart(4)}건/${String(days).padStart(3)}장`
+      + ` · 시가→종가 중앙 ${sign(med(rows.map((row) => row.day_move)))} 플러스 ${pct((row) => row.day_move > 0)}%`
+      + ` · 다음날 상한가 마감 ${pct((row) => row.next_rate >= 29.5)}% · 고가 상한가 터치 ${pct((row) => row.next_high >= 29.5)}%`
+      + ` · 다음날 종가 중앙 ${sign(med(rows.map((row) => row.next_rate)))}`);
+  }
+  console.log("");
+}
+
+console.log("─".repeat(40));
+console.log("다음날 시가 갭 칸별 (시가→종가는 시가에 산 사람의 하루)\n");
+for (const [label, keep] of [["전체", () => true], [`${split} 이후`, (row) => row.d >= split]]) {
+  const pool = picks.filter(keep);
+
+  gapTable(`[${label}] 상한가 아님 · 묶음만(테마 대장)`, pool.filter((row) => row.rate < 29.5 && row.group && !row.own));
+  gapTable(`[${label}] 상한가 아님 · 고유 재료 있음`, pool.filter((row) => row.rate < 29.5 && row.own));
+  gapTable(`[${label}] 상한가 · 전부`, pool.filter((row) => row.rate >= 29.5));
+}
 
 process.exit(0);
