@@ -4,7 +4,7 @@ import { rankPicks, tierOf } from "./overnight-rank.mjs";
 import { materialPhase } from "./overnight-gate.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { loadListedRelatives } from "./ownership-links.mjs";
-import { seoulMinuteNow } from "./market-session.mjs";
+import { seoulMinuteNow, sessionDate as krSessionDate } from "./market-session.mjs";
 import { sendTelegram, telegramConfigured } from "./telegram.mjs";
 import { sessionsAsOf, upcomingWindow } from "./overnight-window.mjs";
 
@@ -61,7 +61,17 @@ export async function notifyNewMaterial(config, { url } = {}) {
      * 창(직전 거래일 15:40~)으로 들어가야 채점도 같은 표본에 붙습니다.
      */
     const phase = (await isKrMarketOpen(config)) ? materialPhase() : "overnight";
-    const fresh = await unsent(config, window.previous, phase, picks);
+    /*
+     * 장중 재료는 **오늘** 장에 붙입니다.
+     *
+     * 창의 previous는 "직전에 끝난 장"이라 장중에는 어제입니다. 2026-11-11에 보니
+     * 장중 재료가 전부 어제 날짜로 들어가 있었고(10/27~ 11일치 450건), 채점이 "어제
+     * 종가 → 오늘 시가", 곧 **뉴스가 나오기 전의 갭**을 재고 있었습니다(금호건설
+     * 11:37 공급계약을 09:00 시가로 채점). 오늘 날짜로 두면 nightly-review가
+     * detected_at 뒤 분봉으로 장중 흐름을, 다음 장 시가로 종가배팅 성적을 잽니다.
+     */
+    const day = phase === "intraday" ? krSessionDate("KR") : window.previous;
+    const fresh = await unsent(config, day, phase, picks);
 
     if (!fresh.length) return 0;
 
@@ -111,7 +121,7 @@ export async function notifyNewMaterial(config, { url } = {}) {
 
     if (!sent) return 0;
 
-    for (const pick of fresh) await record(config, window.previous, phase, pick);
+    for (const pick of fresh) await record(config, day, phase, pick);
 
     console.log(`알림: 재료 · ${fresh.map((pick) => pick.listing.name).join(", ")}`);
 
@@ -166,13 +176,28 @@ async function record(config, sessionDate, phase, pick) {
     ?? pick.material[0]?.headline
     ?? "";
 
+  // 장중이면 listing은 어제 봉이라 등락도 어제 것입니다. 잡힌 시각의 오늘 등락을 씁니다.
+  const entryRate = phase === "intraday"
+    ? await liveRate(config, sessionDate, pick.symbol)
+    : pick.listing.change_rate;
+
   const result = await query(config, `
     INSERT INTO kr_signal_outcomes (kind, session_date, symbol, detected_at, tier, theme, entry_rate)
     VALUES ($1, $2::date, $3, now(), $4, $5, $6)
     ON CONFLICT (kind, session_date, symbol) DO NOTHING`,
-    [`${phase}_material`, sessionDate, pick.symbol, tierOf(pick), evidence.slice(0, 200), pick.listing.change_rate]);
+    [`${phase}_material`, sessionDate, pick.symbol, tierOf(pick), evidence.slice(0, 200), entryRate]);
 
   return (result.rowCount ?? 0) > 0;
+}
+
+/** 그 장의 가장 최근 KRX 등락. 표본이 없으면 null -- 어제 값을 대신 넣지 않습니다. */
+async function liveRate(config, day, symbol) {
+  const { rows } = await query(config, `
+    SELECT change_rate FROM market_price_samples
+     WHERE symbol = $1 AND session_date = $2::date AND market = 'KR' AND source LIKE 'kis:krx%'
+     ORDER BY observed_at DESC LIMIT 1`, [symbol, day]);
+
+  return rows[0]?.change_rate ?? null;
 }
 
 const won = (value) => Number(value ?? 0).toLocaleString("ko-KR");
