@@ -1449,8 +1449,31 @@ const listingBrokersIntervalMs = 10 * 60_000;
 
 let foreignEstimateRunning = false;
 
+/*
+ * 오늘 +10% 넘게 오른 종목도 외국인 추정에 더합니다(2026-11-12 사용자 요청).
+ * 거래대금 상위 40종목만 보던 탓에 테마 소형·중형주가 통째로 빠졌습니다. 사용자가 본
+ * 패턴 -- "단타 외인이 초반에 사서 끌어올리고, 다 팔고 나간 뒤 다시 반등한다" -- 을
+ * 재려면 그 종목들의 구간별 외국인 흐름이 있어야 합니다. 상한가만이 아니라 반등 전체가
+ * 대상이라 문턱을 +10%로 둡니다. 한 번 +10%를 넘은 종목은 그날 끝까지 계속 묻습니다 --
+ * 외인이 판 뒤 가격이 내려가도 그 뒤 구간이 측정의 핵심입니다.
+ */
+const foreignMoverLimit = 60;
+const foreignMoverMinRate = 10;
+
+async function loadForeignMoverSymbols(config, day) {
+  const { rows } = await query(config, `
+    SELECT symbol, max(turnover) AS t FROM market_price_samples
+     WHERE market = 'KR' AND session_date = $1::date AND change_rate >= $2
+       AND (source LIKE 'kis:krx%' OR source LIKE 'kis-pref:krx%')
+       AND name !~ '(ETF|ETN|KODEX|TIGER|KBSTAR|HANARO|RISE |ACE |SOL |PLUS |스팩|레버리지|인버스)'
+     GROUP BY symbol ORDER BY t DESC NULLS LAST LIMIT $3`, [day, foreignMoverMinRate, foreignMoverLimit]);
+
+  return rows.map((row) => row.symbol);
+}
+
 /**
- * 장중 외국인 추정. 프로그램매매와 같은 종목, 같은 이유로 상위 40종목만 봅니다.
+ * 장중 외국인 추정. 프로그램매매와 같은 상위 40종목에, 오늘 +10% 넘게 오른 종목을
+ * 최대 60개 더합니다.
  *
  * 정규장에만 겁니다. 다섯 구간이 정규장 안에서 발표되고, 시간외는 NXT라 애초에 이
  * 집계에 들어가지 않습니다.
@@ -1463,11 +1486,17 @@ function startForeignEstimateSample(config) {
   (async () => {
     const day = sessionDate("KR");
     const payload = await loadKisMarketBoard(config);
-    const symbols = (payload?.krLeadingStocks ?? [])
+    const leaders = (payload?.krLeadingStocks ?? [])
       .filter((stock) => stock.venue !== "NXT")
       .sort((left, right) => Number(right.turnoverValue ?? 0) - Number(left.turnoverValue ?? 0))
       .slice(0, programSymbolLimit)
       .map((stock) => stock.symbol);
+    const movers = await loadForeignMoverSymbols(config, day).catch((error) => {
+      console.warn("collector: foreign estimate movers failed", error instanceof Error ? error.message : error);
+
+      return [];
+    });
+    const symbols = [...new Set([...leaders, ...movers])];
 
     if (symbols.length === 0) return;
 
