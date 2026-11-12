@@ -1,5 +1,6 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
-import { loadUsReasons, reasonLines } from "./us-reasons.mjs";
+import { loadDelistRisk, riskLine } from "./us-delist-risk.mjs";
+import { loadUsReasons, reasonKind, reasonLines } from "./us-reasons.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { fetchJson } from "../http.mjs";
 import { usMarketPhase } from "./premarket.mjs";
@@ -31,7 +32,7 @@ let running = false;
 export async function loadPremarketGainers() {
   const data = await fetchJson("https://scanner.tradingview.com/america/scan", {
     body: JSON.stringify({
-      columns: ["name", "description", "premarket_change", "premarket_volume", "premarket_close", "close", "market_cap_basic", "type"],
+      columns: ["name", "description", "premarket_change", "premarket_volume", "premarket_close", "close", "market_cap_basic", "type", "float_shares_outstanding"],
       filter: [{ left: "premarket_change", operation: "greater", right: minChange }],
       range: [0, 40],
       sort: { sortBy: "premarket_change", sortOrder: "desc" }
@@ -42,9 +43,9 @@ export async function loadPremarketGainers() {
   });
 
   return (data?.data ?? []).map((row) => {
-    const [symbol, name, change, volume, price, previousClose, marketCap, type] = row.d;
+    const [symbol, name, change, volume, price, previousClose, marketCap, type, float] = row.d;
 
-    return { change, dollarVolume: (volume ?? 0) * (price ?? 0), marketCap, name, previousClose, price, symbol, type, volume };
+    return { change, dollarVolume: (volume ?? 0) * (price ?? 0), float, marketCap, name, previousClose, price, symbol, type, volume };
   });
 }
 
@@ -58,12 +59,28 @@ function money(value) {
   return value >= 1e9 ? `$${(value / 1e9).toFixed(1)}B` : `$${(value / 1e6).toFixed(1)}M`;
 }
 
-function message(row, reasons) {
+/*
+ * 유통주식 대비 회전. 11/12 POAS는 유통 77만 주에 프리마켓만 3,400만 주(44배) -- 뉴스 없이
+ * +522%까지 간 이유가 이것이었습니다. 미국 급등에서 살아남은 신호도 회전율뿐이었습니다.
+ */
+function floatLine(row) {
+  if (!Number.isFinite(row.float) || row.float <= 0 || !row.volume) return null;
+
+  const turns = row.volume / row.float;
+  const shares = row.float >= 1e6 ? `${(row.float / 1e6).toFixed(1)}M주` : `${Math.round(row.float / 1e3)}K주`;
+
+  return `유통주식 ${shares} · 프리 거래량 ${turns >= 1 ? turns.toFixed(1) + "배 회전" : (turns * 100).toFixed(0) + "%"}${turns >= 5 ? " ⚡" : ""}`;
+}
+
+function message(row, reasons, risk) {
   return [
     `[미국 프리마켓 급등] ${row.symbol}`,
     row.name,
     `+${row.change.toFixed(1)}% · $${row.price < 1 ? row.price.toFixed(4) : row.price.toFixed(2)} (전일 $${row.previousClose < 1 ? row.previousClose.toFixed(4) : row.previousClose.toFixed(2)})`,
     `프리 거래대금 ${money(row.dollarVolume)} · 시총 ${money(row.marketCap)}`,
+    floatLine(row),
+    riskLine(risk) || null,
+    `유형: ${reasonKind(reasons)}`,
     ...reasonLines(reasons)
   ].filter(Boolean).join("\n");
 }
@@ -78,6 +95,7 @@ export async function notifyUsPremarketSurges(config, { day, url } = {}) {
     const sent = new Set((await loadAlertSent(config, kind, day)).keys());
     const rows = (await loadPremarketGainers())
       .filter((row) => !isFund(row) && row.dollarVolume >= minDollarVolume && Number.isFinite(row.price));
+    const risks = await loadDelistRisk(config, rows.map((row) => row.symbol)).catch(() => new Map());
     let posted = 0;
 
     for (const row of rows) {
@@ -86,9 +104,13 @@ export async function notifyUsPremarketSurges(config, { day, url } = {}) {
 
       const reasons = await loadUsReasons(config, { name: row.name, symbol: row.symbol }).catch(() => ({ filings: [], news: [] }));
 
-      if (!await notify(config, { text: message(row, reasons), url })) continue;
+      if (!await notify(config, { text: message(row, reasons, risks.get(row.symbol)), url })) continue;
 
-      await markAlertSent(config, kind, day, row.symbol, { note: `+${row.change.toFixed(0)}% ${money(row.dollarVolume)}` });
+      // note는 채점용입니다(scripts/measure-us-premarket.mjs가 읽음): 알림가·전일 종가·유형·회전.
+      // "@가격 prev 가격" 꼴을 바꾸면 그 스크립트의 정규식도 고칠 것.
+      const turns = Number.isFinite(row.float) && row.float > 0 ? ` · 회전 ${(row.volume / row.float).toFixed(1)}` : "";
+
+      await markAlertSent(config, kind, day, row.symbol, { note: `+${row.change.toFixed(0)}% @${row.price} prev ${row.previousClose} · ${reasonKind(reasons)}${turns}` });
       sent.add(row.symbol);
       posted += 1;
       console.log(`알림: 미국 프리마켓 급등 · ${row.symbol} +${row.change.toFixed(0)}%`);

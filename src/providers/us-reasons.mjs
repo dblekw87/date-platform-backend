@@ -168,7 +168,10 @@ async function loadGoogleNews(symbol, name) {
 
   const xml = await fetchText(url.toString(), { timeoutMs: 6000 });
   const firstWord = plain.split(" ")[0]?.toLowerCase() ?? "";
-  const tickerPattern = new RegExp(`\\b${symbol.replace(/[^A-Z0-9.]/gi, "")}\\b`);
+  // 티커만으로는 낱말과 겹칩니다(11/12 PARA ← 스페인어 "para"). 괄호·$·거래소 접두 뒤나
+  // stock/shares 앞에 올 때만 티커로 봅니다.
+  const bare = symbol.replace(/[^A-Z0-9.]/gi, "");
+  const tickerPattern = new RegExp(`(\\(|\\$|:\\s?)${bare}\\b|\\b${bare}\\s+(stock|shares)\\b`);
 
   return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)]
     .slice(0, 20)
@@ -179,7 +182,9 @@ async function loadGoogleNews(symbol, name) {
       return { at: new Date(xmlValue(match[1], "pubDate") ?? 0), source, title, url: xmlValue(match[1], "link") };
     })
     // 이름이 흔한 낱말이면 남의 기사가 섞입니다. 티커나 이름 첫 낱말이 제목에 있어야 합니다.
-    .filter((row) => row.title && (tickerPattern.test(row.title) || (firstWord.length >= 4 && row.title.toLowerCase().includes(firstWord))));
+    // 시세 안내 페이지·계절성 차트는 기사가 아닙니다.
+    .filter((row) => row.title && !/stock price, news|seasonal returns|stock quote|historical prices/i.test(row.title))
+    .filter((row) => (tickerPattern.test(row.title) || (firstWord.length >= 4 && row.title.toLowerCase().includes(firstWord))));
 }
 
 function titleKey(title) {
@@ -240,4 +245,35 @@ export function reasonLines({ filings, news }) {
   if (link) lines.push(link);
 
   return lines;
+}
+
+/*
+ * 이유의 종류. 채점 칸을 나누려고 붙입니다(11/12 사용자: 미국 급등주를 어떻게 분석하나).
+ * 그날 밤 관찰: 합병가가 있는 ICMB는 그 가격에 묶였고, 파산 PLCE는 개장 뒤 밀렸고,
+ * 이유 없는 POAS는 +522%까지 갔다 3분 만에 −32%. 측정 전이라 판정이 아니라 꼬리표입니다.
+ * 위에서부터 처음 맞는 것 하나.
+ */
+const reasonKinds = [
+  ["파산·구조조정", /chapter 11|bankrupt|restructur|파산|법정관리/i],
+  ["합병·인수", /merger|acqui|buyout|take[- ]private|tender offer|definitive agreement|합병|인수/i],
+  ["임상·FDA", /\bFDA\b|clinical|phase [123]|trial|approval|임상|승인/i],
+  ["유상증자·공모", /offering|private placement|registered direct|warrant|공모|사모 발행|증권 발행/i],
+  ["실적", /earnings|revenue|quarter|results|실적|매출/i],
+  ["계약·수주", /contract|order|partnership|agreement|collaborat|계약|수주|협력/i],
+  ["상폐 통지·역분할", /deficien|delist|reverse (stock )?split|상장유지|상장폐지|역분할/i],
+  ["코인·AI 테마", /bitcoin|crypto|token|treasury|\bAI\b|artificial intelligence|비트코인|암호화폐/i]
+];
+
+export function reasonKind({ filings, news }) {
+  const text = [
+    ...filings.map((filing) => `${filing.form} ${filing.label}`),
+    ...news.map((row) => `${row.title} ${row.korean ?? ""}`)
+  ].join(" \n ");
+
+  // 시세표 기사("Pre-Market Movers", "Gainers")만 있으면 이유가 아닙니다.
+  const onlyMovers = !filings.length && news.every((row) => /movers|gainers|losers|stocks moving|trending|swings|round \d/i.test(row.title));
+
+  if (!text.trim() || onlyMovers) return "이유 없음";
+
+  return reasonKinds.find(([, pattern]) => pattern.test(text))?.[0] ?? "기타";
 }
