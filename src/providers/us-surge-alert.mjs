@@ -2,6 +2,7 @@ import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadDelistRisk, riskLine } from "./us-delist-risk.mjs";
 import { loadUsMarketGainers } from "./us-market-gainers.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
+import { loadUsReasons, reasonLines } from "./us-reasons.mjs";
 import { usMarketPhase } from "./premarket.mjs";
 
 /**
@@ -40,7 +41,7 @@ let running = false;
  * 종목이었고(전체는 3%), 그것이 "왜 튀는가"의 절반을 설명합니다 -- us-delist-risk.mjs.
  * 표식이 있다고 사지 말라는 뜻도 사라는 뜻도 아닙니다. 다만 그 급등의 성격이 다릅니다.
  */
-function line(row, risk) {
+function line(row, risk, reasons) {
   const cap = row.marketCap ? `$${(row.marketCap / 1e6).toFixed(1)}M` : "시총 미상";
 
   return [
@@ -48,7 +49,8 @@ function line(row, risk) {
     row.name === row.symbol ? null : row.name,
     `+${row.changePercent.toFixed(1)}% · $${row.price.toFixed(2)}`,
     `거래대금 $${(row.turnover / 1e6).toFixed(1)}M · 시총 ${cap}`,
-    riskLine(risk) || null
+    riskLine(risk) || null,
+    ...(reasons ? reasonLines(reasons) : [])
   ].filter(Boolean).join("\n");
 }
 
@@ -81,7 +83,10 @@ export async function notifyUsSurges(config, { day, url } = {}) {
       if (row.changePercent < minChangePercent || row.turnover < minTurnover) continue;
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
-      if (!await notify(config, { text: line(row, risks.get(row.symbol)), url })) continue;
+      // 이유는 보낼 것만 찾습니다(하룻밤 최대 다섯). 실패해도 빈 이유로 갑니다.
+      const reasons = await loadUsReasons(config, { name: row.name, symbol: row.symbol }).catch(() => null);
+
+      if (!await notify(config, { text: line(row, risks.get(row.symbol), reasons), url })) continue;
 
       await markAlertSent(config, "us_surge", day, row.symbol, { note: `+${row.changePercent.toFixed(0)}%` });
       sent.add(row.symbol);

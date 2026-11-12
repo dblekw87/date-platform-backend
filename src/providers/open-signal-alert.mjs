@@ -1,6 +1,7 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { loadUsPremarketMovers } from "./premarket.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
+import { loadUsReasons, reasonLines } from "./us-reasons.mjs";
 
 /**
  * 미국 개장 조건이 맞으면 카톡 한 통.
@@ -27,7 +28,7 @@ const maxPreGain = 1.5;
 
 let running = false;
 
-function line(mover) {
+function line(mover, reasons) {
   const pre = (mover.preGain * 100).toFixed(0);
   const now = (mover.changeRate * 100).toFixed(0);
 
@@ -35,7 +36,8 @@ function line(mover) {
     `[미국 개장] ${mover.symbol}`,
     mover.name === mover.symbol ? null : mover.name,
     `프리마켓 +${pre}% · 첫 5분봉 양봉`,
-    `개장가 $${Number(mover.openPrice).toFixed(2)} · 현재 ${now >= 0 ? "+" : ""}${now}%`
+    `개장가 $${Number(mover.openPrice).toFixed(2)} · 현재 ${now >= 0 ? "+" : ""}${now}%`,
+    ...(reasons ? reasonLines(reasons) : [])
   ].filter(Boolean).join("\n");
 }
 
@@ -57,7 +59,9 @@ export async function notifyOpenSignals(config, { day, url } = {}) {
       if (!Number.isFinite(Number(mover.openPrice))) continue;
 
       // 보낸 것만 기록합니다. 실패한 것을 보냈다고 적으면 영영 다시 안 보냅니다.
-      if (!await notify(config, { text: line(mover), url })) continue;
+      const reasons = await loadUsReasons(config, { name: mover.name, symbol: mover.symbol }).catch(() => null);
+
+      if (!await notify(config, { text: line(mover, reasons), url })) continue;
 
       await markAlertSent(config, "us_open_signal", day, mover.symbol, { note: `프리 +${(mover.preGain * 100).toFixed(0)}%` });
       sent.add(mover.symbol);
