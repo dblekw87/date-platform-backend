@@ -22,6 +22,7 @@ import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
 import { notifyCautionWatch } from "./providers/caution-watch.mjs";
+import { notifyContracts } from "./providers/contract-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { runShadowTrades } from "./shadow/shadow-trades.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
@@ -1366,6 +1367,11 @@ function startDisclosureSample(config, { full = false } = {}) {
     timePages: full ? 8 : 1
   })
     .then((result) => {
+      // 공급계약은 새로 들어온 것이 없어도 매번 봅니다. 지난 틱에 발송이 실패한 건을
+      // 다음 틱이 다시 집습니다(보낸 것만 alert_sent에 적힘).
+      notifyContracts(config)
+        .catch((error) => console.warn("collector: contract alert failed", error instanceof Error ? error.message : error));
+
       // 새 공시가 들어온 자리에서 재료 알림을 봅니다. 뉴스 쪽과 같은 이유입니다 --
       // 5분 타이머를 기다리면 공시와 알림 사이가 벌어지고, 공시는 그 자체가 재료라
       // 기사보다 빨리 움직입니다. running 플래그가 있어 타이머 실행과 겹쳐도 한 번만 갑니다.
