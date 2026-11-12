@@ -228,6 +228,26 @@ async function loadPending(config, day) {
     .filter((row) => row.rcpNo);
 }
 
+/**
+ * 보낸 계약을 채점 표에 남깁니다. nightly-review가 다음 거래일 시가·종가를 채웁니다.
+ * 알림을 만들 때 값은 재지 않았으니(위 설명) 표본을 여기서부터 쌓습니다.
+ * tier는 new·correction·cancel, theme에는 매출대비와 시총 대비를 적습니다 -- 나중에
+ * 크기 칸으로 나눠 재려면 원문을 다시 읽지 않아도 되게.
+ * 한 종목이 하루 여러 건이면 첫 건만 남습니다(표의 키가 종목·날짜).
+ */
+async function recordOutcome(config, day, row, parsed, quote) {
+  const tier = /해지/.test(row.title) ? "cancel" : /정정/.test(row.title) ? "correction" : "new";
+  const amount = parsed?.amount ? Number(parsed.amount.replace(/[^\d]/g, "")) : null;
+  const capShare = amount && quote?.marketCap ? (amount / quote.marketCap * 100).toFixed(1) : "?";
+  const note = `매출 ${parsed?.salesRatio ?? "?"}% · 시총 ${capShare}% · ${parsed?.content ?? row.title}`;
+
+  await query(config, `
+    INSERT INTO kr_signal_outcomes (kind, session_date, symbol, detected_at, tier, theme, entry_rate)
+    VALUES ('contract_filing', $1::date, $2, $3, $4, $5, $6)
+    ON CONFLICT (kind, session_date, symbol) DO NOTHING`,
+    [day, row.symbol, row.filed_at, tier, note.slice(0, 200), quote?.rate ?? null]);
+}
+
 export async function notifyContracts(config) {
   if (running || !notifyConfigured(config)) return 0;
 
@@ -258,6 +278,7 @@ export async function notifyContracts(config) {
       if (!ok) continue;
 
       await markAlertSent(config, kind, day, row.rcpNo, { note: `${row.company_name} ${row.title}`.slice(0, 200) });
+      await recordOutcome(config, day, row, parsed, quote).catch((error) => console.warn("contract alert: 기록 실패", error instanceof Error ? error.message : error));
       console.log(`알림: 공급계약 · ${row.company_name} ${row.rcpNo}`);
       count += 1;
     }
