@@ -21,6 +21,7 @@ import { classifyTheme, naverThemeMap, naverThemeOf, setNaverThemes } from "./pr
 import { notifyNewPairs } from "./providers/pair-alert.mjs";
 import { notifyOpenSignals } from "./providers/open-signal-alert.mjs";
 import { notifyUsSurges } from "./providers/us-surge-alert.mjs";
+import { notifyUsPremarketSurges } from "./providers/us-premarket-alert.mjs";
 import { notifyCautionWatch } from "./providers/caution-watch.mjs";
 import { notifyContracts } from "./providers/contract-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
@@ -981,6 +982,22 @@ function startUsSurgeAlert(config) {
 }
 
 /*
+ * 미국 프리마켓 급등 알림(us-premarket-alert.mjs). 시장 전체 스캐너 한 번이라 싸고,
+ * await 하지 않아 국내 분봉 창을 잡아먹지 않습니다. 프리마켓 구간에서만 보냅니다.
+ */
+const usPremarketIntervalMs = 5 * 60_000;
+let usPremarketAt = 0;
+
+function startUsPremarketAlert(config) {
+  if (usMarketPhase() !== "pre" || Date.now() - usPremarketAt < usPremarketIntervalMs) return;
+
+  usPremarketAt = Date.now();
+
+  notifyUsPremarketSurges(config, { day: sessionDate("US"), url: config.publicSiteUrl })
+    .catch((error) => console.warn("collector: us premarket alert failed", error instanceof Error ? error.message : error));
+}
+
+/*
  * 재료 알림.
  *
  * 다른 알림들과 달리 시각을 가리지 않습니다 -- 재료는 하루 종일 나오고, 장중에
@@ -1861,6 +1878,8 @@ export function startMarketCollector(config) {
       startOpenSignalAlert(config);
       startUsSurgeAlert(config);
     } else if (usMarketPhase() !== "closed") {
+      startUsPremarketAlert(config);
+
       /*
        * A watchlist pass is 25 seconds of requests rather than one screener
        * call, so it runs at half the session cadence.
