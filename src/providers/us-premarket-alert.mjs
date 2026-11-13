@@ -49,6 +49,19 @@ export async function loadPremarketGainers() {
   });
 }
 
+/*
+ * 스캐너가 지난 세션의 프리마켓 값을 주는지 가립니다. 11/13 18:06(프리 개장 직후) 스캐너는
+ * premarket_change·premarket_close를 전날 것 그대로, close만 전날 종가로 갱신해 돌려줬고,
+ * 그 결과 어제 8종목(PLCE "+424% @1.04 prev 0.444")이 오늘 급등으로 나갔습니다 -- 1.04/0.444는
+ * +134%이지 +424%가 아닙니다. 그 8통이 세션 한도를 채워 그날 진짜 급등(ZBAO·FCUV·MOD)은
+ * 막혔습니다. 오늘 값이면 등락률이 가격/전일 종가와 맞습니다.
+ */
+function isCurrent(row) {
+  if (!(row.price > 0) || !(row.previousClose > 0) || !Number.isFinite(row.change)) return false;
+
+  return Math.abs((row.price / row.previousClose - 1) * 100 - row.change) <= Math.max(1, Math.abs(row.change) * 0.02);
+}
+
 function isFund(row) {
   return row.type === "fund" || /\b(ETF|ETN|Daily Target|2X|3X|Inverse)\b/i.test(row.name ?? "");
 }
@@ -94,7 +107,7 @@ export async function notifyUsPremarketSurges(config, { day, url } = {}) {
   try {
     const sent = new Set((await loadAlertSent(config, kind, day)).keys());
     const rows = (await loadPremarketGainers())
-      .filter((row) => !isFund(row) && row.dollarVolume >= minDollarVolume && Number.isFinite(row.price));
+      .filter((row) => !isFund(row) && isCurrent(row) && row.dollarVolume >= minDollarVolume);
     const risks = await loadDelistRisk(config, rows.map((row) => row.symbol)).catch(() => new Map());
     let posted = 0;
 
