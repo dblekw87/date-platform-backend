@@ -1,5 +1,6 @@
 import { query } from "../src/db/client.mjs";
 import { readConfig } from "../src/config.mjs";
+import { customThemeGroups } from "../src/providers/custom-theme-groups.mjs";
 import { loadListingsOn } from "../src/providers/kr-listing-alert.mjs";
 
 /**
@@ -22,6 +23,8 @@ import { loadListingsOn } from "../src/providers/kr-listing-alert.mjs";
  * 11/03 09:13엔 래블업(그날 최대)이 또 빠졌습니다 -- 상장 당일 아침 표본은 이름 자리에
  * 코드("0147B0", 영광은 "359410")가 찍혀 이름 대조가 안 됩니다. 그래서 이름이 곧 코드인
  * 종목도 신규상장으로 넣고, KIND 조회는 한 번 더 묻습니다(시한 실패로 빈 목록이 됨).
+ * 네이버 사전에 없는 묶음(호남·충청·영남·소캠 소부장)은 custom-theme-groups.mjs에서 테마처럼
+ * 더합니다(11/15). 이 묶음은 업종 큰 묶음엔 넣지 않습니다 -- 지역은 업종이 아닙니다.
  * 판정이 아니라 사람이 보는 표입니다. 진입 권유로 쓰지 않습니다.
  *
  * 아래에 **업종 큰 묶음**을 따로 붙입니다(11/05). 네이버 테마는 잘게 나뉘어 있어
@@ -71,7 +74,7 @@ const listedNames = await listedNamesOn();
  * 몇억짜리 두 종목이 넘겨 줬습니다. 대장 목록에는 그대로 남겨 끼어 있는 것은 보이게 둡니다.
  */
 const leaderRate = 3;
-const flowSql = (members) => `
+const flowSql = (members, { watch = false } = {}) => `
   WITH s AS (
     SELECT symbol, name, change_rate::float8 r, turnover::float8 t, observed_at
       FROM market_price_samples
@@ -91,7 +94,7 @@ const flowSql = (members) => `
       FROM now n
       JOIN (${members}) tm USING (symbol)
       LEFT JOIN ago a USING (symbol)
-     WHERE n.r > 0
+     ${watch ? "" : "WHERE n.r > 0"}
   )
   SELECT theme_name, count(*) n,
          coalesce(sum(t) FILTER (WHERE k <= 3 AND r >= ${leaderRate}), 0) / 1e8 top3_t,
@@ -99,12 +102,19 @@ const flowSql = (members) => `
          percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) top3_r,
          string_agg(name || ' ' || round(r::numeric, 1) || '% ' || round((t / 1e8)::numeric) || '억', ' > ' ORDER BY k) FILTER (WHERE k <= 3) leaders
     FROM j GROUP BY theme_name
-   HAVING percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) >= ${leaderRate}
+   ${watch ? "" : `HAVING percentile_cont(0.5) WITHIN GROUP (ORDER BY r) FILTER (WHERE k <= 3) >= ${leaderRate}`}
    ORDER BY 4 DESC NULLS LAST
    LIMIT $4`;
 const themeMembers = `SELECT DISTINCT theme_name, symbol FROM kr_theme_members
             UNION SELECT '신규상장', symbol FROM kr_listings WHERE listed_on = $1
-            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[]) OR name = symbol`;
+            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[]) OR name = symbol
+            UNION SELECT g.key, s.symbol FROM jsonb_each($5::jsonb) g CROSS JOIN jsonb_array_elements_text(g.value) s(symbol)`;
+/*
+ * 손 묶음은 따로 한 번 더, 문턱 없이 늘 보여 줍니다. 지역 테마는 대형주 쏠림에 밀려 위 표
+ * 8위 안에 거의 못 들고(11/13 14:30 호남 묶음이 금호건설 상한가인데도 없음), 식는 날도
+ * 봐야 해서 빠지는 종목도 셉니다.
+ */
+const customMembers = `SELECT g.key theme_name, s.symbol FROM jsonb_each($3::jsonb) g CROSS JOIN jsonb_array_elements_text(g.value) s(symbol)`;
 /*
  * 한 종목은 한 묶음에만 넣습니다 -- 그 종목이 가장 많은 테마에 들어 있는 묶음으로요.
  * 네이버 테마가 넓어서 현대차가 수소·휴머노이드에, NAVER가 자율주행에 들어 있고,
@@ -116,7 +126,8 @@ const sectorMembers = `SELECT DISTINCT ON (m.symbol) g.key theme_name, m.symbol
               JOIN kr_theme_members m ON m.theme_name = t.theme
              GROUP BY g.key, m.symbol
              ORDER BY m.symbol, count(DISTINCT t.theme) DESC, g.key`;
-const { rows } = await query(config, flowSql(themeMembers), [day, at, listedNames, 8]);
+const { rows } = await query(config, flowSql(themeMembers), [day, at, listedNames, 8, JSON.stringify(customThemeGroups)]);
+const { rows: watched } = await query(config, flowSql(customMembers, { watch: true }), [day, at, JSON.stringify(customThemeGroups), 10]);
 const { rows: sectors } = await query(config, flowSql(sectorMembers), [day, at, JSON.stringify(sectorGroups), 6]);
 const { rows: known } = await query(config, "SELECT DISTINCT theme_name FROM kr_theme_members WHERE theme_name = ANY($1::text[])", [Object.values(sectorGroups).flat()]);
 const missing = Object.values(sectorGroups).flat().filter((name) => !known.some((row) => row.theme_name === name));
@@ -133,6 +144,11 @@ console.log("");
 console.log("업종 큰 묶음 (네이버 테마 합집합 · 같은 기준)");
 for (const row of sectors) {
   console.log(`[${row.theme_name}] | 10분 +${Math.round(row.top3_dt)}억 · 누적 ${Math.round(row.top3_t)}억 · 대장 중앙 ${Number(row.top3_r).toFixed(1)}% | ${row.leaders}`);
+}
+console.log("");
+console.log("손 묶음 (네이버 사전 밖 · 문턱 없이 늘 보임 · 빠지는 종목 포함)");
+for (const row of watched) {
+  console.log(`{${row.theme_name}} | 10분 +${Math.round(row.top3_dt)}억 · 누적 ${Math.round(row.top3_t)}억 · 대장 중앙 ${Number(row.top3_r).toFixed(1)}% | ${row.leaders}`);
 }
 if (missing.length) console.log(`(경고: 네이버 테마에 없는 이름 ${missing.join(", ")})`);
 process.exit(0);
