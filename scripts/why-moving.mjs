@@ -146,7 +146,21 @@ const { rows: ownNews } = await query(config, `
 `, [new Date(start.getTime() - 18 * 3600_000), new Date(end.getTime() + 60 * 60_000), symbol]);
 const ownLabels = new Map();
 
+/*
+ * 기사 주어가 이 종목일 때만 셉니다. 태그는 제목에 이름이 나오기만 하면 붙어서, 11/03
+ * "한진칼 경영권 분쟁…현대차·…" 꼴 기사로 현대차에 '경영권·지분 경쟁'이 떴습니다.
+ * 한국 기사 제목은 주어를 맨 앞에 두니(“한진칼, …”, “[특징주] 나무가, …”) 대괄호 머리말을
+ * 걷어 낸 뒤 앞 12자 안에 이름이 있어야 이 종목의 재료로 봅니다.
+ */
+const isSubject = (headline) => {
+  const at = headline.replace(/^\s*(\[[^\]]*\]\s*)+/, "").indexOf(name);
+
+  return at >= 0 && at <= 12;
+};
+
 for (const row of ownNews) {
+  if (!isSubject(row.h)) continue;
+
   const label = ownershipFight.test(row.h) ? "경영권·지분 경쟁" : classifyHeadline({ text: row.h })?.kind === "고유" ? classifyHeadline({ text: row.h }).label : null;
 
   if (!label) continue;
