@@ -79,7 +79,13 @@ const themeSearchTerms = {
   "항공우주": { ko: "항공우주 위성 주식", en: "aerospace space satellite stocks" }
 };
 
-const marketRelevancePattern = /주식|증시|시장|코스피|코스닥|환율|금리|국채|선물|외국인|기관|거래량|거래대금|반도체|패키지기판|기판|2차전지|배터리|바이오|제약|항공우주|우주|위성|로켓|조선|방산|로봇|원전|mlcc|콘덴서|커패시터|광통신|광모듈|광부품|네트워크|자동차|은행|금융|증권|에너지|유가|가상자산|비트코인|전력|수소|연료전지|신재생|재생에너지|태양광|풍력|AI|데이터센터|인수|합병|매각|공시|실적|가이던스|정책|규제|남북|대북|경협|개성공단|금강산|종전선언|판문점|김정은|주가|주주|자사주|순매수|순매도|수급|공매도|배당|증자|상장|수혜주|관련주|테마주|목표주가|시가총액|시총|밸류업|개미|투자자|펀드|채권|회사채|메자닌|전환사채|관세|무역|수출|어닝|매출|영업이익|적자|흑자|증권가|애널리스트|리포트|반등|급등|급락|강세|약세|임상|항암|신약|stock|stocks|market|shares|nasdaq|nyse|dow|s&p|russell|futures|etf|fed|fomc|cpi|ppi|yield|treasury|rate|rates|inflation|dollar|currency|oil|crude|fuel|gold|energy|renewable|hydrogen|fuel cell|solar|wind|earnings|guidance|merger|acquisition|m&a|sale|sec|fda|semiconductor|chip|chips|battery|biotech|pharma|aerospace|space|satellite|rocket|launch|capacitor|optical|photonics|coherent|networking|bank|banks|brokerage|defense|shipbuilding|robot|nuclear|crypto|bitcoin|ai|data center|tariff|regulation|dividend|revenue|profit|buyback|analyst|valuation|ipo|price target/i;
+/*
+ * 2026-11-16 '토스뱅크, 스테이블코인 해외송금 기술 검증 성공'이 여러 매체에서 나왔는데
+ * 한 건도 저장되지 않았습니다 -- 토스뱅크는 비상장이라 종목 이름으로도 안 걸리고, 스테이블코인·
+ * 송금·뱅크가 이 목록에 없었습니다. 스테이블코인은 국내 테마(헥토파이낸셜·다날 등)가 있는 말이라
+ * 디지털자산·핀테크 낱말을 더합니다.
+ */
+const marketRelevancePattern = /주식|증시|시장|코스피|코스닥|환율|금리|국채|선물|외국인|기관|거래량|거래대금|반도체|패키지기판|기판|2차전지|배터리|바이오|제약|항공우주|우주|위성|로켓|조선|방산|로봇|원전|mlcc|콘덴서|커패시터|광통신|광모듈|광부품|네트워크|자동차|은행|금융|증권|에너지|유가|가상자산|비트코인|스테이블코인|블록체인|가상화폐|암호화폐|디지털자산|핀테크|간편결제|해외송금|인터넷은행|토스뱅크|카카오뱅크|케이뱅크|전력|수소|연료전지|신재생|재생에너지|태양광|풍력|AI|데이터센터|인수|합병|매각|공시|실적|가이던스|정책|규제|남북|대북|경협|개성공단|금강산|종전선언|판문점|김정은|주가|주주|자사주|순매수|순매도|수급|공매도|배당|증자|상장|수혜주|관련주|테마주|목표주가|시가총액|시총|밸류업|개미|투자자|펀드|채권|회사채|메자닌|전환사채|관세|무역|수출|어닝|매출|영업이익|적자|흑자|증권가|애널리스트|리포트|반등|급등|급락|강세|약세|임상|항암|신약|stock|stocks|market|shares|nasdaq|nyse|dow|s&p|russell|futures|etf|fed|fomc|cpi|ppi|yield|treasury|rate|rates|inflation|dollar|currency|oil|crude|fuel|gold|energy|renewable|hydrogen|fuel cell|solar|wind|earnings|guidance|merger|acquisition|m&a|sale|sec|fda|semiconductor|chip|chips|battery|biotech|pharma|aerospace|space|satellite|rocket|launch|capacitor|optical|photonics|coherent|networking|bank|banks|brokerage|defense|shipbuilding|robot|nuclear|crypto|bitcoin|ai|data center|tariff|regulation|dividend|revenue|profit|buyback|analyst|valuation|ipo|price target/i;
 
 const state = createRuntimeState("market-board-news-state", () => ({
   events: [],
