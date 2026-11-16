@@ -107,10 +107,10 @@ const flowSql = (members, { watch = false } = {}) => `
    LIMIT $4`;
 const themeMembers = `SELECT DISTINCT theme_name, symbol FROM kr_theme_members
             UNION SELECT '신규상장', symbol FROM kr_listings WHERE listed_on = $1
-            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[]) OR name = symbol
-            UNION SELECT g.key, s.symbol FROM jsonb_each($5::jsonb) g CROSS JOIN jsonb_array_elements_text(g.value) s(symbol)`;
+            UNION SELECT '신규상장', symbol FROM now WHERE name = ANY($3::text[]) OR name = symbol`;
 /*
- * 손 묶음은 따로 한 번 더, 문턱 없이 늘 보여 줍니다. 지역 테마는 대형주 쏠림에 밀려 위 표
+ * 손 묶음은 위 표에 넣지 않고 따로, 문턱 없이 늘 보여 줍니다. 11/16 09:23 위 표에 섞였더니
+ * '11/13 급등'·'호남'이 금호건설 한 종목(+10.0, 491억)으로 1·2위를 차지했습니다. 지역 테마는 대형주 쏠림에 밀려 위 표
  * 8위 안에 거의 못 들고(11/13 14:30 호남 묶음이 금호건설 상한가인데도 없음), 식는 날도
  * 봐야 해서 빠지는 종목도 셉니다.
  */
@@ -126,7 +126,7 @@ const sectorMembers = `SELECT DISTINCT ON (m.symbol) g.key theme_name, m.symbol
               JOIN kr_theme_members m ON m.theme_name = t.theme
              GROUP BY g.key, m.symbol
              ORDER BY m.symbol, count(DISTINCT t.theme) DESC, g.key`;
-const { rows } = await query(config, flowSql(themeMembers), [day, at, listedNames, 8, JSON.stringify(customThemeGroups)]);
+const { rows } = await query(config, flowSql(themeMembers), [day, at, listedNames, 8]);
 const { rows: watched } = await query(config, flowSql(customMembers, { watch: true }), [day, at, JSON.stringify(customThemeGroups), 10]);
 const { rows: sectors } = await query(config, flowSql(sectorMembers), [day, at, JSON.stringify(sectorGroups), 6]);
 const { rows: known } = await query(config, "SELECT DISTINCT theme_name FROM kr_theme_members WHERE theme_name = ANY($1::text[])", [Object.values(sectorGroups).flat()]);
