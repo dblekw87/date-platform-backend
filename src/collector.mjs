@@ -46,7 +46,7 @@ import { publishBoardSnapshot } from "./snapshot.mjs";
 import { refreshUsSectorMap } from "./providers/us-sector-map.mjs";
 import { rankDayLeaders } from "./providers/leadership.mjs";
 import { loadPairQuotes } from "./providers/pairing.mjs";
-import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krPreMarketCloseMinute, krTradingVenue, krxAfterMarketOpenMinute, sessionDate } from "./providers/market-session.mjs";
+import { isKrFineWindow, isRegularSession, krAfterHoursOpenMinute, krAfterHoursSettleMinute, krFineWindows, krNoPreMarket, krPreMarketCloseMinute, krSessionMinute, krTradingVenue, krxAfterMarketOpenMinute, sessionDate } from "./providers/market-session.mjs";
 import { loadMarketData } from "./providers/market.mjs";
 import { loadUsExtendedSamples, usMarketPhase } from "./providers/premarket.mjs";
 import { getMarketBoard } from "./routes/market-board.mjs";
@@ -127,6 +127,9 @@ function seoulMinute(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -134,17 +137,23 @@ function seoulMinute(now = new Date()) {
   }).formatToParts(now);
   const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
 
+  const date = `${value("year")}-${value("month")}-${value("day")}`;
+
+  // 수능일처럼 장이 통째로 늦는 날은 시계를 당겨 읽습니다(market-session.mjs krSessionMinute).
   return {
-    minute: (Number(value("hour")) % 24) * 60 + Number(value("minute")),
+    date,
+    minute: krSessionMinute(date, (Number(value("hour")) % 24) * 60 + Number(value("minute"))),
     second: Number(value("second")),
     weekday: value("weekday")
   };
 }
 
 function isCollecting(now = new Date()) {
-  const { minute, weekday } = seoulMinute(now);
+  const { date, minute, weekday } = seoulMinute(now);
 
   if (weekday === "Sat" || weekday === "Sun") return false;
+  // 수능일엔 NXT 프리마켓이 없습니다 -- 당긴 시계의 08:00~09:00(실제 09:00~10:00)은 거래가 없는 시간.
+  if (krNoPreMarket(date) && minute < openBellMinute) return false;
   // Nothing trades between the NXT pre-market and the KRX bell. Measured
   // 2026-08-18: the 08:54 and 08:59 samples carried identical turnover across
   // all 39 names, to the won - a book with no trades in it, recorded twice as

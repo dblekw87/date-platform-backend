@@ -37,16 +37,39 @@ export const krFineWindows = [
 ];
 
 /** 지금이 그 구간인가. 주말은 국내장이 없으므로 아닙니다. */
+/*
+ * 국내장이 통째로 늦게 열리는 날. 수능일은 KRX 정규장이 10:00~16:30, NXT 본장도 한 시간
+ * 늦고 NXT 프리마켓은 열리지 않습니다(2026-11-19, 거래소 공지). 시각으로 일정을 짜는
+ * 모든 곳(표본 주기·정규장/애프터 경계·15:10 종가배팅·15:50 유니버스·그림자 매매)이
+ * 한 시계를 읽게 하려고, 그날 08:00~20:00의 '한국 분'을 그만큼 당겨서 돌려줍니다 --
+ * 16:10이 15:10으로 읽혀 종가배팅 알림이 실제 마감 20분 전에 나갑니다.
+ * 해마다 수능 날짜를 여기에 더합니다. 20:00 뒤와 08:00 전은 그대로입니다.
+ */
+export const krSessionShiftMinutes = { "2026-11-19": 60 };
+
+/** 그날 시계를 당긴 '장 기준 분'. 날짜는 YYYY-MM-DD(서울). */
+export function krSessionMinute(date, minute) {
+  const shift = krSessionShiftMinutes[date] ?? 0;
+
+  return shift && minute >= 8 * 60 && minute < 20 * 60 ? minute - shift : minute;
+}
+
+/** 프리마켓이 없는 날(수능일). */
+export function krNoPreMarket(date) {
+  return Boolean(krSessionShiftMinutes[date]);
+}
+
 export function isKrFineWindow(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit", hour12: false, minute: "2-digit",
-    timeZone: "Asia/Seoul", weekday: "short"
+    day: "2-digit", hour: "2-digit", hour12: false, minute: "2-digit", month: "2-digit",
+    timeZone: "Asia/Seoul", weekday: "short", year: "numeric"
   }).formatToParts(now);
   const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
 
   if (value("weekday") === "Sat" || value("weekday") === "Sun") return false;
 
-  const minute = (Number(value("hour")) % 24) * 60 + Number(value("minute"));
+  const date = `${value("year")}-${value("month")}-${value("day")}`;
+  const minute = krSessionMinute(date, (Number(value("hour")) % 24) * 60 + Number(value("minute")));
 
   return krFineWindows.some((window) => minute >= window.from && minute < window.to);
 }
@@ -116,9 +139,12 @@ function localParts(timeZone, now) {
   // Midnight can format as 24 rather than 00 in some environments.
   const hour = Number(value("hour")) % 24;
 
+  const date = `${value("year")}-${value("month")}-${value("day")}`;
+  const minute = hour * 60 + Number(value("minute"));
+
   return {
-    date: `${value("year")}-${value("month")}-${value("day")}`,
-    minute: hour * 60 + Number(value("minute")),
+    date,
+    minute: timeZone === "Asia/Seoul" ? krSessionMinute(date, minute) : minute,
     weekday: value("weekday")
   };
 }
