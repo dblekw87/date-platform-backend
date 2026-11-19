@@ -65,6 +65,21 @@ async function listedNamesOn() {
 
 const listedNames = await listedNamesOn();
 
+/* 손 묶음 중 { themes, exclude } 꼴은 네이버 테마에서 지금 종목으로 풉니다. */
+async function resolvedHandGroups() {
+  const entries = await Promise.all(Object.entries(customThemeGroups).map(async ([key, value]) => {
+    if (Array.isArray(value)) return [key, value];
+
+    const { rows } = await query(config, "SELECT DISTINCT symbol FROM kr_theme_members WHERE theme_name = ANY($1::text[])", [value.themes]);
+
+    return [key, rows.map((row) => row.symbol).filter((symbol) => !(value.exclude ?? []).includes(symbol))];
+  }));
+
+  return Object.fromEntries(entries);
+}
+
+const handGroups = await resolvedHandGroups();
+
 /*
  * 대장 등락 문턱. 테마를 걸러 낼 때(대장 중앙)와 돈을 셀 때 같은 값을 씁니다.
  *
@@ -127,7 +142,7 @@ const sectorMembers = `SELECT DISTINCT ON (m.symbol) g.key theme_name, m.symbol
              GROUP BY g.key, m.symbol
              ORDER BY m.symbol, count(DISTINCT t.theme) DESC, g.key`;
 const { rows } = await query(config, flowSql(themeMembers), [day, at, listedNames, 8]);
-const { rows: watched } = await query(config, flowSql(customMembers, { watch: true }), [day, at, JSON.stringify(customThemeGroups), 10]);
+const { rows: watched } = await query(config, flowSql(customMembers, { watch: true }), [day, at, JSON.stringify(handGroups), 10]);
 const { rows: sectors } = await query(config, flowSql(sectorMembers), [day, at, JSON.stringify(sectorGroups), 6]);
 const { rows: known } = await query(config, "SELECT DISTINCT theme_name FROM kr_theme_members WHERE theme_name = ANY($1::text[])", [Object.values(sectorGroups).flat()]);
 const missing = Object.values(sectorGroups).flat().filter((name) => !known.some((row) => row.theme_name === name));
