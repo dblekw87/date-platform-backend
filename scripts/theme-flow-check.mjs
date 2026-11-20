@@ -151,7 +151,39 @@ const { rows: [market] } = await query(config, `
    WHERE symbol IN ('KOSPI', 'KOSDAQ') AND observed_at <= ($1::date + $2::time) AT TIME ZONE 'Asia/Seoul'
    ORDER BY observed_at DESC LIMIT 1`, [day, at]);
 
-console.log(`${day} ${at} 테마 쏠림 (상위 3종목 · 최근 10분 거래대금 증가 순 · 대장 등락 중앙 +${leaderRate}% 이상만 · 거래대금은 +${leaderRate}% 넘은 대장만)${market ? ` · ${market.symbol} ${market.change_rate}%` : ""}`);
+/*
+ * 코스피200 베이시스(선물 − 현물, 11/20 사용자 "그날 선물도 확인해야겠다"). 둘 다 macro_samples에
+ * 8/22부터 있습니다. 평소보다 더 눌리면(음수 쪽) 선물 매도가 먼저 나와 차익 프로그램이 대형주를 파는 자리.
+ * 8/22~11/20 61일 실측: 장중 평균 베이시스 −0.15%↓ 7일은 삼성·하닉 평균 −1.74로 약했지만
+ * +10% 종목 수는 오히려 적었음(26 vs 36) — '지수 빠지면 테마가 선다'를 이 숫자 하나로 보지 말 것.
+ */
+const { rows: [basis] } = await query(config, `
+  WITH f AS (SELECT value::float8 v, observed_at FROM macro_samples WHERE symbol = 'F-K200'
+              AND observed_at <= ($1::date + $2::time) AT TIME ZONE 'Asia/Seoul'
+              AND observed_at >= ($1::date + time '09:00') AT TIME ZONE 'Asia/Seoul' ORDER BY observed_at DESC LIMIT 1),
+       s AS (SELECT value::float8 v FROM macro_samples WHERE symbol = 'K200'
+              AND observed_at <= ($1::date + $2::time) AT TIME ZONE 'Asia/Seoul'
+              AND observed_at >= ($1::date + time '09:00') AT TIME ZONE 'Asia/Seoul' ORDER BY observed_at DESC LIMIT 1)
+  SELECT f.v future, s.v spot FROM f, s`, [day, at]);
+/*
+ * 부호만 보면 속습니다. 12월물은 연말 배당락이 선물값에 미리 빠져 있어 이론 베이시스 자체가
+ * 음수입니다 -- 11/18 코스피 +3.2에도 −0.17%였습니다. 그래서 직전 10거래일 같은 시각대
+ * 평균과 견줘 '평소보다 얼마나 더 눌렸나'를 같이 적습니다.
+ */
+const { rows: [usual] } = await query(config, `
+  WITH f AS (SELECT date_trunc('minute', observed_at) t, avg(value::float8) v FROM macro_samples WHERE symbol = 'F-K200'
+              AND observed_at < $1::date AT TIME ZONE 'Asia/Seoul' AND observed_at >= ($1::date - 16) AT TIME ZONE 'Asia/Seoul'
+              AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN '09:05' AND '15:15' GROUP BY 1),
+       s AS (SELECT date_trunc('minute', observed_at) t, avg(value::float8) v FROM macro_samples WHERE symbol = 'K200'
+              AND observed_at < $1::date AT TIME ZONE 'Asia/Seoul' AND observed_at >= ($1::date - 16) AT TIME ZONE 'Asia/Seoul'
+              AND (observed_at AT TIME ZONE 'Asia/Seoul')::time BETWEEN '09:05' AND '15:15' GROUP BY 1)
+  SELECT avg((f.v / s.v - 1) * 100) pct FROM f JOIN s USING (t)`, [day]);
+const basisPct = basis ? (basis.future / basis.spot - 1) * 100 : null;
+const basisLine = basis
+  ? ` · 베이시스 ${(basis.future - basis.spot).toFixed(2)}(${basisPct.toFixed(2)}%${usual?.pct != null ? `, 직전 10일 평균 ${Number(usual.pct).toFixed(2)}% 대비 ${basisPct - usual.pct >= 0 ? "+" : ""}${(basisPct - usual.pct).toFixed(2)}%p` : ""})`
+  : "";
+
+console.log(`${day} ${at} 테마 쏠림 (상위 3종목 · 최근 10분 거래대금 증가 순 · 대장 등락 중앙 +${leaderRate}% 이상만 · 거래대금은 +${leaderRate}% 넘은 대장만)${market ? ` · ${market.symbol} ${market.change_rate}%` : ""}${basisLine}`);
 for (const row of rows) {
   console.log(`${row.theme_name} | 10분 +${Math.round(row.top3_dt)}억 · 누적 ${Math.round(row.top3_t)}억 · 대장 중앙 ${Number(row.top3_r).toFixed(1)}% | ${row.leaders}`);
 }
