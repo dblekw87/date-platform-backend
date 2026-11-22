@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { buildThemeCandidates, formatThemeCandidates } from "./providers/theme-candidates.mjs";
 import { collectProgramTrade, saveProgramTrade } from "./providers/program-trade.mjs";
 import { collectListingBrokers } from "./providers/listing-brokers.mjs";
@@ -390,6 +392,37 @@ async function samplePrices(config) {
  * that surfaced 남북경협 also grouped 파두 and 후성 with the semiconductor names,
  * and they belong to neither.
  */
+/*
+ * 하락장 사례집(scripts/down-day-catalog.mjs)을 하락일마다 남깁니다. 11/06 사용자가
+ * "하락장마다 수집해 줬으면"이라고 했는데 스크립트만 있고 아무도 부르지 않아, 11/20까지
+ * 세션에서 손으로 돌렸습니다(11/22 사용자 "하락장일 때 어떤 테마로 또 어떤 개별주들이
+ * 올랐는지 수집해줘"). 하락장 판정(전 종목 중앙 −1.2% 이하)은 스크립트가 하고, 아닌 날은
+ * 한 줄만 찍으니 파일을 만들지 않습니다. 재료 분류는 여전히 사람·Claude 몫입니다.
+ */
+const runScript = promisify(execFile);
+
+async function writeDownDayCatalog(day) {
+  try {
+    const { stdout } = await runScript(process.execPath, ["scripts/down-day-catalog.mjs", day], {
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 120_000
+    });
+
+    if (!stdout.includes("하락장 사례")) {
+      console.log(`collector: down-day catalog · ${stdout.trim().split("\n")[0]}`);
+
+      return;
+    }
+
+    await mkdir("logs", { recursive: true });
+    await writeFile(`logs/down-day-${day}.log`, stdout, "utf8");
+
+    console.log(`collector: down-day catalog written · logs/down-day-${day}.log`);
+  } catch (error) {
+    console.warn("collector: down-day catalog failed", error instanceof Error ? error.message : error);
+  }
+}
+
 async function writeThemeReport(config, day) {
   try {
     const report = await buildThemeCandidates(config, day);
@@ -1262,6 +1295,9 @@ function startUniverseSample(config, minute) {
     const themes = setNaverThemes(await loadSymbolThemes(config));
 
     console.log(`collector: theme dictionary refreshed · ${themes} symbols`);
+
+    // 테마 사전을 방금 다시 읽었고 오늘 등락률도 저장됐으니, 사례집의 두 재료가 다 있습니다.
+    await writeDownDayCatalog(day);
   })()
     .catch((error) => {
       // Let tomorrow try again rather than losing the day to one bad evening.
