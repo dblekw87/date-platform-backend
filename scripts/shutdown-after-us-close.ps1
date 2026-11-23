@@ -149,7 +149,26 @@ while ((Get-Date) -lt $target) {
 
 Write-Line "미국장 끝. 정리하고 끕니다."
 
-Save-SessionId
+<#
+  **주말 끄기는 대화를 이어 붙이지 않습니다 (2026-11-23).** 한 대화를 몇 주째 이어 오니
+  매 호출이 앞의 대화 30만~60만 토큰을 다시 읽어, 30일 캐시 읽기가 11억 토큰이었습니다
+  (사용자가 요금을 낮추려 함). 필요한 것은 메모(memory/)에 다 있어 새 대화도 이어 갈 수
+  있으므로, 일주일에 한 번 일요일 밤에는 새 대화로 시작합니다. 주중에 예기치 않게 꺼졌다
+  켜질 때는 그대로 이어 붙입니다 - 그 경우엔 이 줄까지 오지 않습니다.
+
+  id는 지우지 않고 claude-rc-session.last.txt로 옮겨 둡니다. 지난 대화가 필요하면
+  그 값을 claude-rc-session.txt로 되돌리면 이어 붙습니다.
+#>
+function Retire-SessionId {
+  $file = Join-Path $root "logs\claude-rc-session.txt"
+
+  if (-not (Test-Path $file)) { return }
+
+  Move-Item -Path $file -Destination (Join-Path $root "logs\claude-rc-session.last.txt") -Force
+  Write-Line "주말 새 대화: 세션 id를 claude-rc-session.last.txt로 옮겼습니다 - 일요일 밤은 새 대화로 시작합니다"
+}
+
+if ($WhatIf) { Write-Line "WhatIf - 세션 id는 옮기지 않습니다" } else { Retire-SessionId }
 
 # 수집기를 먼저 멈춥니다. 도커는 그대로 둡니다 - 윈도 종료가 컨테이너를 정리합니다.
 $previous = $ErrorActionPreference
