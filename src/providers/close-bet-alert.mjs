@@ -1,6 +1,7 @@
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { classifyDisclosure, isMachineHeadline, isReasonHeadline, mentionsBadNews } from "./overnight-classify.mjs";
 import { loadCloseBetCandidates } from "./close-bet.mjs";
+import { loadFuturesGapLine } from "./futures-gap.mjs";
 import { loadKrPriceCeilings } from "./kr-daily-bars.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -84,7 +85,9 @@ export async function notifyCloseBet(config, { minute, url } = {}) {
 
     const ceilings = await loadKrPriceCeilings(config, today.map((row) => row.symbol), day).catch(() => new Map());
     const marked = today.map((row) => ({ ...row, ceiling: ceilings.get(row.symbol) ?? null }));
-    const ok = await notify(config, { text: closeBetMessage(marked, day, { dropped, slot: slot.label, total: pool.length }), url });
+    // 선물·현물 차이 한 줄(11/23 사용자 요청). 못 읽어도 알림은 나갑니다.
+    const gapLine = await loadFuturesGapLine(config).catch(() => null);
+    const ok = await notify(config, { text: closeBetMessage(marked, day, { dropped, gapLine, slot: slot.label, total: pool.length }), url });
 
     if (!ok) return 0;
 
@@ -256,8 +259,8 @@ export function ceilingLine(row) {
  * 수만큼 반복되고, 정작 종목마다 다른 숫자가 그 사이에 파묻힙니다. 화면이
  * groupByTier로 하는 일과 같습니다.
  */
-export function closeBetMessage(candidates, day, { dropped = [], slot = "15:10", total = candidates.length } = {}) {
-  const lines = [`[종가배팅 ${slot}] ${day} · 재료 있는 ${candidates.length}종목 (중·대형 후보 ${total} 중)`, ""];
+export function closeBetMessage(candidates, day, { dropped = [], gapLine = null, slot = "15:10", total = candidates.length } = {}) {
+  const lines = [`[종가배팅 ${slot}] ${day} · 재료 있는 ${candidates.length}종목 (중·대형 후보 ${total} 중)`, ...(gapLine ? [gapLine] : []), ""];
   const byTier = new Map();
 
   for (const row of candidates) {
