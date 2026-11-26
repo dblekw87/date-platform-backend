@@ -29,6 +29,7 @@ import { notifyContracts } from "./providers/contract-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifyEveningMaterial } from "./providers/evening-material-alert.mjs";
 import { notifyMorningThemes } from "./providers/morning-theme-alert.mjs";
+import { notifyIntradayThemes } from "./providers/intraday-theme-alert.mjs";
 import { runShadowTrades } from "./shadow/shadow-trades.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { notifyOffHighCloseBet } from "./providers/offhigh-close-bet.mjs";
@@ -1753,6 +1754,9 @@ export function startMarketCollector(config) {
         startUniverseSample(config, minute);
         startPairAlert(config, afterHours);
         startLeaderAlert(config, minute);
+        // 09:10~15:20, 15분마다. 최근 1시간 테마 기사가 평소보다 몰리면(11/26 사용자 "장중에도 테마 재료").
+        notifyIntradayThemes(config, { minute, url: config.publicSiteUrl })
+          .catch((error) => console.warn("collector: intraday theme alert failed", error instanceof Error ? error.message : error));
         startCloseBetAlert(config, minute);
         // 15:10 한 통. 내일 투자주의가 붙을 것 같은 종목(2연상·5일 +60%) -- 종가배팅 전 참고(11/10).
         notifyCautionWatch(config, { minute })
