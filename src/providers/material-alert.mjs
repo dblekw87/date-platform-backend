@@ -5,6 +5,7 @@ import { materialPhase } from "./overnight-gate.mjs";
 import { isKrMarketOpen } from "./kis.mjs";
 import { loadListedRelatives } from "./ownership-links.mjs";
 import { seoulMinuteNow, sessionDate as krSessionDate } from "./market-session.mjs";
+import { attachThemeSpread, spreadLine } from "./theme-spread.mjs";
 import { sendTelegram, telegramConfigured } from "./telegram.mjs";
 import { sessionsAsOf, upcomingWindow } from "./overnight-window.mjs";
 
@@ -105,6 +106,9 @@ export async function notifyNewMaterial(config, { url } = {}) {
      * 최선집행으로 어느 책에서 체결됐는지가 종목마다 다릅니다.
      */
     const after = await loadAfterMarket(config, fresh.map((pick) => pick.symbol));
+
+    // 기사가 가리키는 테마의 다른 종목(11/26 스페이스X → 한화시스템만 뜨고 스피어·나라스페이스는 없었음).
+    await attachThemeSpread(config, fresh, window.previous).catch(() => fresh);
 
     for (const pick of fresh) pick.after = after.get(pick.symbol) ?? null;
 
@@ -321,6 +325,7 @@ function message(picks, window, phase, url) {
       ? `[시간외종가 가능 · 16:00까지] 새 후보 ${picks.length}종목 · 오늘 종가로 살 수 있는 마감 뒤 재료`
       : `[다음 장 후보] 새 후보 ${picks.length}종목 · ${window.previous} 마감 뒤 나온 재료`;
   const lines = [heading, ""];
+  const printedThemes = new Set();
 
   for (const pick of picks) {
     const listing = pick.listing;
@@ -361,6 +366,10 @@ function message(picks, window, phase, url) {
 
       lines.push(`  ${relative.role} ${relative.name} ${relative.symbol} · 지분 ${relative.stake_pct.toFixed(1)}%${turnover}`);
     }
+
+    const spread = spreadLine(pick, printedThemes);
+
+    if (spread) lines.push(spread);
 
     lines.push("");
   }
