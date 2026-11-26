@@ -28,6 +28,7 @@ import { notifyCautionWatch } from "./providers/caution-watch.mjs";
 import { notifyContracts } from "./providers/contract-alert.mjs";
 import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifyEveningMaterial } from "./providers/evening-material-alert.mjs";
+import { notifyMorningThemes } from "./providers/morning-theme-alert.mjs";
 import { runShadowTrades } from "./shadow/shadow-trades.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { notifyOffHighCloseBet } from "./providers/offhigh-close-bet.mjs";
@@ -1971,6 +1972,9 @@ export function startMarketCollector(config) {
     // 같은 07:30 창. 오늘 상장하는 종목이 있을 때만 한 통입니다(2026-09-21 사용자 요청).
     notifyKrListings(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
       .catch((error) => console.warn("collector: kr listing alert failed", error instanceof Error ? error.message : error));
+    // 07:35 한 통. 밤사이 테마 전체를 가리킨 기사를 테마별로(11/26 스페이스X → 우주주, 사용자 요청).
+    notifyMorningThemes(config, { minute: seoulMinute(new Date()).minute, url: config.publicSiteUrl })
+      .catch((error) => console.warn("collector: morning theme alert failed", error instanceof Error ? error.message : error));
     // 아침 06:20~07:00 한 번. 어제 일봉·유니버스 종가를 KIS 공식 값으로 되받습니다.
     // 07:00 채점이 그 종가를 쓰므로 그 전에 끝나게 창을 앞에 둡니다.
     startMorningCatchUp(config, seoulMinute(new Date()).minute);

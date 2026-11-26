@@ -23,7 +23,7 @@ const memberLimit = 6;
 const genericTokens = new Set(["관련주", "테마", "산업", "관련", "기타", "국내", "해외", "기업", "지수"]);
 /* 기사 제목에 흔한 동사·수식어. 테마 이름 안에 들어 있어도(신규상장 ⊃ 신규) 테마를 가리킨 게 아닙니다
    (11/26 시험: "신규 표적 ADC 과제 선정" → '2026 하반기 신규상장'). */
-const headlineNoise = new Set(["신규", "추가", "승인", "선정", "계약", "확대", "개발", "기대", "강세", "급등", "수혜", "추진", "대표", "하반기", "상반기", "글로벌", "시장", "사업", "기술", "공급", "투자", "목표가", "주가",
+const headlineNoise = new Set(["신규", "추가", "승인", "선정", "계약", "확대", "개발", "기대", "강세", "급등", "수혜", "추진", "대표", "하반기", "상반기", "글로벌", "시장", "사업", "기술", "공급", "투자", "목표가", "주가", "AI", "인공지능",
   // 그룹 이름. "삼성證"의 '삼성'이 'S7(삼성전자/SK하이닉스 등)'을 가리킨 게 아닙니다.
   "삼성", "현대", "LG", "SK", "한화", "롯데", "포스코", "두산", "CJ", "GS", "HD", "카카오", "네이버", "효성", "코오롱"]);
 
@@ -38,12 +38,16 @@ export function themeHits(themeName, headline, excluded = []) {
   // 종목 이름은 지웁니다. "한미반도체"가 제목에 있다고 '반도체' 테마를 가리킨 건 아닙니다.
   const text = [...excluded].filter(Boolean).sort((a, b) => b.length - a.length)
     .reduce((rest, name) => rest.split(name).join(" "), String(headline ?? ""));
-  const themeWords = words(themeName).filter((word) => !genericTokens.has(word));
+  const themeWords = words(themeName).filter((word) => !genericTokens.has(word) && !headlineNoise.has(word));
   const headlineWords = words(text).filter((word) => !genericTokens.has(word) && !headlineNoise.has(word));
   let hits = 0;
 
   for (const token of themeWords) {
-    if (text.includes(token) || headlineWords.some((word) => token.includes(word))) hits += 1;
+    /* 두 글자 낱말은 통째로 맞을 때만 셉니다. 글자 속에 끼면 딴 말입니다
+       (생산 ⊂ 과잉생산, 제품 ⊂ 국제품질, 웹툰 ⊂ 수성웹툰 — 11/26 아침 알림 시험). */
+    const inText = token.length >= 3 ? text.includes(token) : headlineWords.includes(token);
+
+    if (inText || headlineWords.some((word) => token.length >= 3 && token.includes(word))) hits += 1;
   }
 
   return hits;
