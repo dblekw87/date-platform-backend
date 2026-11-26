@@ -30,6 +30,7 @@ import { notifyCloseBet } from "./providers/close-bet-alert.mjs";
 import { notifyEveningMaterial } from "./providers/evening-material-alert.mjs";
 import { notifyMorningThemes } from "./providers/morning-theme-alert.mjs";
 import { notifyIntradayThemes } from "./providers/intraday-theme-alert.mjs";
+import { sampleKisNews } from "./providers/kis-news.mjs";
 import { runShadowTrades } from "./shadow/shadow-trades.mjs";
 import { notifySectorFollowers } from "./providers/sector-follower.mjs";
 import { notifyOffHighCloseBet } from "./providers/offhigh-close-bet.mjs";
@@ -1966,6 +1967,10 @@ export function startMarketCollector(config) {
     // Independent of every sampling window: the deployed site should never be
     // more than ten minutes behind, whichever market happens to be open.
     startSnapshotPublish(config);
+
+    // 한투 HTS 뉴스 제목, 틱마다(최소 30초, 11/26). 무리 기사·공시 제목·연합이 네이버보다 먼저 오는 날이 있음.
+    sampleKisNews(config)
+      .catch((error) => console.warn("collector: kis news failed", error instanceof Error ? error.message : error));
 
     // 시각을 가리지 않는 알림. 구간 구분은 provider가 합니다.
     startMaterialAlert(config);
