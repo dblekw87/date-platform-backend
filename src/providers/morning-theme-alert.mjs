@@ -1,3 +1,4 @@
+import { customThemeGroups } from "./custom-theme-groups.mjs";
 import { loadAlertSent, markAlertSent } from "./alert-sent.mjs";
 import { notify, notifyConfigured } from "./notify.mjs";
 import { query } from "../db/client.mjs";
@@ -54,14 +55,15 @@ export async function notifyMorningThemes(config, { minute, url } = {}) {
 
     const window = upcomingWindow(await sessionsAsOf(config));
     const themes = await loadMorningThemes(config, { from: window.from, previous: window.previous, to: new Date() });
+    const carried = await loadYesterdayIntradayThemes(config, window.previous).catch(() => []);
 
-    if (!themes.length) {
+    if (!themes.length && !carried.length) {
       await markAlertSent(config, kind, today, "done", { note: "테마 재료 없음" });
 
       return 0;
     }
 
-    const ok = await notify(config, { text: morningThemeMessage(today, themes), url });
+    const ok = await notify(config, { text: morningThemeMessage(today, themes, carried), url });
 
     if (!ok) return 0;
 
@@ -166,7 +168,45 @@ export async function loadMorningThemes(config, { from, previous, to }) {
 
 const clock = (date) => date.toLocaleTimeString("ko-KR", { hour: "2-digit", hour12: false, minute: "2-digit", timeZone: "Asia/Seoul" });
 
-export function morningThemeMessage(day, themes) {
+/*
+ * 어제 장중에 보낸 테마 재료를 다시 적습니다.
+ *
+ * 사용자(11/26): "장중에 나왔는데 다음날 오른 것도 있어, 하락장이었을 때고." 같은 재료가
+ * 상승장에선 묻혔다가 다음 하락장에 다시 켜지는 일이 있었습니다(화장품 한중 FTA: 11/24 상승장
+ * 초과 +1.2뿐 → 11/25 하락장 쏠림 1위, memory trader-brain). 장중 알림은 하루 한 번이라 그 다음
+ * 날엔 아무도 다시 말해 주지 않습니다. 어제 종가 등락을 같이 적어 "어제 얼마나 반영됐나"를 봅니다.
+ */
+export async function loadYesterdayIntradayThemes(config, previous) {
+  const sent = await loadAlertSent(config, "intraday_theme", previous);
+
+  if (!sent.size) return [];
+
+  const themes = [...sent.keys()];
+  const { rows } = await query(config, `
+    SELECT theme_name, symbol FROM kr_theme_members WHERE theme_name = ANY($1)`, [themes]);
+  const symbolsOf = new Map(themes.map((theme) => [theme, Array.isArray(customThemeGroups[theme]) ? [...customThemeGroups[theme]] : []]));
+
+  for (const row of rows) symbolsOf.get(row.theme_name)?.push(row.symbol);
+
+  const { rows: bars } = await query(config, `
+    SELECT symbol, name, change_rate::float8 AS change_rate, turnover::float8 AS turnover
+      FROM kr_daily_universe WHERE session_date = $1::date AND symbol = ANY($2)`, [previous, [...new Set([...symbolsOf.values()].flat())]]);
+  const barOf = new Map(bars.map((row) => [row.symbol, row]));
+
+  return themes.map((theme) => {
+    const members = (symbolsOf.get(theme) ?? []).map((symbol) => barOf.get(symbol)).filter(Boolean)
+      .sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0));
+
+    return {
+      at: sent.get(theme).sentAt,
+      headline: sent.get(theme).note,
+      members: members.slice(0, 4),
+      theme
+    };
+  });
+}
+
+export function morningThemeMessage(day, themes, carried = []) {
   const weekday = new Date(`${day}T12:00:00+09:00`).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", weekday: "short" });
   const lines = [`[아침 테마 재료] ${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}(${weekday}) · 밤사이 테마 전체를 가리킨 기사`, ""];
 
@@ -181,6 +221,19 @@ export function morningThemeMessage(day, themes) {
 
     lines.push("");
   });
+
+  if (carried.length) {
+    lines.push("어제 장중에 뜬 테마 재료(하락장엔 다음 날 다시 켜지는 일이 있었음):");
+
+    for (const item of carried) {
+      const moves = item.members.map((row) => `${row.name} ${row.change_rate >= 0 ? "+" : ""}${Number(row.change_rate).toFixed(1)}%`).join(" · ");
+
+      lines.push(`· ${item.theme} (${clock(new Date(item.at))})${moves ? ` — 어제 종가 ${moves}` : ""}`);
+      if (item.headline) lines.push(`   ${String(item.headline).slice(0, 70)}`);
+    }
+
+    lines.push("");
+  }
 
   lines.push("네이버 테마 사전과 기사 제목을 맞춘 것입니다(이름 추정 아님). 사라는 알림이 아니고, 성적은 아직 재 본 적이 없습니다.");
 
