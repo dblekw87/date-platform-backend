@@ -93,7 +93,17 @@ async function loadYahooQuote(quoteConfig) {
   // meta.regularMarketPrice is the last *regular session* trade, which outside
   // the bell is yesterday's — the same trap the pre-market sampler hit. The last
   // printed bar is the price that exists now.
-  const price = last >= 0 ? closes[last] : result?.meta?.regularMarketPrice;
+  /*
+   * 단, 마지막 봉보다 meta 체결이 더 새것이면 meta를 씁니다. 2026-11-26(추수감사절) NQ=F는
+   * 선물이 계속 거래됐는데(15:08 26,255) 5분봉이 13:55(미국 수요일 자정)에서 끊겨, 수집기가
+   * 26,389.75를 한 시간 넘게 적었고 15:10 종가배팅 알림 선물 줄도 그 값이었습니다. 장 밖의
+   * 주식은 meta 시각이 봉보다 오래돼 이 조건에 안 걸립니다.
+   */
+  const lastStamp = last >= 0 ? stamps[last] : 0;
+  const metaStamp = result?.meta?.regularMarketTime ?? 0;
+  const price = last >= 0 && !(metaStamp > lastStamp + 600 && result?.meta?.regularMarketPrice)
+    ? closes[last]
+    : result?.meta?.regularMarketPrice;
   // chartPreviousClose is the close before the *chart window*, and the window
   // is two days -- after a full session it is the day before yesterday. On
   // 2026-11-03 SOXX read -11.15% against 10/29 when the day was -3.79%.
@@ -114,7 +124,7 @@ async function loadYahooQuote(quoteConfig) {
     note: quoteConfig.note,
     source: "market",
     symbol: quoteConfig.symbol,
-    timestamp: last >= 0 && stamps[last] ? new Date(stamps[last] * 1000).toISOString() : new Date().toISOString(),
+    timestamp: Math.max(lastStamp, metaStamp) ? new Date(Math.max(lastStamp, metaStamp) * 1000).toISOString() : new Date().toISOString(),
     tone: toneFromChange(changeRate),
     value: formatValue(price)
   };
